@@ -1,0 +1,21 @@
+[package]
+name = "ma-trace"
+description = "Attribut #[covers] reliant un test aux exigences qu'il couvre (sans effet à l'exécution)"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[lib]
+proc-macro = true
+
+[lints]
+workspace = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+
+[dev-dependencies]
+trybuild = "1"

@@ -1,0 +1,143 @@
+# Performances et gros fichiers (transverse, lot MVP)
+# Seuils : 02 §8 ; conditions du « go » : 04 §1. Machine de référence : Intel NUC i7-10710U, GPU Comet Lake UHD.
+# Fichier de mesure : TS HEVC Main 10 2160p50, GOP 1 s, ≥ 4 Go, numéro d'image incrusté.
+
+- id: PERF.OPEN.01
+  title: Première image en moins de 2 s, indexation en fond
+  description: L'interface est utilisable dès les premières images indexées ; l'indexation complète continue en tâche de fond avec sa progression.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Sur le fichier de mesure, cache disque froid, la première image est affichée en moins de 2 s après l'ouverture.
+    - Un saut au-delà de la partie indexée attend la fin de l'indexation au lieu d'échouer, avec un indicateur d'attente.
+  levels: [e2e]
+  source: 02 §3.1, §8 ; 04 §3.2 (n° 7)
+  status: validated
+
+- id: PERF.SEEK.01
+  title: Saut arbitraire en moins de 500 ms (p95)
+  description: Temps entre la demande d'une image quelconque et son affichage dans l'interface.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Sur 100 sauts aléatoires dans le fichier de mesure, en décodage matériel, le p95 mesuré côté interface est inférieur à 500 ms.
+    - En décodage logiciel, le p95 est mesuré et publié dans le rapport de performance (pas de seuil, cf. 04 §2.1).
+  levels: [e2e]
+  source: 02 §8 ; 04 §2.1
+  status: validated
+
+- id: PERF.STEP.01
+  title: Image suivante en moins de 100 ms (p95) côté interface
+  description: Navigation image par image vers l'avant, mesurée dans l'interface, au zoom « Ajusté » et à 100 %.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Sur 200 pas consécutifs, le p95 est inférieur à 100 ms au zoom Ajusté et à 100 % (région visible seulement).
+  levels: [e2e]
+  source: 02 §8 ; 04 §1 (condition 1)
+  status: validated
+
+- id: PERF.STEP.02
+  title: Image précédente en moins de 100 ms, sans arrêt
+  description: Navigation image par image vers l'arrière ; aucun pas ne doit déclencher d'attente perceptible.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Sur 200 pas consécutifs vers l'arrière, le p95 est inférieur à 100 ms et le maximum inférieur à 250 ms.
+  levels: [e2e]
+  source: 02 §8 ; 04 §1 (condition 2), §2.1
+  status: validated
+
+- id: PERF.XFER.01
+  title: Transport limité à ce qui est affiché
+  description: Le moteur n'envoie à l'interface que l'image à la taille d'affichage (zoom Ajusté) ou la région visible (zoom ≥ 100 %), la réduction étant faite sur le GPU en décodage matériel.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Au zoom Ajusté sur une fenêtre de 1920×1080, les données transmises par image font moins de 4 Mo.
+    - En décodage matériel, aucun transfert GPU → RAM d'image pleine résolution n'a lieu au zoom Ajusté (compteur du moteur).
+  levels: [unit, e2e]
+  source: 04 §1, §4.1
+  status: validated
+
+- id: PERF.PREFETCH.01
+  title: Préchargement des images voisines
+  description: Pendant que l'utilisateur regarde une image, le moteur prépare les images voisines dans le sens de navigation, sans retarder les demandes explicites.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Après 1 s sur une image, les 8 suivantes et les 8 précédentes sont prêtes (compteur du moteur).
+    - Une demande explicite pendant un préchargement est servie en priorité.
+  levels: [unit]
+  source: 04 §1 (condition 2), §4.2
+  status: validated
+
+- id: PERF.MEM.01
+  title: Mémoire inférieure à 2 Go
+  description: La mémoire résidente de l'application entière (moteur et processus WebKit) reste sous 2 Go.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Pendant le parcours de mesure (ouverture, 100 sauts, 200 pas avant, 200 pas arrière) sur le fichier de mesure, la somme des RSS des processus de l'application reste inférieure à 2 Go.
+  levels: [e2e]
+  source: 02 §8 ; 04 §4.7
+  status: validated
+
+- id: PERF.INDEX.01
+  title: Index persistant et réouverture instantanée
+  description: L'index d'un fichier est enregistré dans le cache et réutilisé à la réouverture tant que le fichier n'a pas changé ; un fichier modifié est réindexé.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - La réouverture du fichier de mesure affiche la première image en moins de 500 ms sans réindexation.
+    - Modifier la date ou la taille du fichier provoque une réindexation.
+  levels: [unit, e2e]
+  source: 02 §3.1 ; 04 §4.6
+  status: validated
+
+- id: PERF.INDEX.02
+  title: Indexation à mémoire bornée
+  description: La mémoire utilisée par l'indexation ne dépend pas de la taille du fichier.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Indexer le fichier de 4 Go augmente la mémoire de moins de 200 Mo (test en processus séparé).
+  levels: [unit]
+  source: 04 §3.2 (n° 5)
+  status: validated
+
+- id: PERF.NET.01
+  title: Fichiers sur partage réseau
+  description: "Un fichier sur NFS ou SMB s'ouvre et se parcourt ; la lecture anticipée est adaptée ; un fichier modifié ou tronqué pendant la lecture produit une erreur, pas un plantage. Pas de serveur de fichiers disponible : les tests utilisent un serveur NFS lancé dans un conteneur local, avec latence réseau simulée."
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Sur le fichier de mesure servi par un serveur NFS en conteneur local avec 5 ms de latence simulée, les seuils de PERF.OPEN.01 et PERF.SEEK.01 sont mesurés et publiés.
+    - Tronquer le fichier pendant la navigation produit un message d'erreur et l'application reste utilisable.
+  levels: [unit, e2e]
+  source: 02 §3.1, §6.1 ; 04 §4.7
+  status: validated
+
+- id: PERF.JOB.01
+  title: Analyses longues annulables avec progression
+  description: Indexation et analyses s'exécutent en tâche de fond, avec progression affichée et annulation ; l'interface ne se fige jamais.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Pendant l'indexation et l'analyse TR 101 290 du fichier de mesure, l'interface répond à une navigation en moins de 100 ms (hors attente d'image).
+    - « Annuler » arrête la tâche en moins de 500 ms ; les résultats partiels restent consultables.
+  levels: [unit, e2e]
+  source: 02 §1 (anti-objectif 1), §3.5
+  status: validated
+
+- id: PERF.HW.01
+  title: Mode de décodage réel détecté et signalé
+  description: Le mode effectif (matériel ou logiciel) est déduit des images produites ; si le décodage matériel échoue à l'ouverture ou en cours de route, le décodeur est reconstruit en logiciel et l'interface le signale.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Sur un profil non supporté par le GPU, le mode affiché est « logiciel » et les images sont correctes.
+    - Une erreur GPU simulée en cours de navigation bascule en logiciel sans perte de l'image demandée et ajoute un message au rapport.
+  levels: [unit, ui]
+  source: 04 §4.5 (repli logiciel)
+  status: validated

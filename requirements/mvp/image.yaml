@@ -1,0 +1,83 @@
+# F3 — Analyse visuelle de l'image (périmètre MVP)
+
+- id: IMG.VIEW.01
+  title: Affichage de l'image décodée
+  description: L'onglet Vidéo affiche l'image courante décodée, en 8 ou 10 bits, avec une conversion couleur conforme à la colorimétrie signalée (BT.709 par défaut, plage limitée).
+  domain: F3
+  lot: MVP
+  acceptance:
+    - Sur une mire 10 bits du corpus, les barres de couleur affichées ont la teinte attendue (écart ≤ 2 % par canal sur les zones de référence).
+    - Une image 8 bits et une image 10 bits du même contenu s'affichent de façon identique à l'œil (même vérification).
+  levels: [unit, e2e]
+  source: 01 §F3 ; 02 §4.2 (rendu WebGL2)
+  status: validated
+
+- id: IMG.ZOOM.01
+  title: Zoom sans lissage et ajustement
+  description: Zoom de 50 % à 400 % par paliers, plus un mode « Ajusté » ; aucun lissage (pixels nets) ; déplacement à la souris, molette pour zoomer, double-clic pour ajuster.
+  domain: F3
+  lot: MVP
+  acceptance:
+    - À 400 %, un pixel source occupe exactement 4×4 pixels écran de même couleur.
+    - Les commandes de zoom proposent Ajusté, 50, 100, 200, 400 %.
+  levels: [ui, e2e]
+  source: 01 §F3 ; 03 §4.4 ; maquette VideoView.dc.html
+  status: validated
+
+- id: IMG.YUV.01
+  title: Composantes Y / U / V activables
+  description: Chaque composante peut être masquée indépendamment ; la chroma est ré-échantillonnée à la taille luma pour l'affichage.
+  domain: F3
+  lot: MVP
+  acceptance:
+    - Avec U et V masqués, l'image est en niveaux de gris et égale à la luma.
+    - Avec Y masqué, la luma est remplacée par la valeur médiane.
+  levels: [ui, e2e]
+  source: 01 §F3 ; maquette VideoView.dc.html
+  status: validated
+
+- id: IMG.GRID.01
+  title: Grilles de slices et de tiles
+  description: Les frontières de slices (et de tiles en HEVC), issues du parsing, peuvent être superposées à l'image avec leur numéro ; transparence réglable.
+  domain: F3
+  lot: MVP
+  acceptance:
+    - Sur un HEVC 4 slices × 2 tiles du corpus, la grille montre 4 slices (S0–S3) et 8 tiles (T0–T7) aux positions déduites des en-têtes.
+    - Le curseur de transparence modifie l'opacité de la grille de 0 à 100 %.
+  levels: [unit, ui]
+  source: 01 §F3 ; 03 §4.4 ; maquette VideoView.dc.html
+  status: validated
+
+- id: IMG.OVL.01
+  title: Overlays futurs visibles mais désactivés
+  description: Les overlays de type de bloc, QP et vecteurs sont présents dans la barre d'outils, désactivés, avec la mention « bientôt ».
+  domain: F3
+  lot: MVP
+  acceptance:
+    - Les trois commandes sont visibles, désactivées, et leur infobulle indique qu'elles arriveront avec l'analyse fine des décodeurs.
+  levels: [ui]
+  source: 01 §6 (V3) ; 03 §4.4
+  status: validated
+
+- id: IMG.PIX.01
+  title: Valeurs sous le curseur
+  description: Le survol de l'image affiche la position (x, y), les valeurs Y, U, V du pixel, et le numéro de CTB/MB, de slice et de tile.
+  domain: F3
+  lot: MVP
+  acceptance:
+    - Au survol du pixel (0,0) d'une mire de valeurs connues, la barre affiche x 0 y 0 et les valeurs Y/U/V attendues.
+  levels: [ui, e2e]
+  source: maquette VideoView.dc.html (barre de position du curseur)
+  status: validated
+
+- id: IMG.STATE.01
+  title: États de la vue image
+  description: Pendant le chargement, un indicateur discret est affiché ; une image non décodable affiche un message explicite et une action « aller à l'image I suivante ».
+  domain: F3
+  lot: MVP
+  acceptance:
+    - Une image non décodable affiche le message et le bouton ; le bouton mène à la prochaine image I décodable.
+    - Le chargement d'une image ne vide pas l'image précédente avant l'arrivée de la nouvelle.
+  levels: [ui]
+  source: 03 §4.4, §4.11 ; maquette Etats.dc.html
+  status: validated

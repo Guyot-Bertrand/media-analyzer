@@ -1,0 +1,154 @@
+# F1 — Ouverture et structure du fichier (lot MVP)
+
+- id: STRUCT.OPEN.01
+  title: Ouverture d'un MPEG-2 TS en paquets de 188, 204 ou 208 octets
+  description: Le fichier est reconnu comme TS quelle que soit la taille de paquet, détectée automatiquement par la périodicité de l'octet de synchronisation 0x47.
+  domain: F1
+  lot: MVP
+  acceptance:
+    - Trois fichiers TS du corpus (188, 204, 208 octets) s'ouvrent et la taille de paquet détectée est respectivement 188, 204, 208.
+    - Le nombre de paquets compté est égal à taille du fichier / taille de paquet (fichier non tronqué).
+  levels: [unit]
+  source: 01 §2.4, §F1 ; CMA §Report View (paquets 188/204/208)
+  status: validated
+
+- id: STRUCT.OPEN.02
+  title: Ouverture d'un TTS (TS avec horodatage de 4 octets)
+  description: Les fichiers TTS (paquets de 192 octets préfixés d'un horodatage) sont reconnus et analysés comme un TS.
+  domain: F1
+  lot: MVP
+  acceptance:
+    - Un TTS du corpus s'ouvre ; l'arbre de structure est identique à celui du TS équivalent.
+    - L'interface indique que les analyses de timing propres au TS (PCR, buffers) ne sont pas garanties sur un TTS.
+  levels: [unit]
+  source: 01 §2.3 (restriction TTS), §F1
+  status: validated
+
+- id: STRUCT.OPEN.03
+  title: Ouverture d'ES bruts H.264, HEVC et MPEG-2 Video
+  description: Les flux élémentaires sans conteneur sont reconnus par leurs start codes et leur syntaxe, indépendamment de l'extension.
+  domain: F1
+  lot: MVP
+  acceptance:
+    - Un fichier .h264, .hevc et .m2v du corpus s'ouvre ; la racine de l'arbre est « Fichier ES brut » avec le codec détecté.
+    - Un fichier H.264 renommé en .bin est reconnu comme H.264.
+  levels: [unit]
+  source: 01 §2.2, §F1
+  status: validated
+
+- id: STRUCT.OPEN.04
+  title: Format non reconnu ou fichier illisible
+  description: Un fichier qui n'est ni un TS ni un ES supporté, ou qui ne peut pas être lu, donne un message clair, sans plantage.
+  domain: F1
+  lot: MVP
+  acceptance:
+    - Un fichier texte, un fichier vide et un fichier sans droit de lecture produisent chacun un message d'erreur explicite (format non reconnu / fichier vide / accès refusé).
+    - L'application reste utilisable après l'erreur.
+  levels: [unit, ui]
+  source: 03 §4.11 (états d'erreur) ; 01 §F1
+  status: validated
+
+- id: STRUCT.OPEN.05
+  title: Association manuelle d'une extension inconnue
+  description: L'utilisateur peut forcer le format d'un fichier dont l'extension n'est pas reconnue, et ce choix est mémorisé par extension.
+  domain: F1
+  lot: MVP
+  acceptance:
+    - Ouvrir un TS nommé .xyz propose de choisir le format ; après choix « MPEG-2 TS », le fichier s'ouvre.
+    - Un second fichier .xyz s'ouvre directement comme TS.
+  levels: [unit, ui]
+  source: 01 §2.1 (extension inconnue)
+  status: validated
+
+- id: STRUCT.TREE.01
+  title: Arbre PAT / CAT / PMT / ES avec PID et informations
+  description: L'arbre de structure d'un TS montre le Transport Stream, la PAT (TS ID), la CAT, chaque PMT (numéro de programme) et ses flux élémentaires, avec le PID en hexadécimal et décimal et une colonne d'informations.
+  domain: F1
+  lot: MVP
+  acceptance:
+    - Sur le TS de référence (1 programme, vidéo HEVC 0x0100, AAC 0x0101, E-AC-3 0x0102, sous-titres 0x0103, SCTE-35 0x01F4), l'arbre contient exactement ces nœuds avec ces PID.
+    - Chaque ES indique son type (codec ou nature) ; la vidéo indique sa résolution et sa fréquence d'images.
+  levels: [unit, ui]
+  source: 01 §F1 ; 03 §4.2 ; maquette StructureTree.dc.html
+  status: validated
+
+- id: STRUCT.TREE.02
+  title: Porteur du PCR
+  description: L'arbre indique pour chaque programme le PID porteur du PCR, et signale si le PCR est porté par la vidéo ou par un PID dédié.
+  domain: F1
+  lot: MVP
+  acceptance:
+    - Sur un TS où le PCR est porté par la vidéo, le nœud vidéo porte le badge « PCR ».
+    - Sur un TS avec PCR sur PID dédié, ce PID apparaît dans l'arbre avec la mention « PCR ».
+  levels: [unit, ui]
+  source: 01 §F1 ; maquette StructureTree.dc.html
+  status: validated
+
+- id: STRUCT.TREE.03
+  title: Nom de service via la SDT
+  description: Quand la norme DVB est sélectionnée, le nom de service lu dans la SDT est affiché sur le nœud du programme.
+  domain: F1
+  lot: MVP
+  acceptance:
+    - Sur un TS DVB avec SDT, le nœud PMT affiche le nom de service et le fournisseur.
+    - Sans SDT, le nœud affiche seulement « Programme n ».
+  levels: [unit]
+  source: 01 §F1, §F18 (standard DVB)
+  status: validated
+
+- id: STRUCT.TREE.04
+  title: Flux non supportés signalés génériquement
+  description: Un flux dont le type n'est pas analysé apparaît avec le libellé générique « Vidéo », « Audio » ou « Données » et un état « non analysé ».
+  domain: F1
+  lot: MVP
+  acceptance:
+    - Un TS contenant une piste VC-1 et une piste AC-4 montre ces nœuds en « Vidéo — non analysé » et « Audio — non analysé », en style grisé.
+  levels: [unit, ui]
+  source: 01 §F1 ; maquette StructureTree.dc.html (nœuds en italique)
+  status: validated
+
+- id: STRUCT.TREE.05
+  title: TS multi-programmes (MPTS)
+  description: Tous les programmes d'un MPTS sont listés avec leurs flux ; chaque flux est sélectionnable.
+  domain: F1
+  lot: MVP
+  acceptance:
+    - Sur un MPTS du corpus à 3 programmes, l'arbre contient 3 PMT avec leurs flux respectifs.
+    - Sélectionner une vidéo du 2e programme affiche ses images.
+  levels: [unit, e2e]
+  source: 01 §F1
+  status: validated
+
+- id: STRUCT.TREE.06
+  title: Sélection automatique de la première vidéo
+  description: À l'ouverture, la première vidéo analysable est sélectionnée et ses vignettes s'affichent sans action de l'utilisateur.
+  domain: F1
+  lot: MVP
+  acceptance:
+    - À l'ouverture du TS de référence, le flux 0x0100 est sélectionné et l'image 0 est affichée.
+  levels: [ui, e2e]
+  source: 01 §F1
+  status: validated
+
+- id: STRUCT.TREE.07
+  title: État d'analyse agrégé par nœud
+  description: Chaque nœud porte une LED d'état qui agrège les erreurs et avertissements de ses descendants.
+  domain: F1
+  lot: MVP
+  acceptance:
+    - Avec 3 erreurs de continuity counter sur 0x0101, le nœud AAC, le programme et le Transport Stream affichent la LED erreur.
+    - Un flux sans message affiche la LED OK.
+  levels: [unit, ui]
+  source: 03 §4.2 ; maquette StructureTree.dc.html
+  status: validated
+
+- id: STRUCT.TREE.08
+  title: Arbre de structure repliable en rail d'icônes
+  description: Le panneau de structure peut être replié en un rail d'icônes, notamment sur petit écran.
+  domain: F1
+  lot: MVP
+  acceptance:
+    - Le bouton de repli réduit le panneau à un rail ; un clic sur une icône sélectionne le flux correspondant.
+  levels: [ui]
+  source: maquette StructureTree.dc.html (mode replié), Portable.dc.html
+  status: validated

@@ -1,0 +1,236 @@
+# F6 — Analyse du transport MPEG-2 TS : TR 101 290 priorités 1 et 2, débits (lot MVP)
+# Chaque indicateur est vérifié sur un TS du corpus où le défaut est injecté (TSDuck) à une position connue.
+
+- id: TS.TR1.SYNC.01
+  title: 1.1 TS_sync_loss
+  description: Perte de synchronisation avec hystérésis — synchronisation acquise après 5 octets de synchro consécutifs corrects, perdue après 3 consécutifs incorrects.
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Un TS avec 3 octets de synchro consécutifs corrompus à partir du paquet 1000 produit une erreur 1.1 au paquet 1002 et un retour à la normale après 5 paquets corrects.
+    - 2 octets de synchro corrompus consécutifs ne produisent pas d'erreur 1.1 (mais des 1.2).
+  levels: [unit]
+  source: 01 §F6 ; CMA Table 3-5
+  status: validated
+
+- id: TS.TR1.SBYTE.01
+  title: 1.2 Sync_byte_error
+  description: Octet de synchronisation différent de 0x47.
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Un octet de synchro corrompu au paquet 500 produit exactement une erreur 1.2 positionnée à l'offset 500 × taille de paquet.
+  levels: [unit]
+  source: 01 §F6
+  status: validated
+
+- id: TS.TR1.PAT.01
+  title: 1.3 PAT_error
+  description: Section de table_id 0x00 absente plus de 0,5 s sur le PID 0 ; table_id autre que 0x00 sur le PID 0 ; scrambling_control non nul sur le PID 0.
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Retirer toutes les PAT pendant 1 s produit une erreur 1.3 « intervalle » ; une PAT toutes les 0,4 s n'en produit aucune.
+    - Une section de table_id 0x02 sur le PID 0 produit une erreur 1.3 « table_id ».
+    - Un paquet PID 0 avec scrambling_control = 10 produit une erreur 1.3 « embrouillage ».
+  levels: [unit]
+  source: 01 §F6
+  status: validated
+
+- id: TS.TR1.CC.01
+  title: 1.4 Continuity_count_error
+  description: Ordre de paquets incorrect, paquet dupliqué plus de deux fois, paquet perdu (compteur de continuité), en tenant compte des paquets sans charge utile et du discontinuity_indicator.
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Un paquet supprimé sur le PID 0x0101 produit une erreur 1.4 « attendu n, reçu n+2 » à la position du paquet suivant.
+    - Un paquet dupliqué une fois ne produit pas d'erreur ; dupliqué deux fois, il en produit une.
+    - Un saut de compteur avec discontinuity_indicator = 1 ne produit pas d'erreur.
+    - Les paquets sans charge utile (adaptation_field seul) n'incrémentent pas le compteur attendu.
+  levels: [unit]
+  source: 01 §F6 ; maquette Report.dc.html (« attendu 7, reçu 9 »)
+  status: validated
+
+- id: TS.TR1.PMT.01
+  title: 1.5 PMT_error
+  description: Section PMT absente plus de 0,5 s sur un PID de PMT référencé par la PAT ; scrambling_control non nul sur ce PID.
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Retirer les PMT d'un programme pendant 1 s produit une erreur 1.5 pour ce programme uniquement.
+    - Un paquet de PMT embrouillé produit une erreur 1.5 « embrouillage ».
+  levels: [unit]
+  source: 01 §F6
+  status: validated
+
+- id: TS.TR1.PID.01
+  title: 1.6 PID_error
+  description: Un PID référencé (PMT) n'apparaît pas pendant une durée paramétrable (5 s par défaut).
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Supprimer le PID audio pendant 6 s produit une erreur 1.6 ; pendant 4 s, aucune.
+    - Avec le délai réglé à 3 s, la coupure de 4 s produit une erreur.
+  levels: [unit]
+  source: 01 §F6
+  status: validated
+
+- id: TS.TR2.TEI.01
+  title: 2.1 Transport_error
+  description: transport_error_indicator à 1 dans l'en-tête de paquet.
+  domain: F6
+  lot: MVP
+  acceptance:
+    - 4 paquets avec TEI = 1 produisent 4 erreurs 2.1 à leurs positions.
+  levels: [unit]
+  source: 01 §F6
+  status: validated
+
+- id: TS.TR2.CRC.01
+  title: 2.2 CRC_error
+  description: CRC32 incorrect sur une section CAT, PAT, PMT, NIT, EIT, BAT, SDT ou TOT.
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Un octet corrompu dans une PAT, une PMT et une SDT produit une erreur 2.2 pour chacune, avec le type de table.
+    - Les sections dont le CRC est correct ne produisent rien.
+  levels: [unit]
+  source: 01 §F6
+  status: validated
+
+- id: TS.TR2.PCRREP.01
+  title: 2.3a PCR_repetition_error
+  description: Intervalle entre deux PCR consécutifs d'un programme supérieur à 40 ms.
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Un PCR retiré dans un flux à PCR toutes les 30 ms (intervalle de 60 ms) produit une erreur 2.3a.
+  levels: [unit]
+  source: 01 §F6
+  status: validated
+
+- id: TS.TR2.PCRDIS.01
+  title: 2.3b PCR_discontinuity_indicator_error
+  description: Différence entre deux PCR consécutifs hors de 0…100 ms sans discontinuity_indicator.
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Un saut de PCR de +500 ms sans indicateur produit une erreur 2.3b ; avec discontinuity_indicator = 1, aucune.
+    - Un PCR qui recule sans indicateur produit une erreur 2.3b.
+  levels: [unit]
+  source: 01 §F6
+  status: validated
+
+- id: TS.TR2.PCRACC.01
+  title: 2.4 PCR_accuracy_error
+  description: Précision du PCR hors de ±500 ns par rapport au débit constant estimé du multiplex.
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Un PCR décalé de 600 ns produit une erreur 2.4 avec l'écart mesuré dans le message ; décalé de 400 ns, aucune.
+  levels: [unit]
+  source: 01 §F6 ; maquette Report.dc.html (« écart 612 ns »)
+  status: validated
+
+- id: TS.TR2.PTS.01
+  title: 2.5 PTS_error
+  description: Intervalle entre deux PTS consécutifs d'un flux supérieur à 700 ms.
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Un trou de 800 ms dans les PTS audio produit une erreur 2.5 ; de 600 ms, aucune.
+  levels: [unit]
+  source: 01 §F6
+  status: validated
+
+- id: TS.TR2.CAT.01
+  title: 2.6 CAT_error
+  description: Paquets embrouillés (transport_scrambling_control non nul) présents sans section CAT (table_id 0x01) ; section de table_id autre que 0x01 sur le PID 0x0001.
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Un TS contenant des paquets embrouillés et aucune CAT produit une erreur 2.6 ; avec une CAT présente, aucune.
+    - Une section de table_id 0x02 sur le PID 0x0001 produit une erreur 2.6 « table_id ».
+  levels: [unit]
+  source: ETSI TR 101 290 §5.2.2 (2.6), ajouté sur décision du porteur (2026-10-31) ; absent de 01 §F6
+  status: validated
+
+- id: TS.TR.CFG.01
+  title: Activation et seuils réglables
+  description: Chaque indicateur peut être désactivé, l'ensemble peut l'être d'un coup, et les seuils paramétrables (délai de PID manquant, intervalles PAT/PMT/PCR/PTS, précision PCR) sont modifiables.
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Désactiver 1.4 supprime toutes les erreurs 1.4 du rapport à la réanalyse, sans modifier les autres.
+    - Modifier un seuil change le résultat comme prévu (voir TS.TR1.PID.01).
+  levels: [unit, ui]
+  source: 01 §F6, §F18
+  status: validated
+
+- id: TS.TR.TEI.01
+  title: Prise en compte des paquets TEI = 1
+  description: Une option décide si les paquets portant transport_error_indicator = 1 sont analysés ou ignorés par les autres contrôles.
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Avec l'option « ignorer », un paquet TEI = 1 ne produit pas d'erreur 1.4 ; avec « analyser », il est pris en compte.
+  levels: [unit]
+  source: 01 §F18 (MPEG-2 TS Analysis Settings)
+  status: validated
+
+- id: TS.TR.VIEW.01
+  title: Tableau de bord TR 101 290
+  description: L'onglet Transport présente les 13 indicateurs avec LED d'état, nombre d'occurrences, première et dernière occurrence cliquables, et un mini-histogramme sur la durée du fichier ; filtre par PID ou programme.
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Sur le TS de référence, 1.4 affiche LED erreur, 3 occurrences, et la première occurrence mène à l'image 6 670 ; 2.4 affiche LED avertissement et 1 occurrence.
+    - Filtrer sur le PID 0x0100 masque les occurrences de 0x0101.
+  levels: [ui, e2e]
+  source: 03 §4.6 ; maquette TransportView.dc.html
+  status: validated
+
+- id: TS.TR.PARTIAL.01
+  title: Résultats progressifs pendant l'analyse
+  description: Les indicateurs se remplissent au fil de l'analyse ; un indicateur pas encore évalué est affiché « en cours ».
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Pendant l'analyse d'un TS de 4 Go, le tableau de bord se met à jour au moins une fois par seconde et affiche la progression.
+  levels: [ui]
+  source: 03 §4.11 ; maquette TransportView.dc.html (état partiel)
+  status: validated
+
+- id: TS.ORACLE.01
+  title: Concordance avec TSDuck
+  description: Sur le corpus à défauts injectés, les erreurs TR 101 290 détectées concordent avec celles de TSDuck (outil de référence).
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Pour chaque fichier du corpus, le nombre d'erreurs par indicateur égale celui de TSDuck, sauf écart justifié par la norme et consigné dans le manifeste du corpus.
+  levels: [unit]
+  source: 02 §9 (validation par les outils de référence)
+  status: validated
+
+- id: TS.BR.01
+  title: Débits par PID
+  description: Débit minimal, moyen et maximal par PID et débit total du multiplex, calculés à partir des PCR, ainsi que la part de chaque PID.
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Sur un TS CBR du corpus à 25 Mb/s vidéo, le débit moyen calculé est à ±1 % de la valeur attendue.
+    - La somme des parts des PID vaut 100 %.
+  levels: [unit, ui]
+  source: 01 §F1 (bitrates), §F6 ; maquette BitrateView.dc.html
+  status: validated
+
+- id: TS.BR.02
+  title: Graphe des débits dans le temps
+  description: L'onglet Débits affiche l'évolution du débit par PID (séries empilées) et le débit total ; un clic sur le graphe mène à l'image correspondante.
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Le graphe du TS de référence comporte une série par PID et une courbe totale ; cliquer à 50 % de la durée amène à l'image médiane.
+  levels: [ui]
+  source: 03 §4.7 ; maquette BitrateView.dc.html
+  status: validated

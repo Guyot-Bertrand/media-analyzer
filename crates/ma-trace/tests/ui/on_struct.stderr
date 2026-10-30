@@ -1,0 +1,5 @@
+error: #[covers] ne s'applique qu'à une fonction (test), pas à une méthode ni à un autre élément
+ --> tests/ui/on_struct.rs:2:1
+  |
+2 | struct S;
+  | ^^^^^^^^^

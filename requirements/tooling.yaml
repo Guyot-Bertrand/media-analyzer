@@ -1,0 +1,24 @@
+# Exigences de l'outillage de traçabilité lui-même (plan M0).
+- id: TOOL.TRACE.01
+  title: "#[covers] sans effet sur l'élément annoté"
+  description: L'attribut relie une fonction à des exigences sans modifier son comportement.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Un test annoté s'exécute normalement.
+    - Une fonction annotée renvoie la même valeur que sans l'attribut.
+  levels: [unit]
+  source: plan M0, Tâche 2
+  status: implemented
+
+- id: TOOL.TRACE.02
+  title: Identifiants d'exigence invalides refusés à la compilation
+  description: Une liste vide ou un identifiant hors format provoque une erreur de compilation explicite.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - "#[covers()] produit « au moins un identifiant »."
+    - "#[covers(\"ts.tr1.01\")] et #[covers(\"TS.TR1\")] produisent « identifiant d'exigence invalide »."
+  levels: [unit]
+  source: plan M0, Tâche 2
+  status: implemented

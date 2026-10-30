@@ -1,0 +1,4 @@
+{"numTotalTests":2,"testResults":[{"name":"/x/Led.test.tsx","assertionResults":[
+ {"ancestorTitles":["Led"],"title":"affiche une coche pour ok","fullName":"Led affiche une coche pour ok","status":"passed"},
+ {"ancestorTitles":["Led"],"title":"clignote","fullName":"Led clignote","status":"pending"}
+]}]}

@@ -1,0 +1,4 @@
+{"config":{},"suites":[{"title":"nav.spec.ts","file":"nav.spec.ts","specs":[],"suites":[{"title":"navigation","specs":[
+ {"title":"navigue à l'image suivante","ok":true,"tests":[{"results":[{"status":"passed"}]}]},
+ {"title":"aller à","ok":false,"tests":[{"results":[{"status":"failed"},{"status":"failed"}]}]}
+]}]}]}
