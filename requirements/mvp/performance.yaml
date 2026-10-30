@@ -108,7 +108,7 @@
 
 - id: PERF.NET.01
   title: Fichiers sur partage réseau
-  description: Un fichier sur NFS ou SMB s'ouvre et se parcourt ; la lecture anticipée est adaptée ; un fichier modifié ou tronqué pendant la lecture produit une erreur, pas un plantage. Pas de serveur de fichiers disponible : les tests utilisent un serveur NFS lancé dans un conteneur local, avec latence réseau simulée.
+  description: "Un fichier sur NFS ou SMB s'ouvre et se parcourt ; la lecture anticipée est adaptée ; un fichier modifié ou tronqué pendant la lecture produit une erreur, pas un plantage. Pas de serveur de fichiers disponible : les tests utilisent un serveur NFS lancé dans un conteneur local, avec latence réseau simulée."
   domain: TRANS
   lot: MVP
   acceptance:
