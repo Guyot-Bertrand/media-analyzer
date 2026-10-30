@@ -431,8 +431,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "proc-macro2",
  "serde",
  "serde_yaml_ng",
+ "syn 2.0.119",
  "walkdir",
 ]
 

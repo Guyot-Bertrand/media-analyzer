@@ -1,6 +1,8 @@
 //! Outillage du dépôt : traçabilité exigences ↔ tests, pipeline de vérification locale.
 
 mod requirements;
+mod scan_rust;
+mod scan_ts;
 
 use clap::{Parser, Subcommand};
 
