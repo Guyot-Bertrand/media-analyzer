@@ -1,0 +1,104 @@
+# F5 — Syntaxe vidéo (périmètre MVP : arbres syntaxiques, sans conformité avancée)
+
+- id: SYN.TREE.01
+  title: Deux arbres — paramètres actifs et access unit courante
+  description: À gauche, les paramètres actifs pour l'image courante (VPS/SPS/PPS HEVC, SPS/PPS H.264, SH/SE/GH MPEG-2) ; à droite, les unités de l'AU courante (NAL ou DU), dépliables.
+  domain: F5
+  lot: MVP
+  acceptance:
+    - Pour une image HEVC, l'arbre de gauche contient le VPS, le SPS et le PPS référencés par sa première slice.
+    - L'arbre de droite liste toutes les NAL de l'AU dans l'ordre du flux, avec leur type.
+  levels: [unit, ui]
+  source: 01 §F5 ; 03 §4.5 ; maquette SyntaxView.dc.html
+  status: draft
+
+- id: SYN.TREE.02
+  title: Colonnes élément, valeur, longueur, offset, interprétation
+  description: Chaque élément de syntaxe indique son nom normatif, sa valeur décodée, sa longueur en bits, son offset en bits depuis le début de l'unité et son interprétation.
+  domain: F5
+  lot: MVP
+  acceptance:
+    - Pour un SPS H.264 de référence, profile_idc vaut 100 (« High »), longueur 8, offset 8 ; level_idc vaut 40 (« 4.0 »).
+    - La somme des longueurs des éléments d'une unité égale la taille de son RBSP (hors octets d'émulation), à l'octet près.
+  levels: [unit, ui]
+  source: 01 §F5 ; 02 §3.2 (parsing instrumenté)
+  status: draft
+
+- id: SYN.TREE.03
+  title: Exactitude du parsing par rapport à une référence
+  description: Les valeurs des éléments de syntaxe des en-têtes égalent celles d'un outil de référence.
+  domain: F5
+  lot: MVP
+  acceptance:
+    - Sur les flux de conformité ITU-T H.264 et HEVC du corpus public, les champs des SPS/PPS/VPS et des en-têtes de slice égalent ceux de la sortie « trace_headers » de ffmpeg.
+  levels: [unit]
+  source: 02 §5.3 (tests différentiels), §5.5 (corpus public)
+  status: draft
+
+- id: SYN.TREE.04
+  title: Syntaxe MPEG-2 Video
+  description: En-têtes de séquence, extensions, GOP, image et slices MPEG-2 analysés et affichés de la même manière.
+  domain: F5
+  lot: MVP
+  acceptance:
+    - Sur un MPEG-2 du corpus, sequence_header, sequence_extension, group_of_pictures_header et picture_header sont présents avec des valeurs égales à « trace_headers ».
+  levels: [unit]
+  source: 01 §F5
+  status: draft
+
+- id: SYN.VIEW.01
+  title: Affichage décimal ou hexadécimal
+  description: Les valeurs peuvent être affichées en décimal ou en hexadécimal.
+  domain: F5
+  lot: MVP
+  acceptance:
+    - La bascule convertit toutes les valeurs numériques affichées ; l'interprétation reste inchangée.
+  levels: [ui]
+  source: 01 §F5, §F18 ; maquette SyntaxView.dc.html
+  status: draft
+
+- id: SYN.VIEW.02
+  title: Recherche, tout déplier, tout replier
+  description: Un champ de recherche filtre ou met en évidence les éléments par nom ; commandes « tout déplier » et « tout replier ».
+  domain: F5
+  lot: MVP
+  acceptance:
+    - Rechercher « pic_order » met en évidence pic_order_cnt_lsb et déplie ses parents.
+  levels: [ui]
+  source: 03 §4.5
+  status: draft
+
+- id: SYN.VIEW.03
+  title: Vue hexadécimale synchronisée
+  description: Un volet affiche les octets de l'unité ; la sélection d'un élément surligne sa plage de bits, et inversement.
+  domain: F5
+  lot: MVP
+  acceptance:
+    - Sélectionner un élément de 3 bits surligne exactement l'octet qui le contient et marque les 3 bits.
+    - Cliquer un octet sélectionne le premier élément qui commence dans cet octet.
+  levels: [ui]
+  source: 03 §4.5 ; maquette SyntaxView.dc.html
+  status: draft
+
+- id: SYN.ERR.01
+  title: Éléments en erreur mis en évidence
+  description: Un élément dont la valeur est interdite ou incohérente (contrôles de base du parseur) est affiché en rouge avec la règle violée en infobulle, et un message est ajouté au rapport.
+  domain: F5
+  lot: MVP
+  acceptance:
+    - Un SPS corrompu du corpus (valeur réservée) affiche l'élément en rouge, l'infobulle cite la règle, et le rapport contient un message de famille « Syntaxe ».
+  levels: [unit, ui]
+  source: 01 §F5 ; 03 §4.5
+  status: draft
+
+- id: SYN.ROBUST.01
+  title: Parseurs tolérants aux flux corrompus
+  description: Les parseurs ne paniquent jamais ; une unité tronquée ou invalide produit un arbre partiel et un message.
+  domain: F5
+  lot: MVP
+  acceptance:
+    - Une campagne de fuzzing de 10 minutes par parseur (TS, H.264, HEVC, MPEG-2) ne produit aucune panique.
+    - Une NAL tronquée produit un arbre partiel et un message « unité tronquée ».
+  levels: [unit]
+  source: 02 §1 (anti-objectif 4), §5.3 (fuzzing)
+  status: draft

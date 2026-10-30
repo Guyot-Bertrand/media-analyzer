@@ -1,0 +1,69 @@
+# Internationalisation (transverse, lot MVP)
+
+- id: I18N.LANG.01
+  title: Français par défaut, anglais complet
+  description: L'interface démarre dans la langue du système si elle est française ou anglaise, en français sinon ; l'anglais couvre toute l'interface.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Avec LANG=en_US.UTF-8, l'interface démarre en anglais ; avec LANG=de_DE.UTF-8, en français.
+    - Aucun texte français n'apparaît dans l'écran principal en anglais (capture comparée à la maquette MainEN).
+  levels: [ui, e2e]
+  source: 02 §4.3 ; maquette MainEN.dc.html
+  status: draft
+
+- id: I18N.SWITCH.01
+  title: Changement de langue à chaud
+  description: La langue se change depuis les réglages (ou Ctrl+Maj+L) sans redémarrage ni réanalyse ; les messages du rapport déjà produits sont retraduits.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Après bascule, les libellés et les descriptions du rapport existant sont dans la nouvelle langue.
+  levels: [ui]
+  source: 02 §4.3 ; maquette Reglages.dc.html
+  status: draft
+
+- id: I18N.KEYS.01
+  title: Catalogues complets et cohérents
+  description: Toute clé existe en FR et en EN, aucune clé n'est orpheline, les paramètres sont les mêmes dans les deux langues ; le moteur n'émet que des identifiants de message et des paramètres.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - cargo xtask i18n check échoue si une clé manque dans une langue, si une clé n'est utilisée nulle part, ou si les paramètres diffèrent.
+    - Aucun message produit par le moteur ne contient de texte en langue naturelle (vérification sur l'ensemble des messages du corpus).
+  levels: [unit]
+  source: 02 §4.3
+  status: draft
+
+- id: I18N.PSEUDO.01
+  title: Pseudo-localisation
+  description: Une langue de test allonge et accentue tous les textes, pour repérer les textes en dur et les débordements.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - En pseudo-langue, tous les textes visibles de l'écran principal sont transformés et aucun ne déborde de son conteneur.
+  levels: [ui]
+  source: 02 §4.3
+  status: draft
+
+- id: I18N.TERMS.01
+  title: Termes normatifs non traduits
+  description: Les noms d'éléments de syntaxe et d'indicateurs normatifs restent en anglais ; leurs infobulles sont traduites.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - En français, pic_order_cnt_lsb et Continuity_count_error sont affichés tels quels, avec une infobulle en français.
+  levels: [ui]
+  source: 02 §4.3
+  status: draft
+
+- id: I18N.FORMAT.01
+  title: Formats de nombres et de dates selon la langue
+  description: Nombres, durées et dates suivent la langue dans l'interface (virgule décimale et espace des milliers en français) ; les exports CSV restent au format machine.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - En français, 4016901624 octets s'affiche « 4 016 901 624 » et 22.4 Mbit/s « 22,4 Mbit/s » ; en anglais « 4,016,901,624 » et « 22.4 Mbit/s ».
+  levels: [ui]
+  source: 02 §4.3 ; maquettes Main / MainEN
+  status: draft

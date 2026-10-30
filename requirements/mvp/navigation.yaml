@@ -1,0 +1,167 @@
+# F2 — Navigation vidéo (lot MVP)
+
+- id: NAV.THUMB.01
+  title: Vignettes avec type d'image et index
+  description: La barre de vignettes montre 7 à 11 images autour de l'image courante ; chacune porte un badge de type (I/IDR rouge, P vert, B bleu), l'index de décodage et l'index de présentation.
+  domain: F2
+  lot: MVP
+  acceptance:
+    - En 1920 px de large, 11 vignettes sont visibles ; en 1366 px, au moins 7.
+    - Le badge et ses couleurs correspondent au type de l'image (I/IDR, P, B) pour un GOP connu du corpus.
+    - Les index de décodage et de présentation affichés égalent ceux de l'index.
+  levels: [unit, ui]
+  source: 01 §F2 ; 03 §4.3 ; maquette Thumbnails.dc.html
+  status: draft
+
+- id: NAV.THUMB.02
+  title: Paramètres présents dans l'AU
+  description: Une vignette mentionne les unités de paramètres présentes dans l'access unit (SPS, PPS, VPS, SEI pour H.264/HEVC ; SH, GH pour MPEG-2).
+  domain: F2
+  lot: MVP
+  acceptance:
+    - La vignette d'une IDR HEVC portant VPS/SPS/PPS/SEI affiche ces quatre étiquettes.
+  levels: [unit, ui]
+  source: 01 §F2 ; maquette Thumbnails.dc.html
+  status: draft
+
+- id: NAV.THUMB.03
+  title: Infobulle de vignette
+  description: L'infobulle d'une vignette donne la position en octets, le numéro de paquet et le PTS de l'image.
+  domain: F2
+  lot: MVP
+  acceptance:
+    - L'infobulle de l'image 0 du TS de référence affiche l'offset du paquet portant son début de PES, le numéro de ce paquet et son PTS.
+  levels: [ui]
+  source: 01 §F2
+  status: draft
+
+- id: NAV.BTN.01
+  title: Boutons de navigation
+  description: Boutons début, image I précédente, image précédente, image suivante, image I suivante, fin.
+  domain: F2
+  lot: MVP
+  acceptance:
+    - Depuis l'image 12 452, « I suivante » mène à la prochaine image I/IDR en ordre de présentation, « I précédente » à la précédente.
+    - « Début » mène à la première image décodable, « Fin » à la dernière.
+    - Les boutons sont désactivés quand l'action est impossible (« précédente » sur la première image).
+  levels: [unit, ui]
+  source: 01 §F2 ; 03 §4.3
+  status: draft
+
+- id: NAV.GOTO.01
+  title: Aller à une image
+  description: Un champ « Aller à » accepte un index de présentation et affiche l'image correspondante.
+  domain: F2
+  lot: MVP
+  acceptance:
+    - Saisir 1234 et valider affiche l'image de présentation 1234.
+    - Une valeur hors limites ou non numérique est refusée avec un message, sans changer l'image.
+  levels: [ui, e2e]
+  source: 01 §F2 ; 03 §4.3
+  status: draft
+
+- id: NAV.MODE.01
+  title: Modes RAP et I seulement
+  description: Les vignettes peuvent n'afficher que les points d'accès aléatoire (IDR, CRA, BLA ; I avec GOP fermé en MPEG-2) ou que les images I.
+  domain: F2
+  lot: MVP
+  acceptance:
+    - En mode RAP, toutes les vignettes sont des RAP et la navigation suivante/précédente saute de RAP en RAP.
+    - En mode I, toutes les vignettes sont des images I.
+  levels: [unit, ui]
+  source: 01 §F2 ; maquette Thumbnails.dc.html
+  status: draft
+
+- id: NAV.BAR.01
+  title: Barre de position avec repères d'erreurs
+  description: Sous les vignettes, une barre représente le fichier entier ; elle porte la position courante et des repères d'erreurs (rouge) et d'avertissements (orange), cliquables.
+  domain: F2
+  lot: MVP
+  acceptance:
+    - Les 3 erreurs de continuity counter du TS de référence apparaissent comme 3 repères rouges à leur position relative.
+    - Cliquer un repère amène à l'image concernée.
+    - Cliquer ailleurs dans la barre amène à l'image la plus proche de cette position.
+  levels: [ui]
+  source: 03 §4.3 ; maquette Thumbnails.dc.html
+  status: draft
+
+- id: NAV.BAR.02
+  title: Partie non encore indexée visible
+  description: Pendant l'indexation, la partie non indexée du fichier est hachurée dans la barre de position.
+  domain: F2
+  lot: MVP
+  acceptance:
+    - À 64 % d'indexation, 36 % de la barre est hachurée et non cliquable.
+  levels: [ui]
+  source: 03 §4.11 ; maquette Indexation.dc.html
+  status: draft
+
+- id: NAV.KEY.01
+  title: Raccourcis clavier de navigation
+  description: ←/→ image précédente/suivante ; Ctrl+←/→ image I précédente/suivante ; Début/Fin ; Ctrl+G « aller à » ; F8 / Maj+F8 erreur suivante/précédente.
+  domain: F2
+  lot: MVP
+  acceptance:
+    - Chaque raccourci produit le même effet que le bouton correspondant.
+    - Les raccourcis sont inactifs quand le focus est dans un champ de saisie.
+    - L'infobulle de chaque bouton rappelle son raccourci.
+  levels: [ui]
+  source: design/HANDOFF.md §4 ; 03 §2
+  status: draft
+
+- id: NAV.ERR.01
+  title: Navigation d'erreur en erreur
+  description: Les commandes « erreur suivante / précédente » amènent à l'image portant le prochain message d'erreur ou d'avertissement du rapport.
+  domain: F2
+  lot: MVP
+  acceptance:
+    - Depuis l'image 0 du TS de référence, « erreur suivante » mène à l'image de la première erreur de continuity counter (image 6 670).
+  levels: [ui, e2e]
+  source: 03 §2 ; maquette TitleBar.dc.html
+  status: draft
+
+- id: NAV.ORACLE.01
+  title: L'image affichée est l'image demandée
+  description: Pour tout index de présentation demandé, l'image décodée et affichée est exactement celle-là, y compris avec B-frames et réordonnancement.
+  domain: F2
+  lot: MVP
+  acceptance:
+    - Sur le corpus à numéro d'image incrusté (code binaire), 50 sauts aléatoires puis 20 images suivantes et 20 précédentes donnent chaque fois le code attendu, en H.264 et en HEVC.
+    - La même vérification, faite en lisant les pixels affichés dans l'application, réussit.
+  levels: [unit, e2e]
+  source: 02 §1 (anti-objectif 2) ; 04 §2.2
+  status: draft
+
+- id: NAV.ORACLE.02
+  title: GOP ouvert HEVC (CRA et images RASL)
+  description: Une image RASL qui suit un CRA est décodée en partant du RAP précédent ; une image RADL est décodable depuis son CRA.
+  domain: F2
+  lot: MVP
+  acceptance:
+    - Sur un fichier HEVC en GOP ouvert à numéro incrusté, chaque image RASL demandée affiche le bon code.
+    - Seules les RASL du tout premier CRA du fichier sont déclarées non décodables.
+  levels: [unit]
+  source: 04 §4.5 (GOP ouverts)
+  status: draft
+
+- id: NAV.ORACLE.03
+  title: Points de reprise H.264 (recovery point)
+  description: Un flux H.264 dont les points d'accès sont des images I non IDR avec SEI recovery point est navigable sans redécoder depuis le début du fichier.
+  domain: F2
+  lot: MVP
+  acceptance:
+    - Sur un fichier H.264 sans IDR après la première image mais avec recovery points, un saut au milieu du fichier décode au plus un intervalle de reprise et affiche le bon code.
+  levels: [unit]
+  source: 04 §4.5 (points de reprise)
+  status: draft
+
+- id: NAV.ORACLE.04
+  title: Image non décodable signalée
+  description: Une image qui précède le premier point d'accès aléatoire, ou dont les références manquent, est signalée comme non décodable.
+  domain: F2
+  lot: MVP
+  acceptance:
+    - Sur un fichier coupé au milieu d'un GOP, les images précédant le premier RAP sont marquées non décodables dans les vignettes et dans la vue image.
+  levels: [unit, ui]
+  source: 01 §F2 ; 03 §4.4 ; spike (test frames_before_first_rap)
+  status: draft

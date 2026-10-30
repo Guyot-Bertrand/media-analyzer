@@ -1,0 +1,59 @@
+# F18 — Paramètres (sections du MVP)
+
+- id: SET.PANEL.01
+  title: Panneau de réglages par sections
+  description: Sections Affichage, Journaux, TS / TR 101 290 et Vidéo ; le panneau s'ouvre sur la section liée à la vue courante ; chaque section a une case « tout cocher ».
+  domain: F18
+  lot: MVP
+  acceptance:
+    - Ouvert depuis l'onglet Transport, le panneau affiche la section TS / TR 101 290.
+    - « Tout cocher » coche puis décoche tous les indicateurs de la section.
+  levels: [ui]
+  source: 01 §F18 ; 03 §4.10 ; maquette Reglages.dc.html
+  status: draft
+
+- id: SET.DISPLAY.01
+  title: Réglages d'affichage
+  description: Langue, thème (sombre, clair, système), densité des tableaux, affichage hexadécimal des valeurs.
+  domain: F18
+  lot: MVP
+  acceptance:
+    - Changer le thème s'applique immédiatement à toute l'interface.
+    - L'option hexadécimale s'applique à la vue Syntaxe et aux PID de l'arbre.
+  levels: [ui]
+  source: 01 §F18 ; maquette Reglages.dc.html
+  status: draft
+
+- id: SET.VIDEO.01
+  title: Réglages vidéo
+  description: Décodage matériel (automatique / désactivé) et nombre de GOP décodés lors d'un saut.
+  domain: F18
+  lot: MVP
+  acceptance:
+    - Avec le décodage matériel désactivé, le mode affiché est « logiciel » et les images restent correctes (NAV.ORACLE.01).
+  levels: [unit, ui]
+  source: 01 §F18 ; 02 §6.1
+  status: draft
+
+- id: SET.LOG.01
+  title: Réglages des journaux
+  description: Dossier des journaux et du cache d'index, seuil de mise en sourdine, format d'export par défaut.
+  domain: F18
+  lot: MVP
+  acceptance:
+    - Changer le dossier du cache d'index fait écrire le prochain index dans ce dossier.
+  levels: [unit, ui]
+  source: 01 §F18 (Log Settings)
+  status: draft
+
+- id: SET.PERSIST.01
+  title: Persistance des réglages
+  description: Les réglages sont enregistrés dans ~/.config/media-analyzer/ (TOML) et rechargés au démarrage ; un fichier invalide est signalé et remplacé par les valeurs par défaut.
+  domain: F18
+  lot: MVP
+  acceptance:
+    - Un réglage modifié est retrouvé après redémarrage.
+    - Un fichier de réglages corrompu produit un avertissement et l'application démarre avec les valeurs par défaut.
+  levels: [unit]
+  source: 02 §3.6
+  status: draft

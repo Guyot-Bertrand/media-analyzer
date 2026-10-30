@@ -1,0 +1,59 @@
+# F4 — Données vidéo (périmètre MVP : Séquence/Image et Transport)
+
+- id: DATA.SEQ.01
+  title: Données de séquence
+  description: Codec, profil, niveau (et tier HEVC), résolution, fréquence d'images et balayage, SAR/DAR, format chroma, profondeur de bits, taille de CTB (HEVC), nombre d'images, durée, débit moyen.
+  domain: F4
+  lot: MVP
+  acceptance:
+    - Sur le TS de référence, les valeurs affichées sont HEVC Main 10, niveau 5.1 Main tier, 3840×2160, 50 i/s progressif, 1:1 / 16:9, 4:2:0, 10 bits, CTB 64×64, et correspondent à ffprobe pour le nombre d'images et la durée.
+    - Les mêmes champs sont renseignés pour un H.264 et un MPEG-2 du corpus (champs non applicables marqués « — »).
+  levels: [unit, ui]
+  source: 01 §F4 (Seq/Picture) ; maquette DataPanel.dc.html
+  status: draft
+
+- id: DATA.PIC.01
+  title: Données de l'image courante
+  description: Type d'image (et type de NAL), index de décodage et de présentation, POC (ou référence temporelle MPEG-2), taille en octets, structure (frame/champ), balayage, nombre de slices et tiles, paramètres présents, timecode et AFD s'ils existent.
+  domain: F4
+  lot: MVP
+  acceptance:
+    - Pour l'image courante 12 450 / 12 452 du TS de référence, les champs égalent ceux calculés par le parseur et la taille en octets égale celle de l'AU.
+    - Les données changent quand l'image courante change.
+  levels: [unit, ui]
+  source: 01 §F4 ; maquette DataPanel.dc.html
+  status: draft
+
+- id: DATA.TS.01
+  title: Données de transport de l'image
+  description: PID, PTS, DTS, PTS − PTS0, numéro et position du premier paquet de l'image.
+  domain: F4
+  lot: MVP
+  acceptance:
+    - Pour 10 images du TS de référence, PTS et DTS égalent ceux de ffprobe (-show_packets) et la position égale l'offset du paquet de début de PES.
+  levels: [unit, ui]
+  source: 01 §F4 (Transport) ; maquette DataPanel.dc.html
+  status: draft
+
+- id: DATA.UI.01
+  title: Présentation clé / valeur copiable avec explications
+  description: Les données sont regroupées par rubrique, en clé / valeur, les valeurs en police à chasse fixe et copiables ; chaque clé a une infobulle explicative.
+  domain: F4
+  lot: MVP
+  acceptance:
+    - Le clic sur l'icône de copie d'une valeur la place dans le presse-papiers.
+    - Chaque clé affichée possède une infobulle non vide, en FR et en EN.
+  levels: [ui]
+  source: 03 §4.8
+  status: draft
+
+- id: DATA.UI.02
+  title: Statistiques de prédiction annoncées pour plus tard
+  description: La rubrique des statistiques de prédiction (intra / inter / skip) est présente, marquée « bientôt ».
+  domain: F4
+  lot: MVP
+  acceptance:
+    - La rubrique est affichée avec la mention « bientôt » et aucune valeur chiffrée.
+  levels: [ui]
+  source: 01 §6 (V3) ; maquette DataPanel.dc.html
+  status: draft

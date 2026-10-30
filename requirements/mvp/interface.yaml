@@ -1,0 +1,136 @@
+# Interface : règles transverses (lot MVP)
+
+- id: UI.LAYOUT.01
+  title: Disposition de l'écran principal
+  description: Barre de menus et d'outils, arbre de structure à gauche, onglets et vue principale au centre, panneau Données à droite, vignettes puis rapport en bas, barre d'état.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - La capture de l'écran principal sur les données d'exemple ne s'écarte pas de la maquette Main au-delà du seuil de comparaison visuelle fixé en M7.
+  levels: [ui, e2e]
+  source: 03 §3 ; maquette Main.dc.html
+  status: draft
+
+- id: UI.LAYOUT.02
+  title: Panneaux redimensionnables et masquables
+  description: Les panneaux structure, données et rapport se redimensionnent par séparateur et se masquent (Ctrl+1/2/3) ; la disposition est mémorisée.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Masquer puis réafficher un panneau restaure sa taille ; la disposition est retrouvée au redémarrage.
+  levels: [ui]
+  source: 03 §3 ; design/HANDOFF.md §4
+  status: draft
+
+- id: UI.LAYOUT.03
+  title: Tenue en 1366 × 768
+  description: Sur un écran de portable, l'écran principal reste utilisable, panneaux latéraux repliés.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - En 1366×768, aucune barre de défilement horizontale n'apparaît sur la fenêtre et les 7 vignettes sont visibles.
+  levels: [ui]
+  source: 03 §2 ; maquette Portable.dc.html
+  status: draft
+
+- id: UI.TABS.01
+  title: Onglets contextuels extensibles
+  description: Les onglets (Vidéo, Syntaxe, Transport, Débits au MVP) dépendent du flux sélectionné ; Alt+1…4 les active ; la barre accepte des onglets supplémentaires sans refonte.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Sélectionner un flux audio masque Vidéo et Syntaxe et laisse Transport et Débits.
+    - Alt+2 active l'onglet Syntaxe.
+  levels: [ui]
+  source: 03 §5 ; design/HANDOFF.md §4, §6
+  status: draft
+
+- id: UI.STATE.01
+  title: Code couleur d'état avec forme distincte
+  description: OK, avertissement, erreur, info, en cours, inactif sont distingués par la couleur et par la forme (disque+coche, triangle+!, octogone+×, cercle i, anneau, pointillés).
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Le composant LED rend six formes différentes, identifiables en niveaux de gris.
+  levels: [ui]
+  source: 03 §2 ; design/HANDOFF.md §3 ; maquette Led.dc.html
+  status: draft
+
+- id: UI.TOOLTIP.01
+  title: Infobulles sur chaque élément
+  description: Chaque champ, LED, bouton et message a une infobulle explicative (signification, référence normative, raccourci).
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Un test parcourt les éléments interactifs et les clés de données de l'écran principal et vérifie que chacun a une infobulle non vide.
+  levels: [ui]
+  source: 03 §2
+  status: draft
+
+- id: UI.SYNC.01
+  title: Synchronisation de toutes les vues sur l'image courante
+  description: L'image courante est un état unique ; vignettes, vue Vidéo, Données, Syntaxe, position et rapport la suivent, quelle que soit la vue qui la change.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Changer d'image depuis les vignettes, le rapport, le graphe des débits ou « Aller à » met à jour toutes les vues sur la même image.
+  levels: [ui, e2e]
+  source: 03 §3 ; design/HANDOFF.md §4
+  status: draft
+
+- id: UI.WELCOME.01
+  title: Écran d'accueil et fichiers récents
+  description: Sans fichier ouvert, l'écran d'accueil propose l'ouverture (bouton et glisser-déposer) et la liste des fichiers récents avec taille, chemin, date et indicateur d'index en cache.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Déposer un fichier TS sur l'écran d'accueil l'ouvre.
+    - Un fichier récent dont l'index est en cache porte l'indicateur correspondant ; un fichier récent disparu est signalé.
+  levels: [ui]
+  source: 03 §4.1 ; maquette Accueil.dc.html
+  status: draft
+
+- id: UI.STATUS.01
+  title: Barre d'état
+  description: Nom et taille du fichier, progression de l'indexation et des analyses avec bouton d'annulation, mode de décodage, langue.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Pendant l'indexation, la barre affiche le pourcentage et le bouton Annuler ; à la fin, la progression disparaît.
+  levels: [ui]
+  source: 03 §3 ; maquette StatusBar.dc.html
+  status: draft
+
+- id: UI.THEME.01
+  title: Thème sombre par défaut, thème clair disponible
+  description: Les couleurs proviennent exclusivement des jetons de design (tokens.css) ; les deux thèmes respectent un contraste AA.
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Aucune couleur hexadécimale en dur dans les composants (contrôle automatique).
+    - Les paires texte / fond des deux thèmes ont un contraste ≥ 4,5:1.
+  levels: [unit, ui]
+  source: 03 §1, §2 ; design/tokens.css ; design/HANDOFF.md §3
+  status: draft
+
+- id: UI.ERR.01
+  title: Erreurs présentées sans jargon système
+  description: Fichier illisible, format non supporté, fichier distant inaccessible ou zone corrompue sont présentés comme des informations, avec une action possible ; l'outil ne paraît jamais « cassé ».
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - Chacun des états de la maquette Etats est reproduit sur données simulées et ne contient ni trace de pile ni code d'erreur système brut.
+  levels: [ui]
+  source: 03 §4.11 ; maquette Etats.dc.html
+  status: draft
+
+- id: UI.A11Y.01
+  title: Clavier et focus
+  description: Tous les éléments interactifs sont atteignables au clavier, avec un focus visible (contour 2 px).
+  domain: TRANS
+  lot: MVP
+  acceptance:
+    - La tabulation parcourt menus, barre d'outils, panneaux et vignettes ; chaque élément focalisé a un contour visible.
+  levels: [ui]
+  source: 03 §2 ; design/HANDOFF.md §3
+  status: draft
