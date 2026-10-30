@@ -169,6 +169,11 @@ pub fn scan_rust(root: &Path) -> (Vec<TestLink>, Vec<Diagnostic>) {
                 .filter_map(Result::ok)
                 .map(walkdir::DirEntry::into_path)
                 .filter(|p| p.extension().is_some_and(|e| e == "rs"))
+                // `tests/ui/` : entrées de trybuild (code qui ne doit pas compiler), pas des tests.
+                .filter(|p| {
+                    !p.strip_prefix(&crate_dir)
+                        .is_ok_and(|r| r.starts_with("tests/ui"))
+                })
                 .collect();
             files.sort();
             for file in files {
@@ -246,5 +251,17 @@ mod tests {
             d.message
                 .contains("`helper_without_test`, qui n'est pas un test")
         }));
+    }
+
+    #[test]
+    fn rust_skips_trybuild_inputs() {
+        let (links, diags) = scan_rust(&root());
+        assert!(!links.iter().any(|l| l.req_id == "DEMO.UI.01"));
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.file.to_string_lossy().contains("tests/ui")),
+            "{diags:?}"
+        );
     }
 }

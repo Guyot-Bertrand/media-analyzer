@@ -1,3 +1,6 @@
+use ma_trace::covers;
+
+#[covers("TOOL.TRACE.02")]
 #[test]
 fn rejects_invalid_or_missing_ids() {
     trybuild::TestCases::new().compile_fail("tests/ui/*.rs");

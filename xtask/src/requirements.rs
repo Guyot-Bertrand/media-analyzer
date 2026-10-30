@@ -158,7 +158,7 @@ fn load_config(path: &Path, diags: &mut Vec<Diagnostic>) -> Option<Config> {
                 path,
                 None,
                 format!("configuration illisible : {e}"),
-            ))
+            ));
         })
         .ok()?;
     serde_saphyr::from_str::<Config>(&text)
@@ -167,7 +167,7 @@ fn load_config(path: &Path, diags: &mut Vec<Diagnostic>) -> Option<Config> {
                 path,
                 None,
                 format!("configuration invalide : {e}"),
-            ))
+            ));
         })
         .ok()
 }

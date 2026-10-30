@@ -87,9 +87,10 @@ fn closing(toks: &[(Tok, usize)], open: usize) -> usize {
 fn level_of(rel: &Path) -> Option<Level> {
     let s = rel.to_string_lossy();
     let name = rel.file_name()?.to_string_lossy();
-    if s.starts_with("ui/src/") && (name.ends_with(".test.ts") || name.ends_with(".test.tsx")) {
-        Some(Level::Ui)
-    } else if s.starts_with("ui/tests/") && name.ends_with(".spec.ts") {
+    let component =
+        s.starts_with("ui/src/") && (name.ends_with(".test.ts") || name.ends_with(".test.tsx"));
+    let functional = s.starts_with("ui/tests/") && name.ends_with(".spec.ts");
+    if component || functional {
         Some(Level::Ui)
     } else if s.starts_with("e2e/") && name.ends_with(".e2e.ts") {
         Some(Level::E2e)
