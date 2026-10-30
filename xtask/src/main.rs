@@ -1,5 +1,6 @@
 //! Outillage du dépôt : traçabilité exigences ↔ tests, pipeline de vérification locale.
 
+mod ci;
 mod matrix;
 mod requirements;
 mod results;
@@ -22,7 +23,11 @@ enum Cmd {
     /// Génère la matrice de traçabilité et applique la garde.
     Trace(TraceArgs),
     /// Enchaîne toutes les vérifications de la CI.
-    Ci,
+    Ci {
+        /// Applique aussi la garde de livraison de la traçabilité.
+        #[arg(long)]
+        release: bool,
+    },
 }
 
 #[derive(Args)]
@@ -90,7 +95,7 @@ fn trace(args: &TraceArgs) -> anyhow::Result<bool> {
 fn main() -> anyhow::Result<ExitCode> {
     let ok = match Cli::parse().cmd {
         Cmd::Trace(args) => trace(&args)?,
-        Cmd::Ci => todo!("Tâche 7"),
+        Cmd::Ci { release } => ci::run(&repo_root(), release)?,
     };
     Ok(if ok {
         ExitCode::SUCCESS

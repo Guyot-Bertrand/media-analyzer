@@ -29,7 +29,11 @@ fn attr(e: &quick_xml::events::BytesStart<'_>, key: &[u8]) -> Option<String> {
     e.attributes()
         .filter_map(Result::ok)
         .find(|a| a.key.as_ref() == key)
-        .and_then(|a| a.unescape_value().ok().map(std::borrow::Cow::into_owned))
+        .and_then(|a| {
+            a.normalized_value(quick_xml::XmlVersion::default())
+                .ok()
+                .map(std::borrow::Cow::into_owned)
+        })
 }
 
 /// `JUnit` : `classname::name` (tests Rust de `nextest`) et `name` seul (titres `WebdriverIO`).
