@@ -7,11 +7,20 @@
 
 ## 1. Verdict
 
-**Go, avec la stack prévue (Tauri + WebGL2 + FFmpeg via rsmpeg), sans recourir aux plans B du §8.**
+**Go conditionnel, avec la stack prévue (Tauri + WebGL2 + FFmpeg via rsmpeg), sans recourir aux plans B du §8.**
 
-Le dessin WebGL n'est pas un goulot : 10 à 16 ms pour une image UHD 10 bits. WebKitGTK est stable (20/20 exécutions bout en bout). Le moteur tient tous les seuils en VA-API.
+Ce qui est acquis :
+- Le dessin WebGL n'est pas un goulot : 10 à 16 ms pour une image UHD 10 bits.
+- WebKitGTK est stable : 20/20 exécutions bout en bout.
+- En VA-API, le moteur tient les seuils de saut et d'image suivante.
 
-**Une condition pour le MVP** : ne pas transporter l'image pleine résolution à chaque affichage. Envoyée telle quelle (25 Mo), l'image coûte environ 125 ms de transport vers l'interface. L'interface doit donc demander l'image à la taille affichée, ou la seule région visible à fort zoom (§4).
+Deux seuils ne sont **pas encore tenus** :
+- **Image suivante côté interface** : la meilleure configuration mesurée donne 95 ms au p50 mais **106 ms au p95** ; en pleine résolution, c'est 209/247 ms.
+- **Image précédente** : un arrêt de **plus d'une seconde toutes les 24 images**, au moment du re-décodage arrière.
+
+**Conditions à valider en tout début de MVP** (bloquantes, non mesurées dans ce spike) :
+1. Réduction de l'image **sur le GPU** (VA-API VPP) avant le transfert. On n'envoie à l'interface que la taille affichée, ou la région visible à fort zoom. Objectif : image suivante ≤ 100 ms au p95 côté interface.
+2. **Préchargement en fond** des images voisines, dans les deux sens, pour supprimer l'arrêt de la navigation arrière.
 
 ## 2. Mesures
 
@@ -22,11 +31,11 @@ Le dessin WebGL n'est pas un goulot : 10 à 16 ms pour une image UHD 10 bits. We
 | Première image (index partiel de 64 Mo) | 312 ms ✓ | 147 ms ✓ | ≤ 2 s |
 | Saut arbitraire, p50 / p95 / max | 399 / **625** / 670 ms ✗ | 196 / **321** / 355 ms ✓ | ≤ 500 ms |
 | Image suivante, p50 / p95 | 17 / 22 ms ✓ | 46 / 54 ms ✓ | ≤ 100 ms |
-| Image précédente, p50 / p95 / max | 0 / 0 / 813 ms ✓ | 0 / 0 / 1 357 ms ✓ | ≤ 100 ms |
+| Image précédente, p50 / p95 / max | 0 / 0 / **813** ms ✗ | 0 / 0 / **1 357** ms ✗ | ≤ 100 ms |
 | Mémoire résidente maximale | 1,49 Go ✓ | 0,96 Go ✓ | ≤ 2 Go |
 | Index complet du fichier de 4 Go (en fond) | 2,8 s | 2,8 s | — |
 
-Le max de l'image précédente correspond au re-décodage arrière, une fois toutes les 24 images.
+Le max de l'image précédente correspond au re-décodage arrière, une fois toutes les 24 images. Le p95 ne le montre pas (4 % des pas), mais l'utilisateur le subit : **la navigation arrière ne tient pas le seuil** tant qu'il n'y a pas de préchargement.
 
 Toutes ces mesures sont faites avec le **cache disque chaud** : le vidage du cache (`drop_caches`) demande les droits administrateur et n'a pas été fait. Le décodage domine le temps de saut, mais l'ouverture et l'indexation seront plus lentes à froid ou sur un partage réseau.
 
@@ -40,8 +49,10 @@ Image suivante, mesurée sur l'écran réel (session Wayland), VA-API, build rel
 |---|---|---|---|---|
 | 10 bits, pleine résolution (25 Mo) | 209 / 247 ms ✗ | 193 ms | ~75 ms | 16 ms |
 | 8 bits, pleine résolution (12,5 Mo) | 151 / 188 ms ✗ | 141 ms | — | 10 ms |
-| 8 bits, ¼ de résolution (0,8 Mo) | **95 / 106 ms** ≈ | 93 ms | 89 ms | 1 ms |
-| 10 bits, ¼ de résolution | 101 / 121 ms ≈ | 98 ms | 91 ms | 2 ms |
+| 8 bits, ¼ de résolution (0,8 Mo) | **95 / 106 ms** ✗ (p95 juste au-dessus) | 93 ms | 89 ms | 1 ms |
+| 10 bits, ¼ de résolution | 101 / 121 ms ✗ | 98 ms | 91 ms | 2 ms |
+
+La réduction au ¼ a été faite **côté CPU, après** le transfert GPU → RAM de l'image pleine résolution (environ 40 ms) : ce coût reste à éliminer par une réduction sur le GPU, non mesurée ici.
 
 Autres résultats :
 - Ouverture jusqu'à la première image affichée : **743 à 779 ms** ✓.
@@ -65,6 +76,7 @@ Autres résultats :
 5. **Mémoire de l'indexation** : +3,3 Go, car le début de chaque PES était conservé jusqu'à la fin du balayage. Chaque PES est maintenant analysé dès qu'il est complet ; l'indexation est aussi plus rapide (4,2 s → 2,8 s).
 6. **Sécurité** : taille d'AU non bornée sur un flux malformé, avec un risque de débordement à la création du paquet. Les AU sont maintenant bornées à 32 Mio.
 7. **Saut au-delà de l'index partiel** pendant l'indexation en fond : la requête échouait. Elle attend maintenant la fin de l'indexation.
+8. **Numéros de présentation faux en fin d'index partiel** (trouvé par la relecture finale). Quand la coupure tombait au milieu d'un GOP, les B-frames manquantes décalaient les numéros des dernières images : l'image affichée n'était pas celle demandée. L'index partiel est désormais tronqué au dernier RAP, pour ne garder que des GOP complets.
 
 ### 3.3 Particularités de WebKitGTK à retenir
 - Le nom du GPU est masqué (`WEBGL_debug_renderer_info` renvoie « Apple GPU ») : impossible de vérifier ainsi que WebGL est accéléré. Le dessin est de toute façon négligeable.
@@ -80,13 +92,26 @@ Autres résultats :
    - faire la réduction **sur le GPU** en VA-API (VPP) pour éviter le transfert pleine résolution.
 2. **Préchargement** des images voisines en tâche de fond, pendant que l'utilisateur regarde l'image courante.
 3. **VA-API par défaut**, avec repli logiciel automatique. Ce repli est plus lent en saut et doit être signalé dans l'interface.
-4. Reprendre tels quels les mécanismes validés :
-   - index partiel puis index complet en fond ;
+4. Mécanismes validés, **à reprendre dans leur principe** :
+   - index partiel (tronqué à un GOP complet) puis index complet en fond ;
    - fenêtre de conversion selon le sens de navigation ;
    - poursuite du décodage à travers les GOP ;
    - synchronisation explicite des surfaces VA-API ;
    - indexation à mémoire bornée.
-5. **Lever l'hypothèse « 1 PES = 1 AU »** du spike : le vrai démultiplexeur doit découper les AU dans l'ES.
+5. Mécanismes **à ne pas reprendre tels quels** (validés seulement dans les conditions du spike) :
+   - **hypothèse « 1 PES = 1 AU »** : le vrai démultiplexeur doit découper les AU dans l'ES ;
+   - **choix des RAP** : le corpus est en GOP fermé (IDR seulement). Il faut concevoir et tester :
+     - les **GOP ouverts HEVC** (CRA + images RASL, fréquents en broadcast) : une image RASL se décode à partir du RAP *précédent* ;
+     - les **points de reprise H.264** (images I non IDR avec SEI recovery point) ;
+   - **repli logiciel** : il ne couvre que l'absence du périphérique VA-API. Si le profil n'est pas supporté, FFmpeg bascule en logiciel sans le dire, et l'état « VA-API » affiché est faux. Une erreur GPU en cours de décodage n'est pas rattrapée. Le MVP doit déduire le mode réel du format des images, et reconstruire le décodeur en logiciel en cas d'erreur ;
+   - **tolérance aux flux corrompus** : une AU invalide fait échouer toutes les images de son GOP. Pour un analyseur, il faut continuer en signalant l'erreur ;
+   - **lecture par AU** : chaque lecture de 770 Ko pour une AU de 65 Ko en moyenne crée une amplification de lecture à éliminer, surtout sur réseau.
 6. **Index persistant** (prévu dans la stack) : il évite les 2,8 s d'indexation à chaque réouverture d'un fichier de 4 Go.
-7. **Mesures restant à faire** : cache disque froid, fichier sur partage réseau (NFS/SMB), sauts mesurés côté interface.
+7. **Mesures restant à faire** :
+   - cache disque froid ;
+   - fichier sur partage réseau (NFS/SMB) ;
+   - sauts et navigation arrière mesurés côté interface ;
+   - mémoire de l'application complète (processus WebKit, double session pendant l'indexation) face au seuil de 2 Go ;
+   - un **vrai fichier broadcast UHD**. Le corpus synthétique (mire, x265 `ultrafast`, 25 Mb/s) est plus simple à décoder qu'un flux réel, donc les temps de décodage mesurés sont probablement optimistes ;
+   - un fichier en **GOP ouvert**.
 8. **Tests bout en bout** : la combinaison WebdriverIO + tauri-driver + Xvfb est fiable (20/20). Les tests qui lisent les pixels du canvas pour vérifier l'image affichée sont précieux et à généraliser.
