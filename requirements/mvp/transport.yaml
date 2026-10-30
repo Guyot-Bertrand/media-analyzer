@@ -143,6 +143,18 @@
   source: 01 §F6
   status: validated
 
+- id: TS.TR2.CAT.01
+  title: 2.6 CAT_error
+  description: Paquets embrouillés (transport_scrambling_control non nul) présents sans section CAT (table_id 0x01) ; section de table_id autre que 0x01 sur le PID 0x0001.
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Un TS contenant des paquets embrouillés et aucune CAT produit une erreur 2.6 ; avec une CAT présente, aucune.
+    - Une section de table_id 0x02 sur le PID 0x0001 produit une erreur 2.6 « table_id ».
+  levels: [unit]
+  source: ETSI TR 101 290 §5.2.2 (2.6), ajouté sur décision du porteur (2026-10-31) ; absent de 01 §F6
+  status: validated
+
 - id: TS.TR.CFG.01
   title: Activation et seuils réglables
   description: Chaque indicateur peut être désactivé, l'ensemble peut l'être d'un coup, et les seuils paramétrables (délai de PID manquant, intervalles PAT/PMT/PCR/PTS, précision PCR) sont modifiables.
@@ -168,7 +180,7 @@
 
 - id: TS.TR.VIEW.01
   title: Tableau de bord TR 101 290
-  description: L'onglet Transport présente les 12 indicateurs avec LED d'état, nombre d'occurrences, première et dernière occurrence cliquables, et un mini-histogramme sur la durée du fichier ; filtre par PID ou programme.
+  description: L'onglet Transport présente les 13 indicateurs avec LED d'état, nombre d'occurrences, première et dernière occurrence cliquables, et un mini-histogramme sur la durée du fichier ; filtre par PID ou programme.
   domain: F6
   lot: MVP
   acceptance:
