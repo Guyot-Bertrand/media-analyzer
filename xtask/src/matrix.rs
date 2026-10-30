@@ -1,7 +1,7 @@
 //! Croisement exigences × liens × résultats : matrice de traçabilité et garde de la CI.
 
 use crate::requirements::{Diagnostic, Level, Lot, Requirement, Status};
-use crate::results::Outcome;
+use crate::results::{Outcome, Results};
 use crate::scan_rust::TestLink;
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -32,7 +32,7 @@ impl Coverage {
 pub fn evaluate(
     reqs: &[Requirement],
     links: &[TestLink],
-    results: &HashMap<String, Outcome>,
+    results: &Results,
     current: Lot,
     release: bool,
 ) -> (Vec<Coverage>, Vec<Diagnostic>) {
@@ -50,6 +50,26 @@ pub fn evaluate(
             ));
         }
     }
+    // Les résultats TS sont identifiés par leur titre : deux tests différents de même titre et de même
+    // niveau rendraient l'appariement ambigu (l'un pourrait couvrir l'autre).
+    let mut seen: HashMap<(Level, &str), &TestLink> = HashMap::new();
+    for l in links.iter().filter(|l| l.level != Level::Unit) {
+        if let Some(prev) = seen.insert((l.level, l.test_name.as_str()), l)
+            && (&prev.file, prev.line) != (&l.file, l.line)
+        {
+            errors.push(Diagnostic::new(
+                    &l.file,
+                    Some(l.line),
+                    format!(
+                        "titre de test en double « {} » (niveau {}), aussi dans {}:{} : renommez l'un des tests",
+                        l.test_name,
+                        l.level,
+                        prev.file.display(),
+                        prev.line
+                    ),
+                ));
+        }
+    }
     let mut cov: Vec<Coverage> = reqs
         .iter()
         .map(|r| Coverage {
@@ -61,7 +81,7 @@ pub fn evaluate(
                     (
                         l.clone(),
                         results
-                            .get(&l.test_name)
+                            .get(&(l.level, l.test_name.clone()))
                             .copied()
                             .unwrap_or(Outcome::NotRun),
                     )
@@ -249,8 +269,14 @@ mod tests {
         }
     }
 
-    fn results(pairs: &[(&str, Outcome)]) -> HashMap<String, Outcome> {
-        pairs.iter().map(|(n, o)| ((*n).to_owned(), *o)).collect()
+    /// Résultats valables à tous les niveaux (les tests ci-dessous ne portent pas sur le niveau).
+    fn results(pairs: &[(&str, Outcome)]) -> Results {
+        pairs
+            .iter()
+            .flat_map(|(n, o)| {
+                [Level::Unit, Level::Ui, Level::E2e].map(|l| ((l, (*n).to_owned()), *o))
+            })
+            .collect()
     }
 
     #[test]
@@ -258,7 +284,7 @@ mod tests {
         let (_, errs) = evaluate(
             &[],
             &[link("NOPE.01", "t", Level::Unit)],
-            &HashMap::new(),
+            &Results::new(),
             Lot::Mvp,
             false,
         );
@@ -308,7 +334,7 @@ mod tests {
         let (_, errs) = evaluate(
             &[r],
             &[link("A.01", "u", Level::Unit)],
-            &HashMap::new(),
+            &Results::new(),
             Lot::Mvp,
             false,
         );
@@ -318,7 +344,7 @@ mod tests {
     #[test]
     fn draft_requirements_do_not_fail_outside_release() {
         let r = req("A.01", Lot::Mvp, Status::Draft, &[Level::Unit]);
-        let (_, errs) = evaluate(&[r], &[], &HashMap::new(), Lot::Mvp, false);
+        let (_, errs) = evaluate(&[r], &[], &Results::new(), Lot::Mvp, false);
         assert_eq!(errs, Vec::<Diagnostic>::new());
     }
 
@@ -341,7 +367,7 @@ mod tests {
     #[test]
     fn other_lots_are_ignored_by_gate() {
         let r = req("A.01", Lot::V2, Status::Implemented, &[Level::Unit]);
-        let (_, errs) = evaluate(&[r], &[], &HashMap::new(), Lot::Mvp, true);
+        let (_, errs) = evaluate(&[r], &[], &Results::new(), Lot::Mvp, true);
         assert_eq!(errs, Vec::<Diagnostic>::new());
     }
 
@@ -374,5 +400,36 @@ mod tests {
             "{md}"
         );
         assert!(render_html(&cov).contains("<td>A.01</td>"));
+    }
+
+    #[test]
+    fn result_of_another_level_does_not_cover() {
+        let r = req("A.01", Lot::Mvp, Status::Implemented, &[Level::E2e]);
+        let l = [link("A.01", "ouvre le fichier", Level::E2e)];
+        let res: HashMap<(Level, String), Outcome> =
+            [((Level::Ui, "ouvre le fichier".to_owned()), Outcome::Passed)]
+                .into_iter()
+                .collect();
+        let (_, errs) = evaluate(&[r], &l, &res, Lot::Mvp, false);
+        assert_eq!(
+            errs.len(),
+            1,
+            "un résultat ui ne doit pas couvrir un lien e2e"
+        );
+    }
+
+    #[test]
+    fn duplicate_ts_titles_fail_gate() {
+        let r = req("A.01", Lot::Mvp, Status::Draft, &[Level::Ui]);
+        let mut a = link("A.01", "affiche l'image", Level::Ui);
+        a.file = PathBuf::from("ui/src/A.test.tsx");
+        let mut b = link("A.01", "affiche l'image", Level::Ui);
+        b.file = PathBuf::from("ui/src/B.test.tsx");
+        let (_, errs) = evaluate(&[r], &[a, b], &Results::new(), Lot::Mvp, false);
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("titre de test en double")),
+            "{errs:?}"
+        );
     }
 }

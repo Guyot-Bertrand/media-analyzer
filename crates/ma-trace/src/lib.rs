@@ -39,6 +39,16 @@ pub fn covers(attr: TokenStream, item: TokenStream) -> TokenStream {
         .to_compile_error()
         .into();
     }
+    // Seules les fonctions libres sont tracées (les tests ne sont ni des méthodes ni d'autres éléments).
+    let span = proc_macro2::TokenStream::from(item.clone());
+    match syn::parse::<syn::ItemFn>(item.clone()) {
+        Ok(f) if f.sig.receiver().is_none() => {}
+        _ => {
+            return syn::Error::new_spanned(span, "#[covers] ne s'applique qu'à une fonction (test), pas à une méthode ni à un autre élément")
+                .to_compile_error()
+                .into();
+        }
+    }
     for id in &ids {
         if !valid_id(&id.value()) {
             return syn::Error::new(

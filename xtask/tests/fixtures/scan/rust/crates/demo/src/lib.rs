@@ -21,3 +21,15 @@ mod misplaced {}
 
 #[ma_trace::covers("DEMO.HELP.01")]
 fn helper_without_test() {}
+
+pub struct Thing;
+
+#[ma_trace::covers("DEMO.IMPL.01")]
+impl Thing {
+    #[ma_trace::covers("DEMO.METH.01")]
+    #[test]
+    fn method() {}
+}
+
+#[ma_trace::covers("DEMO.STRUCT.01")]
+pub struct Other;

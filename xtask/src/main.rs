@@ -32,15 +32,33 @@ enum Cmd {
 
 #[derive(Args)]
 struct TraceArgs {
-    /// Fichiers de résultats (`JUnit` `.xml`, `Playwright` / `Vitest` `.json`).
-    #[arg(long = "results")]
-    results: Vec<PathBuf>,
+    /// Fichiers de résultats, préfixés de leur niveau : `unit=…`, `ui=…`, `e2e=…`
+    /// (`JUnit` `.xml`, `Playwright` / `Vitest` `.json`). Sans préfixe : `.xml` = unit, `.json` = ui.
+    #[arg(long = "results", value_parser = parse_results_arg)]
+    results: Vec<(requirements::Level, PathBuf)>,
     /// Garde de livraison : toutes les exigences du lot courant doivent être implémentées et couvertes.
     #[arg(long)]
     release: bool,
     /// Dossier de sortie de la matrice.
     #[arg(long, default_value = "target/trace")]
     out: PathBuf,
+}
+
+fn parse_results_arg(v: &str) -> Result<(requirements::Level, PathBuf), String> {
+    use requirements::Level;
+    match v.split_once('=') {
+        Some(("unit", p)) => Ok((Level::Unit, p.into())),
+        Some(("ui", p)) => Ok((Level::Ui, p.into())),
+        Some(("e2e", p)) => Ok((Level::E2e, p.into())),
+        Some((other, _)) => Err(format!("niveau inconnu « {other} » (unit, ui, e2e)")),
+        None if Path::new(v)
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("xml")) =>
+        {
+            Ok((Level::Unit, v.into()))
+        }
+        None => Ok((Level::Ui, v.into())),
+    }
 }
 
 fn repo_root() -> PathBuf {

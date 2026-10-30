@@ -110,6 +110,17 @@ fn visit(
                             ));
                             continue;
                         }
+                        if ctx.bin_target {
+                            out.1.push(Diagnostic::new(
+                                ctx.file,
+                                Some(line),
+                                format!(
+                                    "avertissement : #[covers] sur `{}` dans une cible binaire (main.rs, bin/) : non pris en charge, placez le test dans la bibliothèque ; ignoré",
+                                    f.sig.ident
+                                ),
+                            ));
+                            continue;
+                        }
                         let mut path = module.clone();
                         path.push(f.sig.ident.to_string());
                         let test_name = format!("{}::{}", ctx.binary, path.join("::"));
@@ -140,14 +151,58 @@ fn visit(
                     module.pop();
                 }
             }
-            _ => {}
+            Item::Impl(i) => {
+                if covers_ids(&i.attrs).is_some() {
+                    out.1.push(Diagnostic::new(
+                        ctx.file,
+                        Some(i.impl_token.span.start().line),
+                        "avertissement : #[covers] sur un bloc `impl` : ignoré",
+                    ));
+                }
+                for it in &i.items {
+                    if let syn::ImplItem::Fn(m) = it
+                        && covers_ids(&m.attrs).is_some()
+                    {
+                        out.1.push(Diagnostic::new(
+                                ctx.file,
+                                Some(m.sig.ident.span().start().line),
+                                format!("avertissement : #[covers] sur la méthode `{}` : ignoré (tests en fonctions libres)", m.sig.ident),
+                            ));
+                    }
+                }
+            }
+            other => warn_other_item(other, ctx, out),
         }
+    }
+}
+
+/// `#[covers]` sur un élément qui n'est ni une fonction, ni un module, ni un `impl` : avertissement.
+fn warn_other_item(item: &Item, ctx: &Ctx<'_>, out: &mut (Vec<TestLink>, Vec<Diagnostic>)) {
+    let named = match item {
+        Item::Struct(x) => Some((&x.attrs, &x.ident)),
+        Item::Enum(x) => Some((&x.attrs, &x.ident)),
+        Item::Const(x) => Some((&x.attrs, &x.ident)),
+        Item::Static(x) => Some((&x.attrs, &x.ident)),
+        Item::Trait(x) => Some((&x.attrs, &x.ident)),
+        Item::Type(x) => Some((&x.attrs, &x.ident)),
+        _ => None,
+    };
+    if let Some((attrs, ident)) = named
+        && covers_ids(attrs).is_some()
+    {
+        out.1.push(Diagnostic::new(
+                            ctx.file,
+                            Some(ident.span().start().line),
+                            format!("avertissement : #[covers] sur l'élément `{ident}`, qui n'est pas une fonction : ignoré"),
+                        ));
     }
 }
 
 struct Ctx<'a> {
     file: &'a Path,
     binary: String,
+    /// `src/main.rs` ou `src/bin/**` : noms de binaires nextest non pris en charge.
+    bin_target: bool,
 }
 
 /// Parcourt `crates/*/src/**/*.rs` et `crates/*/tests/**/*.rs` sous `root`.
@@ -183,12 +238,16 @@ pub fn scan_rust(root: &Path) -> (Vec<TestLink>, Vec<Diagnostic>) {
                 match parsed {
                     Ok(ast) => {
                         let (binary, mut module) = binary_and_module(&crate_dir, &file);
+                        let rel = file.strip_prefix(&crate_dir).unwrap_or(&file);
+                        let bin_target =
+                            rel == Path::new("src/main.rs") || rel.starts_with("src/bin");
                         visit(
                             &ast.items,
                             &mut module,
                             &Ctx {
                                 file: &file,
                                 binary,
+                                bin_target,
                             },
                             &mut out,
                         );
@@ -263,5 +322,45 @@ mod tests {
                 .any(|d| d.file.to_string_lossy().contains("tests/ui")),
             "{diags:?}"
         );
+    }
+
+    #[test]
+    fn rust_warns_on_covers_on_impl_methods_and_other_items() {
+        let (links, diags) = scan_rust(&root());
+        for id in ["DEMO.IMPL.01", "DEMO.METH.01", "DEMO.STRUCT.01"] {
+            assert!(
+                !links.iter().any(|l| l.req_id == id),
+                "{id} ne doit pas être lié"
+            );
+        }
+        assert!(
+            diags.iter().any(|d| d.message.contains("`impl`")),
+            "{diags:?}"
+        );
+        assert!(
+            diags.iter().any(|d| d.message.contains("méthode `method`")),
+            "{diags:?}"
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("élément") && d.message.contains("Other")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn rust_warns_on_covers_in_binary_targets() {
+        let (links, diags) = scan_rust(&root());
+        assert!(
+            !links
+                .iter()
+                .any(|l| l.req_id == "DEMO.BIN.01" || l.req_id == "DEMO.MAIN.01")
+        );
+        let bin_warnings = diags
+            .iter()
+            .filter(|d| d.message.contains("cible binaire"))
+            .count();
+        assert_eq!(bin_warnings, 2, "{diags:?}");
     }
 }

@@ -1,5 +1,6 @@
 //! Résultats d'exécution des tests : `JUnit` (`nextest`, `WebdriverIO`), JSON `Playwright`, JSON `Vitest`.
 
+use crate::requirements::Level;
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use serde_json::Value;
@@ -118,19 +119,32 @@ fn parse_json(v: &Value, out: &mut HashMap<String, Outcome>) {
     }
 }
 
-/// Charge les fichiers de résultats (format reconnu à l'extension : `.xml` `JUnit`, `.json`).
-pub fn load_results(paths: &[PathBuf]) -> anyhow::Result<HashMap<String, Outcome>> {
-    let mut out = HashMap::new();
-    for p in paths {
+/// Résultats indexés par (niveau, nom du test) : un résultat ne couvre que des liens de son niveau.
+pub type Results = HashMap<(Level, String), Outcome>;
+
+/// Charge les fichiers de résultats, chacun associé à un niveau (format reconnu à l'extension :
+/// `.xml` `JUnit`, `.json` `Playwright` ou `Vitest`).
+pub fn load_results(paths: &[(Level, PathBuf)]) -> anyhow::Result<Results> {
+    let mut out = Results::new();
+    for (level, p) in paths {
         let text =
             std::fs::read_to_string(p).map_err(|e| anyhow::anyhow!("{} : {e}", p.display()))?;
+        let mut names = HashMap::new();
         if p.extension().is_some_and(|e| e == "xml") {
-            parse_junit(&text, &mut out)
+            parse_junit(&text, &mut names)
                 .map_err(|e| anyhow::anyhow!("{} : JUnit invalide : {e}", p.display()))?;
         } else {
             let v: Value = serde_json::from_str(&text)
                 .map_err(|e| anyhow::anyhow!("{} : JSON invalide : {e}", p.display()))?;
-            parse_json(&v, &mut out);
+            parse_json(&v, &mut names);
+        }
+        for (name, o) in names {
+            let mut level_map = HashMap::new();
+            if let Some(prev) = out.get(&(*level, name.clone())) {
+                level_map.insert(name.clone(), *prev);
+            }
+            merge(&mut level_map, name.clone(), o);
+            out.insert((*level, name.clone()), level_map[&name]);
         }
     }
     Ok(out)
@@ -149,28 +163,31 @@ mod tests {
 
     #[test]
     fn parses_nextest_junit() {
-        let r = load_results(&[fixture("junit.xml")]).unwrap();
-        assert_eq!(r["demo::tests::adds"], Outcome::Passed);
-        assert_eq!(r["demo::tests::broken"], Outcome::Failed);
-        assert_eq!(r["demo::it::integration"], Outcome::Skipped);
+        let r = load_results(&[(Level::Unit, fixture("junit.xml"))]).unwrap();
+        let r = |n: &str| r[&(Level::Unit, n.to_owned())];
+        assert_eq!(r("demo::tests::adds"), Outcome::Passed);
+        assert_eq!(r("demo::tests::broken"), Outcome::Failed);
+        assert_eq!(r("demo::it::integration"), Outcome::Skipped);
     }
 
     #[test]
     fn parses_playwright_json() {
-        let r = load_results(&[fixture("playwright.json")]).unwrap();
-        assert_eq!(r["navigue à l'image suivante"], Outcome::Passed);
-        assert_eq!(r["aller à"], Outcome::Failed);
+        let r = load_results(&[(Level::Ui, fixture("playwright.json"))]).unwrap();
+        let r = |n: &str| r[&(Level::Ui, n.to_owned())];
+        assert_eq!(r("navigue à l'image suivante"), Outcome::Passed);
+        assert_eq!(r("aller à"), Outcome::Failed);
     }
 
     #[test]
     fn parses_vitest_json() {
-        let r = load_results(&[fixture("vitest.json")]).unwrap();
-        assert_eq!(r["affiche une coche pour ok"], Outcome::Passed);
-        assert_eq!(r["clignote"], Outcome::Skipped);
+        let r = load_results(&[(Level::Ui, fixture("vitest.json"))]).unwrap();
+        let r = |n: &str| r[&(Level::Ui, n.to_owned())];
+        assert_eq!(r("affiche une coche pour ok"), Outcome::Passed);
+        assert_eq!(r("clignote"), Outcome::Skipped);
     }
 
     #[test]
     fn missing_results_file_is_an_error() {
-        assert!(load_results(&[fixture("absent.xml")]).is_err());
+        assert!(load_results(&[(Level::Unit, fixture("absent.xml"))]).is_err());
     }
 }

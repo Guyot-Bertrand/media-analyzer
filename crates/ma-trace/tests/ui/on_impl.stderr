@@ -1,0 +1,20 @@
+error: #[covers] ne s'applique qu'à une fonction (test), pas à une méthode ni à un autre élément
+ --> tests/ui/on_impl.rs:4:5
+  |
+4 |     fn m(&self) {}
+  |     ^^^^^^^^^^^^^^
+
+error: #[covers] ne s'applique qu'à une fonction (test), pas à une méthode ni à un autre élément
+ --> tests/ui/on_impl.rs:7:1
+  |
+7 | impl Clone for S { fn clone(&self) -> S { S } }
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `m` found for struct `S` in the current scope
+ --> tests/ui/on_impl.rs:8:15
+  |
+1 | struct S;
+  | -------- method `m` not found for this struct
+...
+8 | fn main() { S.m() }
+  |               ^ method not found in `S`
