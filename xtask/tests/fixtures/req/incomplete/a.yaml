@@ -1,0 +1,18 @@
+- id: TS.X.01
+  title: Sans critère
+  description: d
+  domain: F6
+  lot: MVP
+  acceptance: []
+  levels: [unit]
+  source: s
+  status: draft
+- id: TS.X.02
+  title: Sans niveau
+  description: d
+  domain: F6
+  lot: MVP
+  acceptance: [a]
+  levels: []
+  source: s
+  status: draft

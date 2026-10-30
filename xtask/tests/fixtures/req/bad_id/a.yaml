@@ -1,0 +1,10 @@
+- id: ts.tr1.01
+  title: Continuity counter
+  description: Erreur de compteur de continuité.
+  domain: F6
+  lot: MVP
+  acceptance:
+    - Un paquet perdu produit une erreur 1.4.
+  levels: [unit]
+  source: 01 §F6
+  status: draft

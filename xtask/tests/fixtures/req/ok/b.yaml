@@ -1,0 +1,19 @@
+- id: NAV.GOTO.01
+  title: Aller à
+  description: Saisie d'un index de présentation.
+  domain: F2
+  lot: MVP
+  acceptance: [L'image demandée est affichée.]
+  levels: [ui, e2e]
+  source: 01 §F2
+  status: validated
+
+- id: UI.COLOR.01
+  title: Code couleur
+  description: Vert, orange, rouge.
+  domain: TRANS
+  lot: V1
+  acceptance: [Chaque état a une forme distincte.]
+  levels: [ui]
+  source: 03 §2
+  status: implemented
