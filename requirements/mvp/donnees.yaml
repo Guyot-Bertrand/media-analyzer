@@ -10,7 +10,7 @@
     - Les mêmes champs sont renseignés pour un H.264 et un MPEG-2 du corpus (champs non applicables marqués « — »).
   levels: [unit, ui]
   source: 01 §F4 (Seq/Picture) ; maquette DataPanel.dc.html
-  status: draft
+  status: validated
 
 - id: DATA.PIC.01
   title: Données de l'image courante
@@ -22,7 +22,7 @@
     - Les données changent quand l'image courante change.
   levels: [unit, ui]
   source: 01 §F4 ; maquette DataPanel.dc.html
-  status: draft
+  status: validated
 
 - id: DATA.TS.01
   title: Données de transport de l'image
@@ -33,7 +33,7 @@
     - Pour 10 images du TS de référence, PTS et DTS égalent ceux de ffprobe (-show_packets) et la position égale l'offset du paquet de début de PES.
   levels: [unit, ui]
   source: 01 §F4 (Transport) ; maquette DataPanel.dc.html
-  status: draft
+  status: validated
 
 - id: DATA.UI.01
   title: Présentation clé / valeur copiable avec explications
@@ -45,7 +45,7 @@
     - Chaque clé affichée possède une infobulle non vide, en FR et en EN.
   levels: [ui]
   source: 03 §4.8
-  status: draft
+  status: validated
 
 - id: DATA.UI.02
   title: Statistiques de prédiction annoncées pour plus tard
@@ -56,4 +56,4 @@
     - La rubrique est affichée avec la mention « bientôt » et aucune valeur chiffrée.
   levels: [ui]
   source: 01 §6 (V3) ; maquette DataPanel.dc.html
-  status: draft
+  status: validated

@@ -10,7 +10,7 @@
     - Le nombre de paquets compté est égal à taille du fichier / taille de paquet (fichier non tronqué).
   levels: [unit]
   source: 01 §2.4, §F1 ; CMA §Report View (paquets 188/204/208)
-  status: draft
+  status: validated
 
 - id: STRUCT.OPEN.02
   title: Ouverture d'un TTS (TS avec horodatage de 4 octets)
@@ -22,7 +22,7 @@
     - L'interface indique que les analyses de timing propres au TS (PCR, buffers) ne sont pas garanties sur un TTS.
   levels: [unit]
   source: 01 §2.3 (restriction TTS), §F1
-  status: draft
+  status: validated
 
 - id: STRUCT.OPEN.03
   title: Ouverture d'ES bruts H.264, HEVC et MPEG-2 Video
@@ -34,7 +34,7 @@
     - Un fichier H.264 renommé en .bin est reconnu comme H.264.
   levels: [unit]
   source: 01 §2.2, §F1
-  status: draft
+  status: validated
 
 - id: STRUCT.OPEN.04
   title: Format non reconnu ou fichier illisible
@@ -46,7 +46,7 @@
     - L'application reste utilisable après l'erreur.
   levels: [unit, ui]
   source: 03 §4.11 (états d'erreur) ; 01 §F1
-  status: draft
+  status: validated
 
 - id: STRUCT.OPEN.05
   title: Association manuelle d'une extension inconnue
@@ -58,7 +58,7 @@
     - Un second fichier .xyz s'ouvre directement comme TS.
   levels: [unit, ui]
   source: 01 §2.1 (extension inconnue)
-  status: draft
+  status: validated
 
 - id: STRUCT.TREE.01
   title: Arbre PAT / CAT / PMT / ES avec PID et informations
@@ -70,7 +70,7 @@
     - Chaque ES indique son type (codec ou nature) ; la vidéo indique sa résolution et sa fréquence d'images.
   levels: [unit, ui]
   source: 01 §F1 ; 03 §4.2 ; maquette StructureTree.dc.html
-  status: draft
+  status: validated
 
 - id: STRUCT.TREE.02
   title: Porteur du PCR
@@ -82,7 +82,7 @@
     - Sur un TS avec PCR sur PID dédié, ce PID apparaît dans l'arbre avec la mention « PCR ».
   levels: [unit, ui]
   source: 01 §F1 ; maquette StructureTree.dc.html
-  status: draft
+  status: validated
 
 - id: STRUCT.TREE.03
   title: Nom de service via la SDT
@@ -94,7 +94,7 @@
     - Sans SDT, le nœud affiche seulement « Programme n ».
   levels: [unit]
   source: 01 §F1, §F18 (standard DVB)
-  status: draft
+  status: validated
 
 - id: STRUCT.TREE.04
   title: Flux non supportés signalés génériquement
@@ -105,7 +105,7 @@
     - Un TS contenant une piste VC-1 et une piste AC-4 montre ces nœuds en « Vidéo — non analysé » et « Audio — non analysé », en style grisé.
   levels: [unit, ui]
   source: 01 §F1 ; maquette StructureTree.dc.html (nœuds en italique)
-  status: draft
+  status: validated
 
 - id: STRUCT.TREE.05
   title: TS multi-programmes (MPTS)
@@ -117,7 +117,7 @@
     - Sélectionner une vidéo du 2e programme affiche ses images.
   levels: [unit, e2e]
   source: 01 §F1
-  status: draft
+  status: validated
 
 - id: STRUCT.TREE.06
   title: Sélection automatique de la première vidéo
@@ -128,7 +128,7 @@
     - À l'ouverture du TS de référence, le flux 0x0100 est sélectionné et l'image 0 est affichée.
   levels: [ui, e2e]
   source: 01 §F1
-  status: draft
+  status: validated
 
 - id: STRUCT.TREE.07
   title: État d'analyse agrégé par nœud
@@ -140,7 +140,7 @@
     - Un flux sans message affiche la LED OK.
   levels: [unit, ui]
   source: 03 §4.2 ; maquette StructureTree.dc.html
-  status: draft
+  status: validated
 
 - id: STRUCT.TREE.08
   title: Arbre de structure repliable en rail d'icônes
@@ -151,4 +151,4 @@
     - Le bouton de repli réduit le panneau à un rail ; un clic sur une icône sélectionne le flux correspondant.
   levels: [ui]
   source: maquette StructureTree.dc.html (mode replié), Portable.dc.html
-  status: draft
+  status: validated

@@ -11,7 +11,7 @@
     - Les index de décodage et de présentation affichés égalent ceux de l'index.
   levels: [unit, ui]
   source: 01 §F2 ; 03 §4.3 ; maquette Thumbnails.dc.html
-  status: draft
+  status: validated
 
 - id: NAV.THUMB.02
   title: Paramètres présents dans l'AU
@@ -22,7 +22,7 @@
     - La vignette d'une IDR HEVC portant VPS/SPS/PPS/SEI affiche ces quatre étiquettes.
   levels: [unit, ui]
   source: 01 §F2 ; maquette Thumbnails.dc.html
-  status: draft
+  status: validated
 
 - id: NAV.THUMB.03
   title: Infobulle de vignette
@@ -33,7 +33,7 @@
     - L'infobulle de l'image 0 du TS de référence affiche l'offset du paquet portant son début de PES, le numéro de ce paquet et son PTS.
   levels: [ui]
   source: 01 §F2
-  status: draft
+  status: validated
 
 - id: NAV.BTN.01
   title: Boutons de navigation
@@ -46,7 +46,7 @@
     - Les boutons sont désactivés quand l'action est impossible (« précédente » sur la première image).
   levels: [unit, ui]
   source: 01 §F2 ; 03 §4.3
-  status: draft
+  status: validated
 
 - id: NAV.GOTO.01
   title: Aller à une image
@@ -58,7 +58,7 @@
     - Une valeur hors limites ou non numérique est refusée avec un message, sans changer l'image.
   levels: [ui, e2e]
   source: 01 §F2 ; 03 §4.3
-  status: draft
+  status: validated
 
 - id: NAV.MODE.01
   title: Modes RAP et I seulement
@@ -70,7 +70,7 @@
     - En mode I, toutes les vignettes sont des images I.
   levels: [unit, ui]
   source: 01 §F2 ; maquette Thumbnails.dc.html
-  status: draft
+  status: validated
 
 - id: NAV.BAR.01
   title: Barre de position avec repères d'erreurs
@@ -83,7 +83,7 @@
     - Cliquer ailleurs dans la barre amène à l'image la plus proche de cette position.
   levels: [ui]
   source: 03 §4.3 ; maquette Thumbnails.dc.html
-  status: draft
+  status: validated
 
 - id: NAV.BAR.02
   title: Partie non encore indexée visible
@@ -94,7 +94,7 @@
     - À 64 % d'indexation, 36 % de la barre est hachurée et non cliquable.
   levels: [ui]
   source: 03 §4.11 ; maquette Indexation.dc.html
-  status: draft
+  status: validated
 
 - id: NAV.KEY.01
   title: Raccourcis clavier de navigation
@@ -107,7 +107,7 @@
     - L'infobulle de chaque bouton rappelle son raccourci.
   levels: [ui]
   source: design/HANDOFF.md §4 ; 03 §2
-  status: draft
+  status: validated
 
 - id: NAV.ERR.01
   title: Navigation d'erreur en erreur
@@ -118,7 +118,7 @@
     - Depuis l'image 0 du TS de référence, « erreur suivante » mène à l'image de la première erreur de continuity counter (image 6 670).
   levels: [ui, e2e]
   source: 03 §2 ; maquette TitleBar.dc.html
-  status: draft
+  status: validated
 
 - id: NAV.ORACLE.01
   title: L'image affichée est l'image demandée
@@ -130,7 +130,7 @@
     - La même vérification, faite en lisant les pixels affichés dans l'application, réussit.
   levels: [unit, e2e]
   source: 02 §1 (anti-objectif 2) ; 04 §2.2
-  status: draft
+  status: validated
 
 - id: NAV.ORACLE.02
   title: GOP ouvert HEVC (CRA et images RASL)
@@ -142,7 +142,7 @@
     - Seules les RASL du tout premier CRA du fichier sont déclarées non décodables.
   levels: [unit]
   source: 04 §4.5 (GOP ouverts)
-  status: draft
+  status: validated
 
 - id: NAV.ORACLE.03
   title: Points de reprise H.264 (recovery point)
@@ -153,7 +153,7 @@
     - Sur un fichier H.264 sans IDR après la première image mais avec recovery points, un saut au milieu du fichier décode au plus un intervalle de reprise et affiche le bon code.
   levels: [unit]
   source: 04 §4.5 (points de reprise)
-  status: draft
+  status: validated
 
 - id: NAV.ORACLE.04
   title: Image non décodable signalée
@@ -164,4 +164,4 @@
     - Sur un fichier coupé au milieu d'un GOP, les images précédant le premier RAP sont marquées non décodables dans les vignettes et dans la vue image.
   levels: [unit, ui]
   source: 01 §F2 ; 03 §4.4 ; spike (test frames_before_first_rap)
-  status: draft
+  status: validated

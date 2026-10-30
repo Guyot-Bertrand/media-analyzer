@@ -10,7 +10,7 @@
     - Aucun texte français n'apparaît dans l'écran principal en anglais (capture comparée à la maquette MainEN).
   levels: [ui, e2e]
   source: 02 §4.3 ; maquette MainEN.dc.html
-  status: draft
+  status: validated
 
 - id: I18N.SWITCH.01
   title: Changement de langue à chaud
@@ -21,7 +21,7 @@
     - Après bascule, les libellés et les descriptions du rapport existant sont dans la nouvelle langue.
   levels: [ui]
   source: 02 §4.3 ; maquette Reglages.dc.html
-  status: draft
+  status: validated
 
 - id: I18N.KEYS.01
   title: Catalogues complets et cohérents
@@ -33,7 +33,7 @@
     - Aucun message produit par le moteur ne contient de texte en langue naturelle (vérification sur l'ensemble des messages du corpus).
   levels: [unit]
   source: 02 §4.3
-  status: draft
+  status: validated
 
 - id: I18N.PSEUDO.01
   title: Pseudo-localisation
@@ -44,7 +44,7 @@
     - En pseudo-langue, tous les textes visibles de l'écran principal sont transformés et aucun ne déborde de son conteneur.
   levels: [ui]
   source: 02 §4.3
-  status: draft
+  status: validated
 
 - id: I18N.TERMS.01
   title: Termes normatifs non traduits
@@ -55,7 +55,7 @@
     - En français, pic_order_cnt_lsb et Continuity_count_error sont affichés tels quels, avec une infobulle en français.
   levels: [ui]
   source: 02 §4.3
-  status: draft
+  status: validated
 
 - id: I18N.FORMAT.01
   title: Formats de nombres et de dates selon la langue
@@ -66,4 +66,4 @@
     - En français, 4016901624 octets s'affiche « 4 016 901 624 » et 22.4 Mbit/s « 22,4 Mbit/s » ; en anglais « 4,016,901,624 » et « 22.4 Mbit/s ».
   levels: [ui]
   source: 02 §4.3 ; maquettes Main / MainEN
-  status: draft
+  status: validated
