@@ -151,31 +151,50 @@ fn id_lines(text: &str) -> Vec<usize> {
         .collect()
 }
 
+fn load_config(path: &Path, diags: &mut Vec<Diagnostic>) -> Option<Config> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| {
+            diags.push(Diagnostic::new(
+                path,
+                None,
+                format!("configuration illisible : {e}"),
+            ))
+        })
+        .ok()?;
+    serde_yaml_ng::from_str::<Config>(&text)
+        .map_err(|e| {
+            diags.push(Diagnostic::new(
+                path,
+                None,
+                format!("configuration invalide : {e}"),
+            ))
+        })
+        .ok()
+}
+
+fn check_duplicates(reqs: &[Requirement], diags: &mut Vec<Diagnostic>) {
+    let mut seen: HashMap<&str, &Requirement> = HashMap::new();
+    for r in reqs {
+        if let Some(prev) = seen.insert(&r.id, r) {
+            diags.push(Diagnostic::new(
+                &r.file,
+                Some(r.line),
+                format!(
+                    "identifiant en double {} (déjà défini dans {}:{})",
+                    r.id,
+                    prev.file.display(),
+                    prev.line
+                ),
+            ));
+        }
+    }
+}
+
 /// Charge `config.yaml` et toutes les exigences (`*.yaml`) sous `dir`.
 pub fn load(dir: &Path) -> Result<(Config, Vec<Requirement>), Vec<Diagnostic>> {
     let mut diags = Vec::new();
     let config_path = dir.join("config.yaml");
-    let config = match std::fs::read_to_string(&config_path) {
-        Ok(t) => match serde_yaml_ng::from_str::<Config>(&t) {
-            Ok(c) => Some(c),
-            Err(e) => {
-                diags.push(Diagnostic::new(
-                    &config_path,
-                    None,
-                    format!("configuration invalide : {e}"),
-                ));
-                None
-            }
-        },
-        Err(e) => {
-            diags.push(Diagnostic::new(
-                &config_path,
-                None,
-                format!("configuration illisible : {e}"),
-            ));
-            None
-        }
-    };
+    let config = load_config(&config_path, &mut diags);
 
     let mut files: Vec<PathBuf> = walkdir::WalkDir::new(dir)
         .into_iter()
@@ -241,21 +260,7 @@ pub fn load(dir: &Path) -> Result<(Config, Vec<Requirement>), Vec<Diagnostic>> {
         }
     }
 
-    let mut seen: HashMap<&str, &Requirement> = HashMap::new();
-    for r in &reqs {
-        if let Some(prev) = seen.insert(&r.id, r) {
-            diags.push(Diagnostic::new(
-                &r.file,
-                Some(r.line),
-                format!(
-                    "identifiant en double {} (déjà défini dans {}:{})",
-                    r.id,
-                    prev.file.display(),
-                    prev.line
-                ),
-            ));
-        }
-    }
+    check_duplicates(&reqs, &mut diags);
 
     match config {
         Some(c) if diags.is_empty() => Ok((c, reqs)),
