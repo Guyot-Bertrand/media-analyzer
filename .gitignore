@@ -1,2 +1,5 @@
 # Documentation tierce sous droit d'auteur, conservée localement comme référence
 *.pdf
+
+# Spike jetable : sources versionnées sur la branche spike/stack-validation, artefacts de build locaux
+/spike/
