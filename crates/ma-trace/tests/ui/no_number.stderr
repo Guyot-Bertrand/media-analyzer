@@ -1,0 +1,5 @@
+error: identifiant d'exigence invalide : "TS.TR1"
+ --> tests/ui/no_number.rs:1:20
+  |
+1 | #[ma_trace::covers("TS.TR1")]
+  |                    ^^^^^^^^

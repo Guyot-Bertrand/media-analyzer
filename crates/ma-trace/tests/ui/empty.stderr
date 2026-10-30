@@ -1,0 +1,7 @@
+error: #[covers] attend au moins un identifiant d'exigence
+ --> tests/ui/empty.rs:1:1
+  |
+1 | #[ma_trace::covers()]
+  | ^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `ma_trace::covers` (in Nightly builds, run with -Z macro-backtrace for more info)

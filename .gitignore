@@ -3,3 +3,5 @@
 
 # Spike jetable : sources versionnées sur la branche spike/stack-validation, artefacts de build locaux
 /spike/
+/target
+node_modules/

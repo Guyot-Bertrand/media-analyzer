@@ -1,0 +1,5 @@
+error: identifiant d'exigence invalide : "ts.tr1.01"
+ --> tests/ui/bad_id.rs:1:20
+  |
+1 | #[ma_trace::covers("ts.tr1.01")]
+  |                    ^^^^^^^^^^^
