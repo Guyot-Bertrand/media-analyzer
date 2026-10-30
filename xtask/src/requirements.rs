@@ -161,7 +161,7 @@ fn load_config(path: &Path, diags: &mut Vec<Diagnostic>) -> Option<Config> {
             ))
         })
         .ok()?;
-    serde_yaml_ng::from_str::<Config>(&text)
+    serde_saphyr::from_str::<Config>(&text)
         .map_err(|e| {
             diags.push(Diagnostic::new(
                 path,
@@ -217,10 +217,10 @@ pub fn load(dir: &Path) -> Result<(Config, Vec<Requirement>), Vec<Diagnostic>> {
                 continue;
             }
         };
-        let raws: Vec<RawRequirement> = match serde_yaml_ng::from_str(&text) {
+        let raws: Vec<RawRequirement> = match serde_saphyr::from_str(&text) {
             Ok(r) => r,
             Err(e) => {
-                let line = e.location().map(|l| l.line());
+                let line = e.location().and_then(|l| usize::try_from(l.line()).ok());
                 diags.push(Diagnostic::new(&file, line, format!("YAML invalide : {e}")));
                 continue;
             }
