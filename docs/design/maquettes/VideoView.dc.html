@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Vue Vidéo</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; background: {{t.bg1}}; color: {{t.tx}}; font-family: IBM Plex Sans, system-ui, sans-serif; font-size: 12px; line-height: 16px">
+  <div role="toolbar" aria-label="{{s.toolbar}}" style="min-height: 36px; flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 4px 10px; border-bottom: 1px solid {{t.line}}">
+    <div role="group" aria-label="Zoom" style="display: flex; align-items: center; gap: 2px">
+      <button title="{{s.zoomOutTip}}" aria-label="{{s.zoomOut}}" style="width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid {{t.line2}}; border-radius: 5px 0 0 5px; background: {{t.bg2}}; color: {{t.tx2}}; cursor: pointer"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"></path></svg></button>
+      <button title="{{s.zoomTip}}" style="height: 26px; min-width: 96px; display: inline-flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 8px; border: 1px solid {{t.line2}}; border-left: 0; border-right: 0; background: {{t.field}}; color: {{t.tx}}; font: inherit; font-family: IBM Plex Mono, monospace; font-size: 11.5px; cursor: pointer">{{zoomLabel}}<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+      <button title="{{s.zoomInTip}}" aria-label="{{s.zoomIn}}" style="width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid {{t.line2}}; border-radius: 0 5px 5px 0; background: {{t.bg2}}; color: {{t.tx2}}; cursor: pointer"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14M12 5v14"></path></svg></button>
+      <sc-if value="{{wide}}" hint-placeholder-val="{{ true }}">
+        <div style="display: flex; gap: 2px; margin-left: 6px">
+          <sc-for list="{{zooms}}" as="z" hint-placeholder-count="5">
+            <button title="{{z.tip}}" aria-pressed="{{z.on}}" onClick="{{z.pick}}" style="height: 26px; padding: 0 7px; border: 1px solid {{z.border}}; border-radius: 5px; background: {{z.bg}}; color: {{z.color}}; font: inherit; font-family: IBM Plex Mono, monospace; font-size: 11px; cursor: pointer">{{z.label}}</button>
+          </sc-for>
+        </div>
+      </sc-if>
+    </div>
+    <div aria-hidden="true" style="width: 1px; height: 18px; background: {{t.line2}}"></div>
+    <div role="group" aria-label="{{s.comps}}" style="display: flex; align-items: center; gap: 4px">
+      <span style="color: {{t.tx3}}; font-size: 11px">{{s.comps}}</span>
+      <sc-for list="{{yuv}}" as="c" hint-placeholder-count="3">
+        <button title="{{c.tip}}" aria-pressed="{{c.on}}" onClick="{{c.toggle}}" style="width: 26px; height: 26px; border: 1px solid {{c.border}}; border-radius: 5px; background: {{c.bg}}; color: {{c.color}}; font: inherit; font-family: IBM Plex Mono, monospace; font-weight: 500; cursor: pointer">{{c.k}}</button>
+      </sc-for>
+    </div>
+    <div aria-hidden="true" style="width: 1px; height: 18px; background: {{t.line2}}"></div>
+    <div role="group" aria-label="{{s.grids}}" style="display: flex; align-items: center; gap: 4px">
+      <span style="color: {{t.tx3}}; font-size: 11px">{{s.grids}}</span>
+      <sc-for list="{{grids}}" as="g" hint-placeholder-count="2">
+        <button title="{{g.tip}}" aria-pressed="{{g.on}}" onClick="{{g.toggle}}" style="height: 26px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid {{g.border}}; border-radius: 5px; background: {{g.bg}}; color: {{g.color}}; font: inherit; cursor: pointer; white-space: nowrap"><span aria-hidden="true" style="width: 10px; height: 0; border-top: 2px {{g.dash}} {{g.swatch}}"></span>{{g.label}}</button>
+      </sc-for>
+    </div>
+    <div aria-hidden="true" style="width: 1px; height: 18px; background: {{t.line2}}"></div>
+    <div role="group" aria-label="{{s.overlays}}" style="display: flex; align-items: center; gap: 4px">
+      <span style="color: {{t.tx3}}; font-size: 11px">{{s.overlays}}</span>
+      <sc-for list="{{future}}" as="f" hint-placeholder-count="3">
+        <button disabled="{{ true }}" title="{{f.tip}}" style="height: 26px; display: inline-flex; align-items: center; gap: 5px; padding: 0 7px; border: 1px dashed {{t.line2}}; border-radius: 5px; background: transparent; color: {{t.dis}}; font: inherit; cursor: not-allowed; white-space: nowrap">{{f.label}}<span style="padding: 0 4px; border-radius: 3px; background: {{t.bg3}}; color: {{t.tx3}}; font-size: 10px; line-height: 14px">{{s.soon}}</span></button>
+      </sc-for>
+    </div>
+    <label title="{{s.alphaTip}}" style="display: flex; align-items: center; gap: 6px; color: {{t.tx3}}; font-size: 11px; white-space: nowrap">{{s.alpha}}
+      <input type="range" min="0" max="100" value="{{alpha}}" onChange="{{setAlpha}}" style="width: 90px; accent-color: {{t.acc}}">
+      <span style="width: 32px; font-family: IBM Plex Mono, monospace; color: {{t.tx2}}">{{alpha}} %</span>
+    </label>
+  </div>
+
+  <div style="flex: 1; min-height: 0; position: relative; background: {{t.video}}">
+    <div style="position: absolute; inset: 12px 12px 30px; display: flex; align-items: center; justify-content: center">
+      <sc-if value="{{isOk}}" hint-placeholder-val="{{ true }}">
+        <div role="img" aria-label="{{s.imgAlt}}" style="position: relative; height: 100%; max-width: 100%; aspect-ratio: 16 / 9; overflow: hidden; outline: 1px solid {{t.line}}; filter: {{imgFilter}}">
+          <div style="position: absolute; inset: 0 0 33% 0; display: flex">
+            <div style="flex: 1; background: #BFBFBF"></div><div style="flex: 1; background: #BFBF00"></div><div style="flex: 1; background: #00BFBF"></div><div style="flex: 1; background: #00BF00"></div><div style="flex: 1; background: #BF00BF"></div><div style="flex: 1; background: #BF0000"></div><div style="flex: 1; background: #0000BF"></div>
+          </div>
+          <div style="position: absolute; left: 0; right: 0; top: 67%; height: 8%; display: flex">
+            <div style="flex: 1; background: #0000BF"></div><div style="flex: 1; background: #101010"></div><div style="flex: 1; background: #BF00BF"></div><div style="flex: 1; background: #101010"></div><div style="flex: 1; background: #00BFBF"></div><div style="flex: 1; background: #101010"></div><div style="flex: 1; background: #BFBFBF"></div>
+          </div>
+          <div style="position: absolute; left: 0; right: 0; top: 75%; bottom: 0; display: flex">
+            <div style="flex: 5; background: #00214C"></div><div style="flex: 5; background: #EBEBEB"></div><div style="flex: 5; background: #32006A"></div><div style="flex: 9; background: #101010"></div><div style="flex: 1.6; background: #000000"></div><div style="flex: 1.6; background: #101010"></div><div style="flex: 1.6; background: #1D1D1D"></div><div style="flex: 5; background: #101010"></div>
+          </div>
+          <sc-if value="{{showSlices}}" hint-placeholder-val="{{ true }}">
+            <div aria-hidden="true" style="position: absolute; inset: 0; opacity: {{alphaF}}">
+              <sc-for list="{{sliceLines}}" as="l" hint-placeholder-count="4">
+                <div style="position: absolute; left: 0; right: 0; top: {{l.top}}%; height: 25%; box-sizing: border-box; border-top: {{l.bw}}px solid #FFFFFF">
+                  <span style="position: absolute; left: 4px; top: 3px; padding: 0 4px; background: rgba(0,0,0,0.72); color: #FFFFFF; font-family: IBM Plex Mono, monospace; font-size: 10px; line-height: 14px">{{l.label}}</span>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+          <sc-if value="{{showTiles}}" hint-placeholder-val="{{ true }}">
+            <div aria-hidden="true" style="position: absolute; inset: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); opacity: {{alphaF}}">
+              <sc-for list="{{tiles}}" as="ti" hint-placeholder-count="8">
+                <div style="position: relative; box-sizing: border-box; border-right: 1px dashed #FFD43B; border-bottom: 1px dashed #FFD43B">
+                  <span style="position: absolute; right: 4px; top: 3px; padding: 0 4px; background: rgba(0,0,0,0.72); color: #FFD43B; font-family: IBM Plex Mono, monospace; font-size: 10px; line-height: 14px">{{ti.label}}</span>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+          <div style="position: absolute; left: 8px; bottom: 8px; display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 4px; background: rgba(0,0,0,0.78); color: #E6EAF0; font-family: IBM Plex Mono, monospace; font-size: 11px; line-height: 14px">
+            <span title="{{s.typeTip}}" style="min-width: 16px; padding: 0 4px; border-radius: 3px; background: {{badge}}; color: #FFFFFF; font-weight: 600; text-align: center">{{f.type}}</span>
+            <span>{{s.dec}} {{decTxt}}</span><span style="color: #AEB7C4">·</span><span>{{s.pres}} {{presTxt}}</span><span style="color: #AEB7C4">·</span><span>{{timeTxt}}</span>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{isLoading}}" hint-placeholder-val="{{ false }}">
+        <div role="status" style="position: relative; height: 100%; max-width: 100%; aspect-ratio: 16 / 9; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: {{t.bg2}}; outline: 1px solid {{t.line}}">
+          <dc-import name="Led" state="run" theme="{{theme}}" size="22" hint-size="22px,22px"></dc-import>
+          <span style="color: {{t.tx2}}">{{s.loading}} {{decTxt}}…</span>
+          <span style="color: {{t.tx3}}; font-size: 11px">{{s.loadingSub}}</span>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{isBad}}" hint-placeholder-val="{{ false }}">
+        <div role="alert" style="position: relative; height: 100%; max-width: 100%; aspect-ratio: 16 / 9; display: flex; align-items: center; justify-content: center; background: {{t.bg2}}; outline: 1px solid {{t.line}}">
+          <div style="max-width: 440px; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 24px; text-align: center">
+            <dc-import name="Led" state="warn" theme="{{theme}}" size="24" hint-size="24px,24px"></dc-import>
+            <span style="font-size: 15px; line-height: 20px; font-weight: 600">{{s.badTitle}} {{decTxt}}</span>
+            <span style="color: {{t.tx2}}">{{s.badBody}}</span>
+            <div style="display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; justify-content: center">
+              <button title="{{s.badNextTip}}" style="height: 30px; padding: 0 12px; border: 0; border-radius: 5px; background: {{t.acc}}; color: {{t.accTx}}; font: inherit; font-weight: 600; cursor: pointer">{{s.badNext}}</button>
+              <button title="{{s.badReportTip}}" style="height: 30px; padding: 0 12px; border: 1px solid {{t.line2}}; border-radius: 5px; background: transparent; color: {{t.tx}}; font: inherit; cursor: pointer">{{s.badReport}}</button>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+    <div style="position: absolute; left: 0; right: 0; bottom: 0; height: 26px; display: flex; align-items: center; gap: 16px; padding: 0 12px; background: {{t.bg2}}; border-top: 1px solid {{t.line}}; color: {{t.tx3}}; font-size: 11px; white-space: nowrap; overflow: hidden">
+      <span title="{{s.cursorTip}}" style="font-family: IBM Plex Mono, monospace; color: {{t.tx2}}">x 1 712  y 604</span>
+      <span title="{{s.valTip}}" style="font-family: IBM Plex Mono, monospace; color: {{t.tx2}}">Y 721  U 448  V 512</span>
+      <span title="{{s.ctbTip}}" style="font-family: IBM Plex Mono, monospace; color: {{t.tx2}}">CTB 26,9 · slice 1 · tile 2</span>
+      <div style="flex: 1"></div>
+      <span>{{s.hint}}</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"lang":{"editor":"enum","options":["fr","en"],"default":"fr"},"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"state":{"editor":"enum","options":["ok","loading","undecodable"],"default":"ok"},"compact":{"editor":"boolean","default":false},"frame":{"editor":null},"$preview":{"width":1330,"height":616}}'>
+const TH={dark:{bg1:'#12161D',bg2:'#181D26',bg3:'#222937',line:'#262D39',line2:'#384152',tx:'#E6EAF0',tx2:'#AEB7C4',tx3:'#8792A2',dis:'#6E7888',acc:'#A994FF',accTx:'#0B0E13',accBg:'rgba(169,148,255,0.16)',field:'#0E1218',video:'#000000'},light:{bg1:'#FFFFFF',bg2:'#F4F6F9',bg3:'#E9EDF3',line:'#D8DDE5',line2:'#BCC5D1',tx:'#121820',tx2:'#3B4655',tx3:'#576274',dis:'#8A94A3',acc:'#6440D8',accTx:'#FFFFFF',accBg:'rgba(100,64,216,0.10)',field:'#FFFFFF',video:'#15181D'}};
+const TYPE={I:'#C8323A',P:'#237A35',B:'#2563D6'};
+const L={
+  fr:{toolbar:'Outils de la vue Vidéo',zoomIn:'Zoom avant',zoomOut:'Zoom arrière',zoomInTip:'Zoom avant, sans lissage (Ctrl++)',zoomOutTip:'Zoom arrière (Ctrl+-)',zoomTip:'Niveau de zoom : ajusté à la fenêtre ou 50 % à 400 % (Ctrl+0 : ajuster)',fit:'Ajusté',comps:'Composantes',grids:'Grilles',overlays:'Overlays',soon:'bientôt',alpha:'Transparence',alphaTip:'Opacité des grilles et overlays (T / Maj+T)',
+    yTip:'Afficher la luminance Y (Maj+Y)',uTip:'Afficher la chrominance U / Cb (Maj+U)',vTip:'Afficher la chrominance V / Cr (Maj+V)',slices:'Slices',slicesTip:'Grille des slices issue du parsing des slice_segment_header (G)',tiles:'Tiles',tilesTip:'Grille des tiles HEVC (PPS : 4 colonnes × 2 lignes) (Maj+G)',
+    fut:[['Type de bloc','Type de CU : intra, inter, skip, merge — avec les décodeurs instrumentés'],['QP','Carte des QP par bloc — avec les décodeurs instrumentés'],['Vecteurs','Vecteurs de mouvement L0/L1 — avec les décodeurs instrumentés']],
+    imgAlt:'Image décodée courante (rendue dans un canvas WebGL)',typeTip:'Type d’image : I/IDR rouge, P vert, B bleu',dec:'Déc.',pres:'Prés.',
+    loading:'Décodage de l’image',loadingSub:'Décodage depuis l’image I précédente (2 GOP)',badTitle:'Image non décodable :',badBody:'La référence nécessaire (image I précédente) se trouve dans une zone corrompue du fichier. Les métadonnées et la syntaxe restent disponibles.',badNext:'Aller à l’image I suivante',badNextTip:'Ctrl+→',badReport:'Voir dans le rapport',badReportTip:'Afficher le message correspondant dans le rapport',
+    cursorTip:'Position du pointeur en pixels luma',valTip:'Valeurs des échantillons sous le pointeur (10 bits)',ctbTip:'CTB (colonne, ligne), slice et tile sous le pointeur',hint:'Glisser : déplacer · Molette : zoom · Double-clic : ajuster'},
+  en:{toolbar:'Video view tools',zoomIn:'Zoom in',zoomOut:'Zoom out',zoomInTip:'Zoom in, nearest-neighbour (Ctrl++)',zoomOutTip:'Zoom out (Ctrl+-)',zoomTip:'Zoom level: fit to window or 50 % to 400 % (Ctrl+0: fit)',fit:'Fit',comps:'Components',grids:'Grids',overlays:'Overlays',soon:'coming soon',alpha:'Transparency',alphaTip:'Grid and overlay opacity (T / Shift+T)',
+    yTip:'Show luma Y (Shift+Y)',uTip:'Show chroma U / Cb (Shift+U)',vTip:'Show chroma V / Cr (Shift+V)',slices:'Slices',slicesTip:'Slice grid from slice_segment_header parsing (G)',tiles:'Tiles',tilesTip:'HEVC tile grid (PPS: 4 columns × 2 rows) (Shift+G)',
+    fut:[['Block type','CU type: intra, inter, skip, merge — with instrumented decoders'],['QP','Per-block QP map — with instrumented decoders'],['Vectors','L0/L1 motion vectors — with instrumented decoders']],
+    imgAlt:'Current decoded picture (rendered in a WebGL canvas)',typeTip:'Picture type: I/IDR red, P green, B blue',dec:'Dec.',pres:'Pres.',
+    loading:'Decoding picture',loadingSub:'Decoding from the previous I picture (2 GOPs)',badTitle:'Picture cannot be decoded:',badBody:'Its required reference (previous I picture) lies in a corrupted area of the file. Metadata and syntax are still available.',badNext:'Go to next I picture',badNextTip:'Ctrl+→',badReport:'Show in report',badReportTip:'Show the matching message in the report',
+    cursorTip:'Pointer position in luma pixels',valTip:'Sample values under the pointer (10-bit)',ctbTip:'CTB (column, row), slice and tile under the pointer',hint:'Drag: pan · Wheel: zoom · Double-click: fit'}
+};
+const DEF={d:12450,p:12452,type:'I'};
+const nf=(n,l)=>String(n).replace(/\B(?=(\d{3})+(?!\d))/g,l==='en'?',':' ');
+const tc=(p)=>{const s=p/50;const h=Math.floor(s/3600),m=Math.floor(s%3600/60),sec=Math.floor(s%60),ms=Math.round((s%1)*1000);const z=(n,w)=>String(n).padStart(w||2,'0');return z(h)+':'+z(m)+':'+z(sec)+'.'+z(ms,3);};
+class Component extends DCLogic {
+  renderVals() {
+    const theme = this.props.theme ?? 'dark';
+    const lang = this.props.lang ?? 'fr';
+    const t = TH[theme] || TH.dark;
+    const s = L[lang] || L.fr;
+    const f = this.props.frame || DEF;
+    const st = this.props.state ?? 'ok';
+    const zoom = this.state.zoom ?? 'fit';
+    const on = this.state.on ?? {Y: true, U: true, V: true, slices: true, tiles: true};
+    const alpha = this.state.alpha ?? 70;
+    const tog = (k) => () => this.setState({on: Object.assign({}, on, {[k]: !on[k]})});
+    const pressed = (v) => ({border: v ? t.acc : t.line2, bg: v ? t.accBg : 'transparent', color: v ? t.tx : t.tx3});
+    const zooms = ['fit', '50', '100', '200', '400'].map(z => Object.assign({label: z === 'fit' ? s.fit : z + ' %', tip: z === 'fit' ? 'Ctrl+0' : 'Zoom ' + z + ' %', on: zoom === z, pick: () => this.setState({zoom: z})}, pressed(zoom === z)));
+    let filter = 'none';
+    if (on.Y && !on.U && !on.V) filter = 'grayscale(1)';
+    else if (!on.Y) filter = 'brightness(0.45) saturate(1.6)';
+    else if (!on.U || !on.V) filter = 'saturate(0.45)';
+    return {
+      t, s, theme, f, wide: !this.props.compact,
+      zoomLabel: zoom === 'fit' ? s.fit + ' · 27 %' : zoom + ' %', zooms,
+      yuv: ['Y', 'U', 'V'].map(k => Object.assign({k, on: on[k], tip: s[k.toLowerCase() + 'Tip'], toggle: tog(k)}, pressed(on[k]))),
+      grids: [
+        Object.assign({label: s.slices, tip: s.slicesTip, on: on.slices, toggle: tog('slices'), swatch: '#FFFFFF', dash: 'solid'}, pressed(on.slices)),
+        Object.assign({label: s.tiles, tip: s.tilesTip, on: on.tiles, toggle: tog('tiles'), swatch: '#FFD43B', dash: 'dashed'}, pressed(on.tiles))
+      ],
+      future: s.fut.map(x => ({label: x[0], tip: x[1]})),
+      alpha, alphaF: alpha / 100, setAlpha: (e) => this.setState({alpha: Number(e.target.value)}),
+      showSlices: on.slices, showTiles: on.tiles, imgFilter: filter,
+      sliceLines: [0, 1, 2, 3].map(i => ({top: i * 25, bw: i === 0 ? 0 : 1, label: 'S' + i})),
+      tiles: [0, 1, 2, 3, 4, 5, 6, 7].map(i => ({label: 'T' + i})),
+      badge: TYPE[f.type] || TYPE.I,
+      decTxt: nf(f.d, lang), presTxt: nf(f.p, lang), timeTxt: tc(f.p),
+      isOk: st === 'ok', isLoading: st === 'loading', isBad: st === 'undecodable'
+    };
+  }
+}
+</script>
+</body>
+</html>

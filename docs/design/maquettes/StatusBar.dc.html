@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Barre d’état</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div role="status" style="position: absolute; inset: 0; display: flex; align-items: center; gap: 14px; padding: 0 10px; overflow: hidden; background: {{t.bg0}}; color: {{t.tx2}}; font-family: IBM Plex Sans, system-ui, sans-serif; font-size: 11px; line-height: 14px; white-space: nowrap">
+  <sc-if value="{{hasFile}}" hint-placeholder-val="{{ true }}">
+    <span title="/mnt/nas/ingest/2026-10/DEMO_UHD_20261014_2000.ts" style="font-family: IBM Plex Mono, monospace; color: {{t.tx}}">DEMO_UHD_20261014_2000.ts</span>
+    <span title="{{s.sizeTip}}" style="font-family: IBM Plex Mono, monospace">{{s.size}}</span>
+    <span title="{{s.fmtTip}}">{{s.fmt}}</span>
+    <sc-if value="{{busy}}" hint-placeholder-val="{{ false }}">
+      <span style="display: flex; align-items: center; gap: 8px; color: {{t.tx}}">
+        <dc-import name="Led" state="run" theme="{{theme}}" size="11" hint-size="11px,11px"></dc-import>
+        <span>{{s.idx}} {{idx}} %</span>
+        <span role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{idx}}" aria-label="{{s.idx}}" style="position: relative; width: 120px; height: 6px; border-radius: 3px; background: {{t.line2}}; overflow: hidden"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: {{idx}}%; background: {{t.acc}}"></span></span>
+        <span style="font-family: IBM Plex Mono, monospace; color: {{t.tx2}}">{{s.idxDetail}}</span>
+        <button title="{{s.cancelTip}}" style="height: 18px; padding: 0 8px; border: 1px solid {{t.line2}}; border-radius: 4px; background: transparent; color: {{t.tx}}; font: inherit; cursor: pointer">{{s.cancel}}</button>
+      </span>
+    </sc-if>
+    <sc-if value="{{done}}" hint-placeholder-val="{{ true }}">
+      <span title="{{s.cacheTip}}" style="display: flex; align-items: center; gap: 6px"><dc-import name="Led" state="ok" theme="{{theme}}" size="11" hint-size="11px,11px"></dc-import>{{s.cache}}</span>
+      <span title="{{s.trTip}}" style="display: flex; align-items: center; gap: 6px"><dc-import name="Led" state="err" theme="{{theme}}" size="11" hint-size="11px,11px"></dc-import>{{s.tr}}</span>
+    </sc-if>
+  </sc-if>
+  <sc-if value="{{noFile}}" hint-placeholder-val="{{ false }}">
+    <span>{{s.none}}</span>
+  </sc-if>
+  <div style="flex: 1"></div>
+  <sc-if value="{{hasFile}}" hint-placeholder-val="{{ true }}">
+    <span title="{{s.posTip}}" style="font-family: IBM Plex Mono, monospace">{{s.pos}}</span>
+  </sc-if>
+  <span title="{{s.memTip}}" style="font-family: IBM Plex Mono, monospace">{{s.mem}}</span>
+  <div role="group" aria-label="{{s.lang}}" title="{{s.langTip}}" style="display: flex; gap: 0; border: 1px solid {{t.line2}}; border-radius: 4px; overflow: hidden">
+    <button aria-pressed="{{isFr}}" style="height: 18px; padding: 0 7px; border: 0; background: {{frBg}}; color: {{frColor}}; font: inherit; font-weight: 600; cursor: pointer">FR</button>
+    <button aria-pressed="{{isEn}}" style="height: 18px; padding: 0 7px; border: 0; background: {{enBg}}; color: {{enColor}}; font: inherit; font-weight: 600; cursor: pointer">EN</button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"lang":{"editor":"enum","options":["fr","en"],"default":"fr"},"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"indexing":{"editor":"range","min":0,"max":100,"step":1,"unit":"%","default":100},"nofile":{"editor":"boolean","default":false},"compact":{"editor":"boolean","default":false},"$preview":{"width":1920,"height":24}}'>
+const TH={dark:{bg0:'#0B0E13',line2:'#384152',tx:'#E6EAF0',tx2:'#AEB7C4',acc:'#A994FF',accBg:'rgba(169,148,255,0.20)'},light:{bg0:'#E6E9EF',line2:'#BCC5D1',tx:'#121820',tx2:'#3B4655',acc:'#6440D8',accBg:'rgba(100,64,216,0.14)'}};
+const L={
+  fr:{size:'4,02 Go',sizeTip:'4 318 467 072 octets',fmt:'MPEG-2 TS · 188 o · 1 programme',fmtTip:'Conteneur détecté, taille des paquets et nombre de programmes (PAT)',idx:'Indexation',idxDetail:'2,57 / 4,02 Go · ~38 s',cancel:'Annuler',cancelTip:'Interrompre l’indexation — la partie déjà indexée reste utilisable (Échap)',cache:'Index en cache',cacheTip:'Index persistant : la réouverture de ce fichier sera instantanée',tr:'TR 101 290 : 3 erreurs, 1 avert.',trTip:'Analyse TR 101 290 terminée — voir l’onglet Transport',none:'Aucun fichier ouvert',pos:'Image 12 452 / 69 092 · 00:04:09.040',posTip:'Index de présentation courant / nombre d’images · temps de présentation',mem:'RAM 612 Mo',memTip:'Mémoire utilisée par l’application (cache d’images décodées compris)',lang:'Langue',langTip:'Langue de l’interface (Ctrl+Maj+L) — appliquée à chaud'},
+  en:{size:'4.02 GB',sizeTip:'4,318,467,072 bytes',fmt:'MPEG-2 TS · 188 B · 1 program',fmtTip:'Detected container, packet size and number of programs (PAT)',idx:'Indexing',idxDetail:'2.57 / 4.02 GB · ~38 s',cancel:'Cancel',cancelTip:'Stop indexing — the part already indexed stays usable (Esc)',cache:'Index cached',cacheTip:'Persistent index: reopening this file will be instant',tr:'TR 101 290: 3 errors, 1 warning',trTip:'TR 101 290 analysis complete — see the Transport tab',none:'No file open',pos:'Picture 12,452 / 69,092 · 00:04:09.040',posTip:'Current presentation index / number of pictures · presentation time',mem:'RAM 612 MB',memTip:'Memory used by the application (decoded picture cache included)',lang:'Language',langTip:'Interface language (Ctrl+Shift+L) — applied live'}
+};
+class Component extends DCLogic {
+  renderVals() {
+    const lang = this.props.lang ?? 'fr';
+    const theme = this.props.theme ?? 'dark';
+    const t = TH[theme] || TH.dark;
+    const s = L[lang] || L.fr;
+    const idx = Number(this.props.indexing ?? 100);
+    const nofile = !!this.props.nofile;
+    const fr = lang === 'fr';
+    return {
+      t, s, theme, idx, hasFile: !nofile, noFile: nofile, busy: !nofile && idx < 100, done: !nofile && idx >= 100,
+      isFr: fr, isEn: !fr, frBg: fr ? t.accBg : 'transparent', enBg: fr ? 'transparent' : t.accBg, frColor: fr ? t.tx : t.tx2, enColor: fr ? t.tx2 : t.tx
+    };
+  }
+}
+</script>
+</body>
+</html>

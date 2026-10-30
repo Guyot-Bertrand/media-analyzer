@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Media Analyzer — accueil</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; background: #0B0E13; color: #E6EAF0; font-family: IBM Plex Sans, system-ui, sans-serif; font-size: 12px; line-height: 16px">
+  <div style="height: 64px; flex: none; position: relative">
+    <dc-import name="TitleBar" lang="fr" theme="dark" nofile="{{ true }}" hint-size="100%,64px"></dc-import>
+  </div>
+  <main style="flex: 1; min-height: 0; overflow: auto; background: #12161D">
+    <div style="max-width: 1360px; margin: 0 auto; padding: 48px 32px; display: flex; flex-wrap: wrap; gap: 32px; box-sizing: border-box">
+      <div style="flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 28px">
+        <div>
+          <h1 style="margin: 0 0 6px; font-size: 22px; line-height: 28px; font-weight: 600">Ouvrir un fichier à analyser</h1>
+          <p style="margin: 0; color: #AEB7C4; font-size: 13px; line-height: 20px">Transport Stream ou flux élémentaire brut. Les fichiers de plusieurs Go s’ouvrent immédiatement : l’indexation se poursuit en arrière-plan.</p>
+        </div>
+
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 44px 24px; border: 1.5px dashed #4A5466; border-radius: 10px; background: #0E1218; text-align: center">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#A994FF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM12 10v6M9 13l3-3 3 3"></path></svg>
+          <span style="font-size: 15px; line-height: 20px; font-weight: 500">Glissez un fichier ici</span>
+          <span style="color: #8792A2">ou</span>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center">
+            <button title="Ouvrir un fichier TS ou ES brut (Ctrl+O)" style="height: 34px; padding: 0 16px; border: 0; border-radius: 6px; background: #A994FF; color: #0B0E13; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer">Ouvrir un fichier…</button>
+            <button title="Ouvrir un fichier sur un partage réseau monté (NFS, SMB)" style="height: 34px; padding: 0 16px; border: 1px solid #384152; border-radius: 6px; background: transparent; color: #E6EAF0; font: inherit; font-size: 13px; cursor: pointer">Parcourir le serveur de fichiers…</button>
+          </div>
+          <span style="color: #8792A2; font-family: IBM Plex Mono, monospace; font-size: 11px">.ts .trp .mpg .mpeg · .h264 .264 · .h265 .265 .hevc · .m2v</span>
+        </div>
+
+        <section aria-labelledby="recents-title">
+          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px">
+            <h2 id="recents-title" style="margin: 0; font-size: 13px; font-weight: 600">Fichiers récents</h2>
+            <span style="color: #8792A2; font-size: 11px">Un index en cache permet une réouverture instantanée</span>
+            <div style="flex: 1"></div>
+            <button title="Effacer la liste des fichiers récents (les index en cache sont conservés)" style="height: 24px; padding: 0 8px; border: 0; border-radius: 4px; background: transparent; color: #AEB7C4; font: inherit; font-size: 11px; cursor: pointer">Effacer la liste</button>
+          </div>
+          <div role="table" aria-label="Fichiers récents" style="border: 1px solid #262D39; border-radius: 8px; overflow: hidden">
+            <div role="row" style="height: 26px; display: flex; align-items: center; gap: 12px; padding: 0 14px; background: #181D26; color: #8792A2; font-size: 11px">
+              <span role="columnheader" style="flex: 1; min-width: 0">Nom</span>
+              <span role="columnheader" style="width: 76px; text-align: right">Taille</span>
+              <span role="columnheader" style="width: 220px">Emplacement</span>
+              <span role="columnheader" style="width: 110px">Ouvert</span>
+              <span role="columnheader" title="Index persistant des paquets et des images" style="width: 120px">Index</span>
+            </div>
+            <sc-for list="{{recents}}" as="r" hint-placeholder-count="5">
+              <a href="Main.dc.html" title="{{r.tip}}" style="height: 44px; display: flex; align-items: center; gap: 12px; padding: 0 14px; border-top: 1px solid #262D39; color: {{r.color}}; text-decoration: none">
+                <span role="cell" style="flex: 1; min-width: 0; display: flex; flex-direction: column">
+                  <span style="font-family: IBM Plex Mono, monospace; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{r.name}}</span>
+                  <span style="color: #8792A2; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{r.info}}</span>
+                </span>
+                <span role="cell" style="width: 76px; text-align: right; font-family: IBM Plex Mono, monospace; color: #AEB7C4">{{r.size}}</span>
+                <span role="cell" style="width: 220px; font-family: IBM Plex Mono, monospace; font-size: 11px; color: #8792A2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{r.path}}</span>
+                <span role="cell" style="width: 110px; color: #AEB7C4">{{r.date}}</span>
+                <span role="cell" style="width: 120px; display: flex; align-items: center; gap: 6px; color: #AEB7C4">
+                  <dc-import name="Led" state="{{r.led}}" theme="dark" size="11" hint-size="11px,11px"></dc-import>{{r.cache}}
+                </span>
+              </a>
+            </sc-for>
+          </div>
+        </section>
+      </div>
+
+      <aside aria-label="Formats et analyses disponibles" style="flex: 1 1 360px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+        <h2 style="margin: 0; font-size: 13px; font-weight: 600">Formats et analyses disponibles</h2>
+        <sc-for list="{{modules}}" as="m" hint-placeholder-count="3">
+          <section style="padding: 14px 16px; border: 1px solid #262D39; border-radius: 8px; background: {{m.bg}}">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px">
+              <span style="font-weight: 600; color: {{m.titleColor}}">{{m.title}}</span>
+              <sc-if value="{{m.later}}" hint-placeholder-val="{{ false }}"><span style="padding: 0 6px; border-radius: 3px; background: #222937; color: #8792A2; font-size: 10px; line-height: 15px">versions suivantes</span></sc-if>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 6px">
+              <sc-for list="{{m.items}}" as="it" hint-placeholder-count="4">
+                <div title="{{it.tip}}" style="display: flex; align-items: baseline; gap: 8px">
+                  <span style="width: 132px; flex: none; color: {{m.keyColor}}">{{it.k}}</span>
+                  <span style="color: {{m.valColor}}; font-family: {{it.font}}; font-size: {{it.fs}}px">{{it.v}}</span>
+                </div>
+              </sc-for>
+            </div>
+          </section>
+        </sc-for>
+      </aside>
+    </div>
+  </main>
+  <div style="height: 24px; flex: none; position: relative; border-top: 1px solid #262D39">
+    <dc-import name="StatusBar" lang="fr" theme="dark" nofile="{{ true }}" hint-size="100%,24px"></dc-import>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1920,"height":1080}}'>
+const MONO='IBM Plex Mono, monospace', SANS='IBM Plex Sans, system-ui, sans-serif';
+class Component extends DCLogic {
+  renderVals() {
+    const recents = [
+      {name:'DEMO_UHD_20261014_2000.ts',info:'1 programme · HEVC Main 10 2160p50 · AAC, E-AC-3',size:'4,02 Go',path:'/mnt/nas/ingest/2026-10/',date:'Hier, 18:42',cache:'En cache',led:'ok'},
+      {name:'MUX_R1_capture_0927.ts',info:'MPTS · 6 programmes · H.264 / HEVC',size:'12,7 Go',path:'/mnt/nas/captures/',date:'27/10/2026',cache:'En cache',led:'ok'},
+      {name:'promo_hevc_main10.265',info:'ES brut · HEVC Main 10 1080p25',size:'382 Mo',path:'~/Bureau/',date:'26/10/2026',cache:'À indexer',led:'off'},
+      {name:'sport_1080i25_h264.ts',info:'Support amovible déconnecté',size:'2,31 Go',path:'/media/usb-SSD/',date:'22/10/2026',cache:'Inaccessible',led:'warn',dim:true},
+      {name:'archive_sd_mpeg2.m2v',info:'ES brut · MPEG-2 MP@ML 576i25',size:'640 Mo',path:'~/Vidéos/',date:'14/10/2026',cache:'À indexer',led:'off'}
+    ].map(r => Object.assign(r, {color: r.dim ? '#8792A2' : '#E6EAF0', tip: r.dim ? 'Le support /media/usb-SSD n’est pas monté — reconnectez-le pour rouvrir ce fichier' : r.path + r.name + ' — Entrée pour ouvrir'}));
+    const it = (k, v, tip, mono) => ({k, v, tip: tip || '', font: mono ? MONO : SANS, fs: mono ? 11.5 : 12});
+    const modules = [
+      {title:'Conteneurs et flux', items:[it('MPEG-2 TS / TTS','paquets 188, 204, 208 o · SPTS, MPTS','ISO/IEC 13818-1'),it('ES bruts','H.264/AVC · H.265/HEVC · MPEG-2 Video','Flux élémentaires sans conteneur'),it('Audio','AAC, AC-3/E-AC-3, MPEG Audio : détection','Analyse audio détaillée en V1')]},
+      {title:'Analyses', items:[it('Structure','PAT · CAT · PMT · SDT · débits par PID'),it('TR 101 290','priorités 1 et 2, en arrière-plan','ETSI TR 101 290'),it('Syntaxe','bit à bit : VPS/SPS/PPS, SEI, slices'),it('Image','décodage, zoom 50–400 %, Y/U/V, slices, tiles'),it('Rapport','filtres, regroupement, export CSV / texte')]},
+      {title:'À venir', later:true, items:[it('Timing','PTS/DTS · buffers T-STD et HRD'),it('Audio','formes d’onde · loudness EBU R128 / ATSC A/85'),it('Données','sous-titres DVB · Teletext · CEA-608/708 · SCTE-35'),it('Qualité','sans référence · PSNR, SSIM, VMAF'),it('OTT','MP4, MKV/WebM · HLS · MPEG-DASH · AV1, VP9, VVC')]}
+    ].map(m => Object.assign(m, {later: !!m.later, bg: m.later ? 'transparent' : '#181D26', titleColor: m.later ? '#AEB7C4' : '#E6EAF0', keyColor: m.later ? '#8792A2' : '#AEB7C4', valColor: m.later ? '#8792A2' : '#E6EAF0'}));
+    return { recents, modules };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Vue Débits</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; background: {{t.bg1}}; color: {{t.tx}}; font-family: IBM Plex Sans, system-ui, sans-serif; font-size: 12px; line-height: 16px">
+  <div role="toolbar" aria-label="{{s.toolbar}}" style="min-height: 36px; flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 4px 10px; border-bottom: 1px solid {{t.line}}">
+    <div role="radiogroup" aria-label="{{s.mode}}" style="display: flex; padding: 2px; gap: 2px; border: 1px solid {{t.line}}; border-radius: 6px">
+      <sc-for list="{{modes}}" as="m" hint-placeholder-count="2">
+        <button role="radio" aria-checked="{{m.on}}" title="{{m.tip}}" onClick="{{m.pick}}" style="height: 22px; padding: 0 9px; border: 0; border-radius: 4px; background: {{m.bg}}; color: {{m.color}}; font: inherit; font-size: 11px; cursor: pointer">{{m.label}}</button>
+      </sc-for>
+    </div>
+    <button title="{{s.winTip}}" style="height: 26px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid {{t.line2}}; border-radius: 5px; background: {{t.field}}; color: {{t.tx2}}; font: inherit; cursor: pointer">{{s.win}} <span style="color: {{t.tx}}; font-family: IBM Plex Mono, monospace">1 s</span><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+    <div style="flex: 1"></div>
+    <div style="display: flex; flex-wrap: wrap; gap: 4px 12px">
+      <sc-for list="{{series}}" as="se" hint-placeholder-count="6">
+        <span title="{{se.tip}}" style="display: inline-flex; align-items: center; gap: 6px; color: {{t.tx2}}; font-size: 11px; white-space: nowrap"><span style="width: 10px; height: 10px; border-radius: 2px; background: {{se.c}}"></span><span style="font-family: IBM Plex Mono, monospace">{{se.pid}}</span>{{se.short}}</span>
+      </sc-for>
+      <span style="display: inline-flex; align-items: center; gap: 6px; color: {{t.tx2}}; font-size: 11px"><span style="width: 14px; height: 0; border-top: 2px solid {{t.tx}}"></span>{{s.total}}</span>
+    </div>
+  </div>
+
+  <div style="flex: 1; min-height: 0; display: flex; padding: 10px 12px 4px 0">
+    <div aria-hidden="true" style="width: 52px; flex: none; display: flex; flex-direction: column; justify-content: space-between; padding: 0 8px 18px 0; text-align: right; font-family: IBM Plex Mono, monospace; font-size: 10.5px; color: {{t.tx3}}">
+      <span>28</span><span>21</span><span>14</span><span>7</span><span>0</span>
+    </div>
+    <div style="flex: 1; min-width: 0; display: flex; flex-direction: column">
+      <div style="position: relative; flex: 1; min-height: 0; border-left: 1px solid {{t.line2}}; border-bottom: 1px solid {{t.line2}}">
+        <div aria-hidden="true" style="position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: space-between"><span style="height: 1px; background: {{t.line}}"></span><span style="height: 1px; background: {{t.line}}"></span><span style="height: 1px; background: {{t.line}}"></span><span style="height: 1px; background: {{t.line}}"></span><span></span></div>
+        <svg role="img" aria-label="{{s.chartAlt}}" viewBox="0 0 1000 280" preserveAspectRatio="none" style="position: absolute; inset: 0; width: 100%; height: 100%">
+          <sc-for list="{{polys}}" as="pl" hint-placeholder-count="6">
+            <polygon points="{{pl.pts}}" fill="{{pl.c}}" fill-opacity="{{pl.op}}"></polygon>
+          </sc-for>
+          <line x1="0" y1="30" x2="1000" y2="30" stroke="{{t.tx}}" stroke-width="2" vector-effect="non-scaling-stroke"></line>
+          <line x1="180" y1="0" x2="180" y2="280" stroke="{{t.acc}}" stroke-width="1.5" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"></line>
+        </svg>
+        <div style="position: absolute; left: 18%; top: 6px; margin-left: 6px; padding: 2px 6px; border-radius: 3px; background: {{t.bg2}}; border: 1px solid {{t.line2}}; font-family: IBM Plex Mono, monospace; font-size: 10.5px; color: {{t.tx2}}; white-space: nowrap">00:04:09 · {{s.cursorVal}}</div>
+        <span style="position: absolute; right: 4px; top: 12px; font-family: IBM Plex Mono, monospace; font-size: 10.5px; color: {{t.tx2}}">25,00 Mbit/s</span>
+      </div>
+      <div aria-hidden="true" style="height: 18px; display: flex; justify-content: space-between; padding-top: 3px; font-family: IBM Plex Mono, monospace; font-size: 10.5px; color: {{t.tx3}}"><span>00:00</span><span>05:45</span><span>11:30</span><span>17:15</span><span>23:01</span></div>
+    </div>
+  </div>
+
+  <div role="table" aria-label="{{s.table}}" style="height: {{tableH}}px; flex: none; overflow: auto; border-top: 1px solid {{t.line}}">
+    <div role="row" style="height: 22px; display: flex; align-items: center; padding: 0 12px; background: {{t.bg2}}; color: {{t.tx3}}; font-size: 11px; position: sticky; top: 0">
+      <span role="columnheader" style="width: 80px">PID</span>
+      <span role="columnheader" style="flex: 1; min-width: 0">{{s.cType}}</span>
+      <span role="columnheader" style="width: 96px; text-align: right">{{s.cMin}}</span>
+      <span role="columnheader" style="width: 96px; text-align: right">{{s.cAvg}}</span>
+      <span role="columnheader" style="width: 96px; text-align: right">{{s.cMax}}</span>
+      <span role="columnheader" style="width: 200px; padding-left: 20px">{{s.cShare}}</span>
+    </div>
+    <sc-for list="{{rows}}" as="r" hint-placeholder-count="7">
+      <div role="row" style="height: 22px; display: flex; align-items: center; padding: 0 12px; border-bottom: 1px solid {{t.line}}; font-family: IBM Plex Mono, monospace; font-size: 11.5px; font-variant-numeric: tabular-nums">
+        <span role="cell" style="width: 80px; display: flex; align-items: center; gap: 6px"><span style="width: 8px; height: 8px; border-radius: 2px; background: {{r.c}}"></span>{{r.pid}}</span>
+        <span role="cell" style="flex: 1; min-width: 0; font-family: IBM Plex Sans, system-ui, sans-serif; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: {{r.w}}">{{r.type}}</span>
+        <span role="cell" style="width: 96px; text-align: right; color: {{t.tx2}}">{{r.min}}</span>
+        <span role="cell" style="width: 96px; text-align: right">{{r.avg}}</span>
+        <span role="cell" style="width: 96px; text-align: right; color: {{t.tx2}}">{{r.max}}</span>
+        <span role="cell" style="width: 200px; display: flex; align-items: center; gap: 8px; padding-left: 20px; box-sizing: border-box">
+          <span style="flex: 1; height: 6px; border-radius: 3px; background: {{t.bg3}}; overflow: hidden"><span style="display: block; width: {{r.share}}%; height: 100%; background: {{r.c}}"></span></span>
+          <span style="width: 48px; text-align: right; color: {{t.tx2}}">{{r.shareTxt}}</span>
+        </span>
+      </div>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"lang":{"editor":"enum","options":["fr","en"],"default":"fr"},"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"compact":{"editor":"boolean","default":false},"$preview":{"width":1330,"height":616}}'>
+const TH={dark:{bg1:'#12161D',bg2:'#181D26',bg3:'#222937',line:'#262D39',line2:'#384152',tx:'#E6EAF0',tx2:'#AEB7C4',tx3:'#8792A2',acc:'#A994FF',accBg:'rgba(169,148,255,0.16)',field:'#0E1218'},light:{bg1:'#FFFFFF',bg2:'#F4F6F9',bg3:'#E9EDF3',line:'#D8DDE5',line2:'#BCC5D1',tx:'#121820',tx2:'#3B4655',tx3:'#576274',acc:'#6440D8',accBg:'rgba(100,64,216,0.10)',field:'#FFFFFF'}};
+const COL={dark:['#8C9EFF','#E0B45C','#3CC9B8','#D08CE8','#7F8A99','#4A5466'],light:['#4A5FD6','#A8771A','#14897C','#9A48B8','#5C6878','#B4BCC8']};
+const L={
+  fr:{toolbar:'Outils de la vue Débits',mode:'Représentation',modes:[['Empilé','Séries empilées : la somme donne le débit du multiplex'],['Superposé','Séries superposées, chacune depuis zéro']],win:'Fenêtre',winTip:'Fenêtre de calcul du débit : 10 ms, 100 ms ou 1 s',total:'Total multiplex',chartAlt:'Débit par PID dans le temps, séries empilées, de 0 à 28 Mbit/s',cursorVal:'vidéo 23,1 Mbit/s',table:'Débits par PID',cType:'Type',cMin:'Min (Mbit/s)',cAvg:'Moyen',cMax:'Max',cShare:'Part du multiplex',
+    names:['HEVC Main 10 · vidéo','E-AC-3 5.1 · eng','AAC-LC 2.0 · fra','DVB Subtitles · fra','PSI/SI · PAT, PMT, SDT, CAT','Bourrage (paquets nuls)'],short:['vidéo','E-AC-3','AAC','sous-titres','PSI/SI','bourrage'],totalRow:'Total (CBR)'},
+  en:{toolbar:'Bitrate view tools',mode:'Display',modes:[['Stacked','Stacked series: the sum is the multiplex bitrate'],['Overlaid','Overlaid series, each from zero']],win:'Window',winTip:'Bitrate computation window: 10 ms, 100 ms or 1 s',total:'Multiplex total',chartAlt:'Bitrate per PID over time, stacked, 0 to 28 Mbit/s',cursorVal:'video 23.1 Mbit/s',table:'Bitrates per PID',cType:'Type',cMin:'Min (Mbit/s)',cAvg:'Average',cMax:'Max',cShare:'Share of multiplex',
+    names:['HEVC Main 10 · video','E-AC-3 5.1 · eng','AAC-LC 2.0 · fra','DVB Subtitles · fra','PSI/SI · PAT, PMT, SDT, CAT','Stuffing (null packets)'],short:['video','E-AC-3','AAC','subtitles','PSI/SI','stuffing'],totalRow:'Total (CBR)'}
+};
+const PIDS=['0x0100','0x0102','0x0101','0x0103','—','0x1FFF'];
+const N=120, YMAX=28, H=280;
+const VID=[];for(let i=0;i<N;i++){VID.push(Math.min(24.1,22.4+1.1*Math.sin(i/6.5)+0.6*Math.sin(i/1.7)+(i%10===0?0.9:0)));}
+const CONST=[0.66,0.21,0.03,0.11];
+class Component extends DCLogic {
+  renderVals() {
+    const lang = this.props.lang ?? 'fr';
+    const theme = this.props.theme ?? 'dark';
+    const t = TH[theme] || TH.dark;
+    const cols = COL[theme] || COL.dark;
+    const s = L[lang] || L.fr;
+    const stacked = (this.state.mode ?? 0) === 0;
+    const data = [VID];
+    CONST.forEach((c, k) => { const a = []; for (let i = 0; i < N; i++) a.push(c * (1 + 0.15 * Math.sin(i / 3 + k))); data.push(a); });
+    const nul = []; for (let i = 0; i < N; i++) { let sum = 0; for (let k = 0; k < data.length; k++) sum += data[k][i]; nul.push(Math.max(0, 25 - sum)); }
+    data.push(nul);
+    const y = (v) => (H - v / YMAX * H).toFixed(1);
+    const x = (i) => (i / (N - 1) * 1000).toFixed(1);
+    const base = new Array(N).fill(0);
+    const polys = data.map((ser, k) => {
+      const lo = stacked ? base.slice() : new Array(N).fill(0);
+      const hi = lo.map((b, i) => b + ser[i]);
+      if (stacked) for (let i = 0; i < N; i++) base[i] = hi[i];
+      const up = hi.map((v, i) => x(i) + ',' + y(v));
+      const dn = lo.map((v, i) => x(i) + ',' + y(v)).reverse();
+      return {pts: up.concat(dn).join(' '), c: cols[k], op: stacked ? (k === 5 ? 0.55 : 0.9) : 0.45};
+    });
+    const f2 = (v) => { const r = v.toFixed(2); return lang === 'en' ? r : r.replace('.', ','); };
+    const stats = data.map(a => ({min: Math.min.apply(null, a), max: Math.max.apply(null, a), avg: a.reduce((p, c) => p + c, 0) / a.length}));
+    const rows = data.map((a, k) => ({pid: PIDS[k], type: s.names[k], c: cols[k], w: 400, min: f2(stats[k].min), avg: f2(stats[k].avg), max: f2(stats[k].max), share: (stats[k].avg / 25 * 100).toFixed(1), shareTxt: f2(stats[k].avg / 25 * 100).replace(/(\d)$/, '$1') + ' %'}));
+    rows.push({pid: '', type: s.totalRow, c: 'transparent', w: 600, min: f2(25), avg: f2(25), max: f2(25), share: 100, shareTxt: '100 %'});
+    rows.forEach(r => { if (r.shareTxt !== '100 %') r.shareTxt = r.shareTxt.replace(/([.,]\d)\d %/, '$1 %'); });
+    return {
+      t, s, polys, rows, tableH: this.props.compact ? 150 : 196,
+      series: data.map((a, k) => ({pid: PIDS[k], short: s.short[k], tip: s.names[k], c: cols[k]})),
+      modes: s.modes.map((m, i) => ({label: m[0], tip: m[1], on: (this.state.mode ?? 0) === i, bg: (this.state.mode ?? 0) === i ? t.accBg : 'transparent', color: (this.state.mode ?? 0) === i ? t.tx : t.tx3, pick: () => this.setState({mode: i})}))
+    };
+  }
+}
+</script>
+</body>
+</html>

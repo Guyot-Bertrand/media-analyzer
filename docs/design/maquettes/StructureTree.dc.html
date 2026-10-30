@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Arbre de structure</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; background: {{t.bg1}}; color: {{t.tx}}; font-family: IBM Plex Sans, system-ui, sans-serif; font-size: 12px; line-height: 16px">
+  <sc-if value="{{open}}" hint-placeholder-val="{{ true }}">
+    <div style="height: 32px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 6px 0 12px; background: {{t.bg2}}; border-bottom: 1px solid {{t.line}}">
+      <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: {{t.tx2}}">{{s.title}}</span>
+      <div style="flex: 1"></div>
+      <button title="{{s.searchTip}}" aria-label="{{s.search}}" style="width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 4px; background: transparent; color: {{t.tx2}}; cursor: pointer">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4"></path></svg>
+      </button>
+      <button title="{{s.hideTip}}" aria-label="{{s.hide}}" style="width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 4px; background: transparent; color: {{t.tx2}}; cursor: pointer">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg>
+      </button>
+    </div>
+    <div style="height: 22px; flex: none; display: flex; align-items: center; padding: 0 10px 0 12px; border-bottom: 1px solid {{t.line}}; font-size: 11px; color: {{t.tx3}}">
+      <span title="{{s.colHierTip}}" style="flex: 1">{{s.colHier}}</span>
+      <span title="{{s.colPidTip}}" style="width: 58px; text-align: right">PID</span>
+    </div>
+    <div role="tree" aria-label="{{s.title}}" style="flex: 1; min-height: 0; overflow: auto; padding: 4px 0">
+      <sc-for list="{{rows}}" as="r" hint-placeholder-count="10">
+        <button role="treeitem" aria-selected="{{r.sel}}" title="{{r.tip}}" onClick="{{r.pick}}" style="width: 100%; min-height: 36px; display: flex; align-items: flex-start; gap: 6px; padding: 3px 10px 3px {{r.indent}}px; border: 0; border-left: 2px solid {{r.selBar}}; background: {{r.bg}}; color: {{r.color}}; font: inherit; text-align: left; cursor: pointer">
+          <span aria-hidden="true" style="width: 12px; height: 16px; flex: none; display: inline-flex; align-items: center; justify-content: center; color: {{t.tx3}}">
+            <sc-if value="{{r.caret}}" hint-placeholder-val="{{ true }}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg></sc-if>
+          </span>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="{{r.iconColor}}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none; margin-top: 1px"><path d="{{r.icon}}"></path></svg>
+          <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px">
+            <span style="display: flex; align-items: center; gap: 6px; min-width: 0">
+              <span style="font-weight: {{r.weight}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-style: {{r.italic}}">{{r.label}}</span>
+              <sc-if value="{{r.pcr}}" hint-placeholder-val="{{ false }}"><span title="{{s.pcrTip}}" style="flex: none; padding: 0 4px; border: 1px solid {{t.line2}}; border-radius: 3px; font-size: 10px; line-height: 14px; color: {{t.tx2}}">PCR</span></sc-if>
+              <dc-import name="Led" state="{{r.led}}" theme="{{theme}}" size="11" hint-size="11px,11px"></dc-import>
+            </span>
+            <span style="font-size: 11px; line-height: 14px; color: {{t.tx3}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{r.info}}</span>
+          </span>
+          <span style="width: 54px; flex: none; display: flex; flex-direction: column; align-items: flex-end; font-family: IBM Plex Mono, monospace; font-size: 11px; line-height: 15px; font-variant-numeric: tabular-nums">
+            <span style="color: {{r.pidColor}}">{{r.pid}}</span>
+            <span style="color: {{t.tx3}}">{{r.dec}}</span>
+          </span>
+        </button>
+      </sc-for>
+    </div>
+    <div style="flex: none; padding: 8px 12px; border-top: 1px solid {{t.line}}; font-size: 11px; line-height: 15px; color: {{t.tx3}}">{{s.footer}}</div>
+  </sc-if>
+
+  <sc-if value="{{rail}}" hint-placeholder-val="{{ false }}">
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 0">
+      <button title="{{s.showTip}}" aria-label="{{s.show}}" style="width: 32px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 4px; background: transparent; color: {{t.tx2}}; cursor: pointer">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+      </button>
+      <div aria-hidden="true" style="width: 20px; height: 1px; margin: 2px 0 4px; background: {{t.line}}"></div>
+      <sc-for list="{{railRows}}" as="r" hint-placeholder-count="6">
+        <button title="{{r.tip}}" aria-label="{{r.label}}" onClick="{{r.pick}}" style="position: relative; width: 32px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 4px; background: {{r.bg}}; color: {{r.iconColor}}; cursor: pointer">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{r.icon}}"></path></svg>
+          <span style="position: absolute; right: 2px; bottom: 3px; line-height: 0"><dc-import name="Led" state="{{r.led}}" theme="{{theme}}" size="9" hint-size="9px,9px"></dc-import></span>
+        </button>
+      </sc-for>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"lang":{"editor":"enum","options":["fr","en"],"default":"fr"},"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"collapsed":{"editor":"boolean","default":false},"indexing":{"editor":"range","min":0,"max":100,"step":1,"unit":"%","default":100},"$preview":{"width":280,"height":648}}'>
+const TH={dark:{bg1:'#12161D',bg2:'#181D26',bg3:'#222937',sel:'#2B2550',line:'#262D39',line2:'#384152',tx:'#E6EAF0',tx2:'#AEB7C4',tx3:'#8792A2',acc:'#A994FF'},light:{bg1:'#FFFFFF',bg2:'#F4F6F9',bg3:'#E9EDF3',sel:'#ECE6FF',line:'#D8DDE5',line2:'#BCC5D1',tx:'#121820',tx2:'#3B4655',tx3:'#576274',acc:'#6440D8'}};
+const IC={ts:'M12 3l9 5-9 5-9-5zM3 13l9 5 9-5',table:'M5 4h14v16H5zM9 8h6M9 12h6M9 16h4',prog:'M3 5h18v12H3zM8 21h8M12 17v4',video:'M3 6h13v12H3zM16 10l5-3v10l-5-3',audio:'M9 18V6l10-2v12M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM19 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z',sub:'M3 5h18v14H3zM7 13h4M13 13h4M7 16h10',data:'M4 6h16M4 12h16M4 18h10'};
+const L={
+  fr:{title:'Structure',search:'Rechercher',searchTip:'Rechercher un PID, un codec ou un service (Ctrl+F)',hide:'Masquer',hideTip:'Replier le panneau Structure (Ctrl+1)',show:'Afficher la structure',showTip:'Déplier le panneau Structure (Ctrl+1)',colHier:'Hiérarchie',colHierTip:'Conteneur → tables PSI/SI → programmes → flux élémentaires',colPidTip:'Packet Identifier, en hexadécimal puis en décimal (ISO/IEC 13818-1 §2.4.3.2)',pcrTip:'Ce flux porte le PCR du programme (PCR_PID dans la PMT)',
+    ts:'Transport Stream',tsInfo:'TSID 1 · paquets 188 o · 25,0 Mbit/s',tsIdx:'Indexation… ',pat:'PAT',patInfo:'1 programme · version 0',cat:'CAT',catInfo:'Pas d’accès conditionnel',sdt:'SDT',sdtInfo:'DVB · ONID 0x20FA',prog:'Programme 1 « Canal Démo UHD »',progInfo:'PMT · PCR_PID 0x0100 · 5 flux',
+    v:'Vidéo HEVC',vInfo:'3840 × 2160p50 · Main 10 · L5.1',a1:'Audio AAC-LC',a1Info:'2.0 · 48 kHz · fra · 192 kbit/s',a2:'Audio E-AC-3',a2Info:'5.1 · 48 kHz · eng · 640 kbit/s',sub:'Sous-titres',subInfo:'DVB Subtitles · fra · non analysé',data:'Données',dataInfo:'SCTE-35 · non analysé',
+    tipV:'Flux vidéo sélectionné : 1 avertissement (PCR accuracy)',tipA1:'3 erreurs de continuity counter (TR 101 290 1.4)',tipOk:'Aucun message',tipNa:'Type de flux reconnu, analyse détaillée non prise en charge dans cette version',tipAgg:'État agrégé des nœuds enfants',footer:'1 programme · 5 flux élémentaires · 4 tables'},
+  en:{title:'Structure',search:'Search',searchTip:'Search a PID, codec or service (Ctrl+F)',hide:'Hide',hideTip:'Collapse the Structure panel (Ctrl+1)',show:'Show structure',showTip:'Expand the Structure panel (Ctrl+1)',colHier:'Hierarchy',colHierTip:'Container → PSI/SI tables → programs → elementary streams',colPidTip:'Packet Identifier, hexadecimal then decimal (ISO/IEC 13818-1 §2.4.3.2)',pcrTip:'This stream carries the program PCR (PCR_PID in the PMT)',
+    ts:'Transport Stream',tsInfo:'TSID 1 · 188-byte packets · 25.0 Mbit/s',tsIdx:'Indexing… ',pat:'PAT',patInfo:'1 program · version 0',cat:'CAT',catInfo:'No conditional access',sdt:'SDT',sdtInfo:'DVB · ONID 0x20FA',prog:'Program 1 “Canal Démo UHD”',progInfo:'PMT · PCR_PID 0x0100 · 5 streams',
+    v:'HEVC video',vInfo:'3840 × 2160p50 · Main 10 · L5.1',a1:'AAC-LC audio',a1Info:'2.0 · 48 kHz · fra · 192 kbit/s',a2:'E-AC-3 audio',a2Info:'5.1 · 48 kHz · eng · 640 kbit/s',sub:'Subtitles',subInfo:'DVB Subtitles · fra · not analyzed',data:'Data',dataInfo:'SCTE-35 · not analyzed',
+    tipV:'Selected video stream: 1 warning (PCR accuracy)',tipA1:'3 continuity counter errors (TR 101 290 1.4)',tipOk:'No messages',tipNa:'Stream type recognized; detailed analysis not supported in this version',tipAgg:'Aggregated state of child nodes',footer:'1 program · 5 elementary streams · 4 tables'}
+};
+class Component extends DCLogic {
+  renderVals() {
+    const theme = this.props.theme ?? 'dark';
+    const t = TH[theme] || TH.dark;
+    const s = L[this.props.lang ?? 'fr'] || L.fr;
+    const idx = Number(this.props.indexing ?? 100);
+    const busy = idx < 100;
+    const selId = this.state.sel ?? 'v';
+    const base = [
+      {id:'ts',d:0,icon:'ts',label:s.ts,info:busy ? s.tsIdx + idx + ' %' : s.tsInfo,pid:'',dec:'',led:busy ? 'run' : 'err',caret:true,tip:s.tipAgg,bold:true},
+      {id:'pat',d:1,icon:'table',label:s.pat,info:s.patInfo,pid:'0x0000',dec:'0',led:'ok',tip:s.tipOk},
+      {id:'cat',d:1,icon:'table',label:s.cat,info:s.catInfo,pid:'0x0001',dec:'1',led:'ok',tip:s.tipOk},
+      {id:'sdt',d:1,icon:'table',label:s.sdt,info:s.sdtInfo,pid:'0x0011',dec:'17',led:'ok',tip:s.tipOk},
+      {id:'prog',d:1,icon:'prog',label:s.prog,info:s.progInfo,pid:'0x1000',dec:'4096',led:busy ? 'run' : 'err',caret:true,tip:s.tipAgg,bold:true},
+      {id:'v',d:2,icon:'video',label:s.v,info:s.vInfo,pid:'0x0100',dec:'256',led:'warn',pcr:true,tip:s.tipV},
+      {id:'a1',d:2,icon:'audio',label:s.a1,info:s.a1Info,pid:'0x0101',dec:'257',led:'err',tip:s.tipA1},
+      {id:'a2',d:2,icon:'audio',label:s.a2,info:s.a2Info,pid:'0x0102',dec:'258',led:'ok',tip:s.tipOk},
+      {id:'sub',d:2,icon:'sub',label:s.sub,info:s.subInfo,pid:'0x0103',dec:'259',led:'off',na:true,tip:s.tipNa},
+      {id:'data',d:2,icon:'data',label:s.data,info:s.dataInfo,pid:'0x01F4',dec:'500',led:'off',na:true,tip:s.tipNa}
+    ];
+    const rows = base.map(r => {
+      const sel = r.id === selId;
+      return Object.assign({}, r, {
+        sel, indent: 8 + r.d * 14, caret: !!r.caret, pcr: !!r.pcr,
+        icon: IC[r.icon], bg: sel ? t.sel : 'transparent', selBar: sel ? t.acc : 'transparent',
+        color: r.na ? t.tx3 : t.tx, italic: r.na ? 'italic' : 'normal', weight: r.bold ? 600 : (sel ? 500 : 400),
+        iconColor: r.na ? t.tx3 : (sel ? t.acc : t.tx2), pidColor: r.na ? t.tx3 : t.tx2,
+        pick: () => this.setState({sel: r.id})
+      });
+    });
+    const railRows = rows.filter(r => r.d === 2 || r.id === 'ts').map(r => Object.assign({}, r, {tip: r.label + ' · ' + (r.pid || '') + ' — ' + r.tip}));
+    const collapsed = !!this.props.collapsed;
+    return { t, s, theme, rows, railRows, open: !collapsed, rail: collapsed };
+  }
+}
+</script>
+</body>
+</html>

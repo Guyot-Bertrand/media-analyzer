@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Media Analyzer — écran principal</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; background: {{t.bg0}}; color: {{t.tx}}; font-family: IBM Plex Sans, system-ui, sans-serif; font-size: 12px; line-height: 16px">
+  <div style="height: 64px; flex: none; position: relative">
+    <dc-import name="TitleBar" lang="{{lang}}" theme="{{theme}}" compact="{{compact}}" hint-size="100%,64px"></dc-import>
+  </div>
+
+  <div style="flex: 1; min-height: 0; display: flex; gap: 1px; background: {{t.line}}">
+    <div style="width: {{treeW}}px; flex: none; position: relative; background: {{t.bg1}}">
+      <dc-import name="StructureTree" lang="{{lang}}" theme="{{theme}}" collapsed="{{compact}}" indexing="{{indexing}}" hint-size="100%,100%"></dc-import>
+    </div>
+
+    <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; background: {{t.bg1}}">
+      <div role="tablist" aria-label="{{s.views}}" style="height: 32px; flex: none; display: flex; align-items: stretch; padding: 0 8px; gap: 2px; background: {{t.bg2}}; border-bottom: 1px solid {{t.line}}">
+        <sc-for list="{{tabs}}" as="tb" hint-placeholder-count="4">
+          <button role="tab" aria-selected="{{tb.sel}}" title="{{tb.tip}}" onClick="{{tb.pick}}" style="display: flex; align-items: center; gap: 6px; padding: 0 12px; border: 0; border-bottom: 2px solid {{tb.bar}}; background: transparent; color: {{tb.color}}; font: inherit; font-weight: {{tb.weight}}; cursor: pointer; white-space: nowrap">
+            {{tb.label}}
+            <sc-if value="{{tb.hasLed}}" hint-placeholder-val="{{ false }}">
+              <dc-import name="Led" state="{{tb.led}}" theme="{{theme}}" size="10" hint-size="10px,10px"></dc-import>
+            </sc-if>
+          </button>
+        </sc-for>
+        <div style="flex: 1"></div>
+        <div style="display: flex; align-items: center; gap: 8px; color: {{t.tx3}}; white-space: nowrap; overflow: hidden">
+          <span>{{s.stream}}</span>
+          <span style="font-family: IBM Plex Mono, monospace; color: {{t.tx2}}">0x0100</span>
+          <span>HEVC Main 10 · 3840 × 2160p50</span>
+        </div>
+      </div>
+      <div style="flex: 1; min-height: 0; position: relative">
+        <sc-if value="{{isVideo}}" hint-placeholder-val="{{ true }}">
+          <dc-import name="VideoView" lang="{{lang}}" theme="{{theme}}" frame="{{cur}}" compact="{{compact}}" hint-size="100%,100%"></dc-import>
+        </sc-if>
+        <sc-if value="{{isSyntax}}" hint-placeholder-val="{{ false }}">
+          <dc-import name="SyntaxView" lang="{{lang}}" theme="{{theme}}" compact="{{compact}}" hint-size="100%,100%"></dc-import>
+        </sc-if>
+        <sc-if value="{{isTransport}}" hint-placeholder-val="{{ false }}">
+          <dc-import name="TransportView" lang="{{lang}}" theme="{{theme}}" indexing="{{indexing}}" compact="{{compact}}" hint-size="100%,100%"></dc-import>
+        </sc-if>
+        <sc-if value="{{isBitrate}}" hint-placeholder-val="{{ false }}">
+          <dc-import name="BitrateView" lang="{{lang}}" theme="{{theme}}" compact="{{compact}}" hint-size="100%,100%"></dc-import>
+        </sc-if>
+      </div>
+    </div>
+
+    <div style="width: {{dataW}}px; flex: none; position: relative; background: {{t.bg1}}">
+      <dc-import name="DataPanel" lang="{{lang}}" theme="{{theme}}" frame="{{cur}}" collapsed="{{compact}}" hint-size="100%,100%"></dc-import>
+    </div>
+  </div>
+
+  <div style="height: {{thumbH}}px; flex: none; position: relative; border-top: 1px solid {{t.line}}">
+    <dc-import name="Thumbnails" lang="{{lang}}" theme="{{theme}}" frames="{{frames}}" current="{{fd}}" on-pick="{{pick}}" indexing="{{indexing}}" compact="{{compact}}" hint-size="100%,100%"></dc-import>
+  </div>
+
+  <div style="height: {{reportH}}px; flex: none; position: relative; border-top: 1px solid {{t.line}}">
+    <dc-import name="Report" lang="{{lang}}" theme="{{theme}}" collapsed="{{compact}}" indexing="{{indexing}}" hint-size="100%,100%"></dc-import>
+  </div>
+
+  <div style="height: 24px; flex: none; position: relative; border-top: 1px solid {{t.line}}">
+    <dc-import name="StatusBar" lang="{{lang}}" theme="{{theme}}" indexing="{{indexing}}" compact="{{compact}}" hint-size="100%,24px"></dc-import>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"lang":{"editor":"enum","options":["fr","en"],"default":"fr"},"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"tab":{"editor":"enum","options":["video","syntax","transport","bitrate"],"default":"video"},"layout":{"editor":"enum","options":["desktop","laptop"],"default":"desktop"},"indexing":{"editor":"range","min":0,"max":100,"step":1,"unit":"%","default":100},"$preview":{"width":1920,"height":1080}}'>
+const TH={dark:{bg0:'#0B0E13',bg1:'#12161D',bg2:'#181D26',bg3:'#222937',hov:'#1B212B',sel:'#2B2550',line:'#262D39',line2:'#384152',tx:'#E6EAF0',tx2:'#AEB7C4',tx3:'#8792A2',dis:'#5F6A7A',acc:'#A994FF',accTx:'#0B0E13'},light:{bg0:'#E6E9EF',bg1:'#FFFFFF',bg2:'#F4F6F9',bg3:'#E9EDF3',hov:'#F0F2F6',sel:'#ECE6FF',line:'#D8DDE5',line2:'#BCC5D1',tx:'#121820',tx2:'#3B4655',tx3:'#576274',dis:'#8A94A3',acc:'#6440D8',accTx:'#FFFFFF'}};
+const L={
+  fr:{views:'Vues d’analyse',stream:'Flux sélectionné',tabs:{video:'Vidéo',syntax:'Syntaxe',transport:'Transport',bitrate:'Débits'},tips:{video:'Image décodée, zoom, composantes Y/U/V et grilles (Alt+1)',syntax:'Syntaxe bit à bit des paramètres actifs et de l’access unit (Alt+2)',transport:'Indicateurs TR 101 290 priorités 1 et 2 (Alt+3)',bitrate:'Débit dans le temps par PID (Alt+4)'}},
+  en:{views:'Analysis views',stream:'Selected stream',tabs:{video:'Video',syntax:'Syntax',transport:'Transport',bitrate:'Bitrates'},tips:{video:'Decoded picture, zoom, Y/U/V components and grids (Alt+1)',syntax:'Bit-level syntax of active parameter sets and current access unit (Alt+2)',transport:'TR 101 290 priority 1 and 2 indicators (Alt+3)',bitrate:'Bitrate over time per PID (Alt+4)'}}
+};
+const NUT={TRAIL_N:0,TRAIL_R:1,RASL_N:8,CRA_NUT:21};
+const RAW=[[12445,12444,'B',31204,'TRAIL_N'],[12446,12445,'B',29880,'TRAIL_N'],[12447,12449,'P',98412,'TRAIL_R'],[12448,12447,'B',30956,'TRAIL_N'],[12449,12448,'B',28734,'TRAIL_N'],[12450,12452,'I',421876,'CRA_NUT'],[12451,12450,'B',41208,'RASL_N'],[12452,12451,'B',39912,'RASL_N'],[12453,12455,'P',101230,'TRAIL_R'],[12454,12453,'B',30412,'TRAIL_N'],[12455,12454,'B',29170,'TRAIL_N']];
+const PTS0=3600000;
+const FRAMES=RAW.map(function(r,i){var d=r[0],p=r[1];var pkt=4140593+(d-12450)*332+((i*37)%23);return {d:d,p:p,type:r[2],size:r[3],nut:r[4],nutId:NUT[r[4]],poc:p-12000,pts:PTS0+p*1800,dts:PTS0+(d-2)*1800,pts0:PTS0,pkt:pkt,byte:pkt*188,tags:r[2]==='I'?['VPS','SPS','PPS','SEI']:(i===8?['SEI']:[]),msg:d===12450?'warn':''};});
+class Component extends DCLogic {
+  renderVals() {
+    const lang = this.props.lang ?? 'fr';
+    const theme = this.props.theme ?? 'dark';
+    const compact = (this.props.layout ?? 'desktop') === 'laptop';
+    const indexing = Number(this.props.indexing ?? 100);
+    const t = TH[theme] || TH.dark;
+    const s = L[lang] || L.fr;
+    const tab = this.state.tab ?? this.props.tab ?? 'video';
+    const fd = this.state.frame ?? 12450;
+    const cur = FRAMES.find(f => f.d === fd) || FRAMES[5];
+    const leds = {video: '', syntax: 'warn', transport: indexing < 100 ? 'run' : 'err', bitrate: ''};
+    const tabs = ['video', 'syntax', 'transport', 'bitrate'].map(k => ({
+      k, label: s.tabs[k], tip: s.tips[k], sel: k === tab,
+      color: k === tab ? t.tx : t.tx2, bar: k === tab ? t.acc : 'transparent', weight: k === tab ? 600 : 400,
+      hasLed: !!leds[k], led: leds[k],
+      pick: () => this.setState({tab: k})
+    }));
+    return {
+      t, s, lang, theme, compact, indexing, tabs, cur, fd,
+      frames: compact ? FRAMES.slice(2, 9) : FRAMES,
+      pick: (d) => this.setState({frame: d}),
+      isVideo: tab === 'video', isSyntax: tab === 'syntax', isTransport: tab === 'transport', isBitrate: tab === 'bitrate',
+      treeW: compact ? 40 : 280, dataW: compact ? 40 : 308,
+      thumbH: compact ? 112 : 132, reportH: compact ? 30 : 212
+    };
+  }
+}
+</script>
+</body>
+</html>

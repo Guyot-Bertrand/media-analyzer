@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Rapport</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; background: {{t.bg1}}; color: {{t.tx}}; font-family: IBM Plex Sans, system-ui, sans-serif; font-size: 12px; line-height: 16px">
+  <div style="min-height: 30px; flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 2px 8px 2px 12px; background: {{t.bg2}}; border-bottom: 1px solid {{t.line}}">
+    <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: {{t.tx2}}">{{s.title}}</span>
+    <div role="group" aria-label="{{s.quick}}" style="display: flex; gap: 4px">
+      <sc-for list="{{chips}}" as="c" hint-placeholder-count="3">
+        <button title="{{c.tip}}" aria-pressed="{{c.on}}" onClick="{{c.toggle}}" style="height: 24px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid {{c.border}}; border-radius: 12px; background: {{c.bg}}; color: {{c.color}}; font: inherit; cursor: pointer; white-space: nowrap">
+          <dc-import name="Led" state="{{c.k}}" theme="{{theme}}" size="11" hint-size="11px,11px"></dc-import>
+          <span style="font-family: IBM Plex Mono, monospace; font-weight: 600">{{c.n}}</span>
+          <span>{{c.label}}</span>
+        </button>
+      </sc-for>
+    </div>
+    <sc-if value="{{open}}" hint-placeholder-val="{{ true }}">
+      <div style="display: flex; align-items: center; gap: 6px">
+        <button title="{{s.famTip}}" style="height: 24px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid {{t.line2}}; border-radius: 5px; background: {{t.field}}; color: {{t.tx2}}; font: inherit; cursor: pointer; white-space: nowrap">{{s.fam}} <span style="color: {{t.tx}}">{{s.all}}</span><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+        <button title="{{s.subTip}}" style="height: 24px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid {{t.line2}}; border-radius: 5px; background: {{t.field}}; color: {{t.tx2}}; font: inherit; cursor: pointer; white-space: nowrap">{{s.sub}} <span style="color: {{t.tx}}">{{s.all}}</span><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+        <label style="display: flex; align-items: center; gap: 6px; height: 24px; width: 240px; box-sizing: border-box; padding: 0 8px; border: 1px solid {{t.line2}}; border-radius: 5px; background: {{t.field}}; color: {{t.tx3}}">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4"></path></svg>
+          <input type="search" placeholder="{{s.search}}" aria-label="{{s.search}}" style="flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: {{t.tx}}; font: inherit">
+        </label>
+        <label title="{{s.groupTip}}" style="display: flex; align-items: center; gap: 5px; color: {{t.tx2}}; white-space: nowrap; cursor: pointer"><input type="checkbox" checked="{{grouped}}" onChange="{{toggleGroup}}" style="accent-color: {{t.acc}}">{{s.group}}</label>
+      </div>
+    </sc-if>
+    <div style="flex: 1"></div>
+    <span style="font-family: IBM Plex Mono, monospace; font-size: 11px; color: {{t.tx3}}; white-space: nowrap">{{totalTxt}}</span>
+    <button title="{{s.exportTip}}" style="height: 24px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid {{t.line2}}; border-radius: 5px; background: transparent; color: {{t.tx2}}; font: inherit; cursor: pointer; white-space: nowrap"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg>{{s.export}}</button>
+    <button title="{{s.collapseTip}}" aria-label="{{s.collapse}}" style="width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 4px; background: transparent; color: {{t.tx2}}; cursor: pointer"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{collapseIcon}}"></path></svg></button>
+  </div>
+
+  <sc-if value="{{open}}" hint-placeholder-val="{{ true }}">
+    <div role="table" aria-label="{{s.title}}" style="flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative">
+      <div role="row" style="height: 22px; flex: none; display: flex; align-items: center; padding: 0 18px 0 12px; border-bottom: 1px solid {{t.line}}; color: {{t.tx3}}; font-size: 11px">
+        <span role="columnheader" style="width: 104px; flex: none">{{s.cType}}</span>
+        <span role="columnheader" style="width: 70px; flex: none">{{s.cFam}}</span>
+        <span role="columnheader" style="width: 130px; flex: none">{{s.cSub}}</span>
+        <span role="columnheader" title="{{s.cImgTip}}" style="width: 76px; flex: none; text-align: right; padding-right: 16px">{{s.cImg}}</span>
+        <span role="columnheader" title="{{s.cPosTip}}" style="width: 120px; flex: none; text-align: right; padding-right: 16px">{{s.cPos}}</span>
+        <span role="columnheader" style="flex: 1">{{s.cDesc}}</span>
+      </div>
+      <div style="flex: 1; min-height: 0; overflow: hidden">
+        <sc-for list="{{rows}}" as="r" hint-placeholder-count="8">
+          <button role="row" title="{{s.rowTip}}" onClick="{{r.click}}" style="width: 100%; height: 22px; display: flex; align-items: center; padding: 0 18px 0 12px; border: 0; border-left: 2px solid {{r.bar}}; background: {{r.bg}}; color: {{r.color}}; font: inherit; text-align: left; cursor: default">
+            <span role="cell" style="width: 104px; flex: none; display: flex; align-items: center; gap: 6px; padding-left: {{r.indent}}px">
+              <sc-if value="{{r.isGroup}}" hint-placeholder-val="{{ false }}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{r.caret}}"></path></svg></sc-if>
+              <dc-import name="Led" state="{{r.k}}" theme="{{theme}}" size="11" hint-size="11px,11px"></dc-import>
+              <span style="color: {{r.typeColor}}">{{r.typeLabel}}</span>
+            </span>
+            <span role="cell" style="width: 70px; flex: none; white-space: nowrap">{{r.fam}}</span>
+            <span role="cell" style="width: 130px; flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: {{t.tx2}}">{{r.sub}}</span>
+            <span role="cell" style="width: 76px; flex: none; box-sizing: border-box; padding-right: 16px; text-align: right; font-family: IBM Plex Mono, monospace; font-size: 11.5px; font-variant-numeric: tabular-nums; color: {{t.tx2}}">{{r.img}}</span>
+            <span role="cell" style="width: 120px; flex: none; box-sizing: border-box; padding-right: 16px; text-align: right; font-family: IBM Plex Mono, monospace; font-size: 11.5px; font-variant-numeric: tabular-nums; color: {{t.tx2}}">{{r.pos}}</span>
+            <span role="cell" style="flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: {{r.weight}}">{{r.desc}}<sc-if value="{{r.isGroup}}" hint-placeholder-val="{{ false }}"><span style="margin-left: 8px; padding: 0 6px; border-radius: 3px; background: {{t.bg3}}; color: {{t.tx}}; font-family: IBM Plex Mono, monospace; font-size: 11px">× {{r.count}}</span></sc-if></span>
+          </button>
+        </sc-for>
+      </div>
+      <div aria-hidden="true" style="position: absolute; right: 3px; top: 26px; bottom: 4px; width: 8px; border-radius: 4px; background: {{t.bg2}}">
+        <div style="margin-top: 0; height: 70%; border-radius: 4px; background: {{t.line2}}"></div>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"lang":{"editor":"enum","options":["fr","en"],"default":"fr"},"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"collapsed":{"editor":"boolean","default":false},"indexing":{"editor":"range","min":0,"max":100,"step":1,"unit":"%","default":100},"$preview":{"width":1920,"height":212}}'>
+const TH={dark:{bg1:'#12161D',bg2:'#181D26',bg3:'#222937',sel:'#2B2550',line:'#262D39',line2:'#384152',tx:'#E6EAF0',tx2:'#AEB7C4',tx3:'#8792A2',acc:'#A994FF',field:'#0E1218',err:'#FF6B61',warn:'#F0883E',errBg:'rgba(255,107,97,0.10)',warnBg:'rgba(240,136,62,0.10)',accBg:'rgba(169,148,255,0.16)'},light:{bg1:'#FFFFFF',bg2:'#F4F6F9',bg3:'#E9EDF3',sel:'#ECE6FF',line:'#D8DDE5',line2:'#BCC5D1',tx:'#121820',tx2:'#3B4655',tx3:'#576274',acc:'#6440D8',field:'#FFFFFF',err:'#C4232D',warn:'#B54708',errBg:'rgba(196,35,45,0.07)',warnBg:'rgba(181,71,8,0.08)',accBg:'rgba(100,64,216,0.10)'}};
+const L={
+  fr:{title:'Rapport',quick:'Filtres rapides',all:'Toutes',fam:'Famille',famTip:'Filtrer par famille : TS, HEVC, H.264, MPEG-2, Audio…',sub:'Sous-famille',subTip:'Filtrer par sous-famille : TR 101 290-1/-2, Syntax, Profiles, PSI/SI…',search:'Rechercher dans les descriptions',group:'Regrouper',groupTip:'Regrouper les messages identiques répétés',export:'Exporter',exportTip:'Exporter le rapport filtré en CSV ou texte (Ctrl+Maj+R)',collapse:'Replier',collapseTip:'Replier ou déplier le rapport (Ctrl+2)',
+    types:{err:'Erreur',warn:'Avert.',info:'Info'},chipTip:{err:'Afficher / masquer les erreurs',warn:'Afficher / masquer les avertissements',info:'Afficher / masquer les informations'},chipLabel:{err:'erreurs',warn:'avert.',info:'infos'},
+    cType:'Type',cFam:'Famille',cSub:'Sous-famille',cImg:'Image',cImgTip:'Index de présentation de l’image concernée',cPos:'Position',cPosTip:'Offset en octets de l’octet de synchro du paquet',cDesc:'Description',rowTip:'Double-clic : aller à l’image et à l’élément concernés',
+    total:(n,l)=>n+' messages · 1 groupe',busy:'Indexation en cours — les messages arrivent progressivement',
+    d:{cc:'1.4 Continuity count error',cc1:'Continuity count : attendu 7, reçu 9 · PID 0x0101',cc2:'Continuity count : attendu 12, reçu 14 · PID 0x0101',cc3:'Continuity count : attendu 3, reçu 4 · PID 0x0101',pcr:'2.5 PCR accuracy : écart 612 ns (> ±500 ns) · PID 0x0100',sei:'SEI mastering_display_colour_volume absente alors que transfer_characteristics = 16 (PQ)',prog:'Programme 1 « Canal Démo UHD » (SDT) · PMT PID 0x1000',pcrpid:'PCR porté par le PID vidéo 0x0100',prof:'HEVC Main 10, niveau 5.1, Main tier · 3840 × 2160p50',sub:'PID 0x0103 DVB Subtitles : analyse détaillée non prise en charge',scte:'PID 0x01F4 SCTE-35 : analyse détaillée non prise en charge',eac:'PID 0x0102 E-AC-3 5.1 · 48 kHz · 640 kbit/s',idx:'Indexation terminée : 69 092 images, 22 970 569 paquets · index mis en cache'}},
+  en:{title:'Report',quick:'Quick filters',all:'All',fam:'Family',famTip:'Filter by family: TS, HEVC, H.264, MPEG-2, Audio…',sub:'Subfamily',subTip:'Filter by subfamily: TR 101 290-1/-2, Syntax, Profiles, PSI/SI…',search:'Search descriptions',group:'Group repeats',groupTip:'Group identical repeated messages',export:'Export',exportTip:'Export the filtered report as CSV or text (Ctrl+Shift+R)',collapse:'Collapse',collapseTip:'Collapse or expand the report (Ctrl+2)',
+    types:{err:'Error',warn:'Warning',info:'Info'},chipTip:{err:'Show / hide errors',warn:'Show / hide warnings',info:'Show / hide information'},chipLabel:{err:'errors',warn:'warnings',info:'info'},
+    cType:'Type',cFam:'Family',cSub:'Subfamily',cImg:'Picture',cImgTip:'Presentation index of the picture concerned',cPos:'Position',cPosTip:'Byte offset of the packet sync byte',cDesc:'Description',rowTip:'Double-click: go to the picture and element concerned',
+    total:(n,l)=>n+' messages · 1 group',busy:'Indexing in progress — messages arrive progressively',
+    d:{cc:'1.4 Continuity count error',cc1:'Continuity count: expected 7, received 9 · PID 0x0101',cc2:'Continuity count: expected 12, received 14 · PID 0x0101',cc3:'Continuity count: expected 3, received 4 · PID 0x0101',pcr:'2.5 PCR accuracy: deviation 612 ns (> ±500 ns) · PID 0x0100',sei:'mastering_display_colour_volume SEI missing while transfer_characteristics = 16 (PQ)',prog:'Program 1 “Canal Démo UHD” (SDT) · PMT PID 0x1000',pcrpid:'PCR carried by video PID 0x0100',prof:'HEVC Main 10, level 5.1, Main tier · 3840 × 2160p50',sub:'PID 0x0103 DVB Subtitles: detailed analysis not supported',scte:'PID 0x01F4 SCTE-35: detailed analysis not supported',eac:'PID 0x0102 E-AC-3 5.1 · 48 kHz · 640 kbit/s',idx:'Indexing complete: 69,092 pictures, 22,970,569 packets · index cached'}}
+};
+const MSG=[
+  {id:'cc',k:'err',fam:'TS',sub:'TR 101 290-1',img:null,pos:null,at:9.65,group:true,count:3,children:[
+    {id:'cc1',k:'err',fam:'TS',sub:'TR 101 290-1',img:6670,pos:416874960,at:9.65},
+    {id:'cc2',k:'err',fam:'TS',sub:'TR 101 290-1',img:29561,pos:1847562480,at:42.8},
+    {id:'cc3',k:'err',fam:'TS',sub:'TR 101 290-1',img:51253,pos:3203312448,at:74.2}]},
+  {id:'pcr',k:'warn',fam:'TS',sub:'TR 101 290-2',img:43634,pos:2727124992,at:63.2},
+  {id:'sei',k:'warn',fam:'HEVC',sub:'Syntax',img:12452,pos:778431672,at:18.0},
+  {id:'prog',k:'info',fam:'TS',sub:'PSI/SI',img:null,pos:0,at:0},
+  {id:'pcrpid',k:'info',fam:'TS',sub:'PSI/SI',img:null,pos:376,at:0},
+  {id:'prof',k:'info',fam:'HEVC',sub:'Profiles',img:0,pos:1128,at:0},
+  {id:'eac',k:'info',fam:'Audio',sub:'Parsing',img:null,pos:2256,at:0},
+  {id:'sub',k:'info',fam:'TS',sub:'Parsing',img:null,pos:4888,at:0},
+  {id:'scte',k:'info',fam:'TS',sub:'Parsing',img:null,pos:9212,at:0},
+  {id:'idx',k:'info',fam:'TS',sub:'Indexing',img:null,pos:null,at:100}
+];
+const nf=(n,l)=>n===null||n===undefined?'—':String(n).replace(/\B(?=(\d{3})+(?!\d))/g,l==='en'?',':' ');
+class Component extends DCLogic {
+  renderVals() {
+    const lang = this.props.lang ?? 'fr';
+    const theme = this.props.theme ?? 'dark';
+    const t = TH[theme] || TH.dark;
+    const s = L[lang] || L.fr;
+    const idx = Number(this.props.indexing ?? 100);
+    const hide = this.state.hide ?? {};
+    const expanded = this.state.expanded ?? true;
+    const grouped = this.state.grouped ?? true;
+    const sel = this.state.sel ?? 'sei';
+    const visible = (m) => m.at <= idx;
+    const flat = [];
+    MSG.forEach(m => { if (m.group) m.children.forEach(c => flat.push(c)); else flat.push(m); });
+    const counts = {err: 0, warn: 0, info: 0};
+    flat.filter(visible).forEach(m => counts[m.k]++);
+    const mk = (m, child) => {
+      const isSel = m.id === sel;
+      const tint = m.k === 'err' ? t.errBg : (m.k === 'warn' ? t.warnBg : 'transparent');
+      return {
+        k: m.k, typeLabel: s.types[m.k], typeColor: m.k === 'err' ? t.err : (m.k === 'warn' ? t.warn : t.tx2),
+        fam: m.fam, sub: m.sub, img: nf(m.img, lang), pos: nf(m.pos, lang), desc: s.d[m.id],
+        isGroup: !!m.group, count: m.group ? m.children.filter(visible).length : 0, caret: expanded ? 'M6 9l6 6 6-6' : 'M9 6l6 6-6 6',
+        indent: child ? 18 : 0, weight: m.group ? 500 : 400,
+        bg: isSel ? t.sel : tint, bar: isSel ? t.acc : 'transparent', color: t.tx,
+        click: () => m.group ? this.setState({expanded: !expanded}) : this.setState({sel: m.id})
+      };
+    };
+    const rows = [];
+    MSG.forEach(m => {
+      if (hide[m.k] || !visible(m)) return;
+      if (m.group && grouped) {
+        rows.push(mk(m, false));
+        if (expanded) m.children.filter(visible).forEach(c => rows.push(mk(c, true)));
+      } else if (m.group) {
+        m.children.filter(visible).forEach(c => rows.push(mk(c, false)));
+      } else rows.push(mk(m, false));
+    });
+    const chips = ['err', 'warn', 'info'].map(k => {
+      const on = !hide[k];
+      return {k, n: counts[k], label: s.chipLabel[k], tip: s.chipTip[k], on,
+        border: on ? t.line2 : t.line, bg: on ? t.bg3 : 'transparent', color: on ? t.tx : t.tx3,
+        toggle: () => this.setState({hide: Object.assign({}, hide, {[k]: on})})};
+    });
+    const collapsed = !!this.props.collapsed;
+    const n = counts.err + counts.warn + counts.info;
+    return {
+      t, s, theme, rows, chips, grouped, open: !collapsed,
+      toggleGroup: () => this.setState({grouped: !grouped}),
+      collapseIcon: collapsed ? 'M6 15l6-6 6 6' : 'M6 9l6 6 6-6',
+      totalTxt: idx < 100 ? s.busy : s.total(n, lang)
+    };
+  }
+}
+</script>
+</body>
+</html>

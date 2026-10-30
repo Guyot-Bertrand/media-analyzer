@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Barre de menus et d’outils</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="position: absolute; inset: 0; display: flex; flex-direction: column; background: {{t.bg2}}; color: {{t.tx}}; font-family: IBM Plex Sans, system-ui, sans-serif; font-size: 12px; line-height: 16px">
+  <div style="height: 28px; flex: none; display: flex; align-items: center; gap: 2px; padding: 0 8px; background: {{t.bg0}}; border-bottom: 1px solid {{t.line}}">
+    <div style="display: flex; align-items: center; gap: 8px; padding-right: 10px">
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="0.5" y="0.5" width="15" height="15" rx="3.5" fill="{{t.acc}}"></rect><path d="M3.5 11V5M6.5 11V7M9.5 11V4M12.5 11V8" stroke="{{t.accTx}}" stroke-width="1.6" stroke-linecap="round"></path></svg>
+      <span style="font-weight: 600; white-space: nowrap">Media Analyzer</span>
+    </div>
+    <nav aria-label="{{s.menu}}" style="display: flex; align-items: center; gap: 0">
+      <sc-for list="{{menus}}" as="m" hint-placeholder-count="5">
+        <button title="{{m.tip}}" style="height: 24px; padding: 0 9px; border: 0; border-radius: 4px; background: transparent; color: {{t.tx2}}; font: inherit; cursor: pointer; white-space: nowrap">{{m.label}}</button>
+      </sc-for>
+    </nav>
+    <div style="flex: 1"></div>
+    <sc-if value="{{hasFile}}" hint-placeholder-val="{{ true }}">
+      <div title="/mnt/nas/ingest/2026-10/DEMO_UHD_20261014_2000.ts" style="display: flex; align-items: center; gap: 8px; min-width: 0; color: {{t.tx2}}; white-space: nowrap; overflow: hidden">
+        <span style="font-family: IBM Plex Mono, monospace; color: {{t.tx}}">DEMO_UHD_20261014_2000.ts</span>
+        <span style="color: {{t.tx3}}">— /mnt/nas/ingest/2026-10/</span>
+      </div>
+    </sc-if>
+  </div>
+
+  <div role="toolbar" aria-label="{{s.toolbar}}" style="height: 36px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 8px; border-bottom: 1px solid {{t.line}}">
+    <sc-for list="{{groupA}}" as="b" hint-placeholder-count="2">
+      <button title="{{b.tip}}" aria-label="{{b.label}}" disabled="{{b.disabled}}" style="height: 28px; min-width: 28px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 {{b.pad}}px; border: 1px solid {{b.border}}; border-radius: 5px; background: {{b.bg}}; color: {{b.color}}; font: inherit; cursor: pointer; white-space: nowrap">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{b.icon}}"></path></svg>
+        <sc-if value="{{b.showLabel}}" hint-placeholder-val="{{ true }}"><span>{{b.label}}</span></sc-if>
+      </button>
+    </sc-for>
+    <div aria-hidden="true" style="width: 1px; height: 18px; margin: 0 6px; background: {{t.line2}}"></div>
+    <sc-for list="{{groupB}}" as="b" hint-placeholder-count="4">
+      <button title="{{b.tip}}" aria-label="{{b.label}}" disabled="{{b.disabled}}" style="height: 28px; min-width: 28px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 {{b.pad}}px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: {{b.color}}; font: inherit; cursor: pointer; white-space: nowrap">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{b.icon}}"></path></svg>
+        <sc-if value="{{b.showLabel}}" hint-placeholder-val="{{ true }}"><span>{{b.label}}</span></sc-if>
+      </button>
+    </sc-for>
+    <div style="flex: 1"></div>
+    <div role="group" aria-label="{{s.panels}}" style="display: flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid {{t.line}}; border-radius: 6px">
+      <sc-for list="{{panels}}" as="b" hint-placeholder-count="3">
+        <button title="{{b.tip}}" aria-label="{{b.label}}" aria-pressed="{{b.on}}" style="width: 28px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 4px; background: {{b.bg}}; color: {{b.color}}; cursor: pointer">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{b.icon}}"></path></svg>
+        </button>
+      </sc-for>
+    </div>
+    <button title="{{s.settingsTip}}" aria-label="{{s.settings}}" style="height: 28px; min-width: 28px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 8px; margin-left: 4px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: {{t.tx2}}; font: inherit; cursor: pointer">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9M15 5v4M9 15v4"></path></svg>
+      <sc-if value="{{showLabels}}" hint-placeholder-val="{{ true }}"><span>{{s.settings}}</span></sc-if>
+    </button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"lang":{"editor":"enum","options":["fr","en"],"default":"fr"},"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"compact":{"editor":"boolean","default":false},"nofile":{"editor":"boolean","default":false},"$preview":{"width":1920,"height":64}}'>
+const TH={dark:{bg0:'#0B0E13',bg1:'#12161D',bg2:'#181D26',bg3:'#222937',line:'#262D39',line2:'#384152',tx:'#E6EAF0',tx2:'#AEB7C4',tx3:'#8792A2',dis:'#5F6A7A',acc:'#A994FF',accTx:'#0B0E13',accBg:'rgba(169,148,255,0.16)'},light:{bg0:'#E6E9EF',bg1:'#FFFFFF',bg2:'#F4F6F9',bg3:'#E9EDF3',line:'#D8DDE5',line2:'#BCC5D1',tx:'#121820',tx2:'#3B4655',tx3:'#576274',dis:'#8A94A3',acc:'#6440D8',accTx:'#FFFFFF',accBg:'rgba(100,64,216,0.10)'}};
+const I={open:'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',recent:'M12 4a8 8 0 1 0 8 8M12 8v4l3 2M20 4v4h-4',exp:'M12 4v11M7 10l5 5 5-5M5 20h14',goto:'M4 12h12M12 7l5 5-5 5M20 5v14',ePrev:'M14 6l-6 6 6 6M19 6v8M19 18v0.5',eNext:'M10 6l6 6-6 6M5 6v8M5 18v0.5',pl:'M4 4h16v16H4zM9 4v16',pb:'M4 4h16v16H4zM4 15h16',pr:'M4 4h16v16H4zM15 4v16'};
+const L={
+  fr:{menu:'Menu principal',toolbar:'Barre d’outils',panels:'Panneaux',settings:'Réglages',settingsTip:'Réglages de l’application (Ctrl+,)',menus:[['Fichier','Ouvrir, fichiers récents, export (Alt+F)'],['Affichage','Panneaux, thème, langue, décimal/hexadécimal (Alt+A)'],['Analyse','Lancer, interrompre ou relancer les analyses (Alt+N)'],['Outils','Découpe, extraction (versions suivantes) (Alt+O)'],['Aide','Raccourcis clavier, références normatives (F1)']],
+    open:['Ouvrir…','Ouvrir un fichier TS ou ES brut (Ctrl+O)'],recent:['Récents','Fichiers récents, réouverture instantanée si l’index est en cache (Ctrl+Maj+O)'],exp:['Exporter la vue','Exporter le contenu de la vue courante en CSV ou texte (Ctrl+E)'],goto:['Aller à l’image…','Aller à l’image n° (index de présentation) (Ctrl+G)'],ePrev:['Erreur préc.','Aller au message d’erreur précédent (Maj+F8)'],eNext:['Erreur suiv.','Aller au message d’erreur suivant (F8)'],
+    pl:['Panneau Structure','Afficher ou masquer l’arbre de structure (Ctrl+1)'],pb:['Panneau Rapport','Afficher ou masquer le rapport (Ctrl+2)'],pr:['Panneau Données','Afficher ou masquer le panneau Données (Ctrl+3)']},
+  en:{menu:'Main menu',toolbar:'Toolbar',panels:'Panels',settings:'Settings',settingsTip:'Application settings (Ctrl+,)',menus:[['File','Open, recent files, export (Alt+F)'],['View','Panels, theme, language, decimal/hexadecimal (Alt+V)'],['Analysis','Start, interrupt or restart analyses (Alt+N)'],['Tools','Trimming, extraction (upcoming versions) (Alt+T)'],['Help','Keyboard shortcuts, standards references (F1)']],
+    open:['Open…','Open a TS or raw ES file (Ctrl+O)'],recent:['Recent files','Recent files, instant reopening when the index is cached (Ctrl+Shift+O)'],exp:['Export current view','Export the current view as CSV or text (Ctrl+E)'],goto:['Go to picture…','Go to picture number (presentation index) (Ctrl+G)'],ePrev:['Previous error','Go to previous error message (Shift+F8)'],eNext:['Next error','Go to next error message (F8)'],
+    pl:['Structure panel','Show or hide the structure tree (Ctrl+1)'],pb:['Report panel','Show or hide the report (Ctrl+2)'],pr:['Data panel','Show or hide the Data panel (Ctrl+3)']}
+};
+class Component extends DCLogic {
+  renderVals() {
+    const t = TH[this.props.theme ?? 'dark'] || TH.dark;
+    const s = L[this.props.lang ?? 'fr'] || L.fr;
+    const compact = !!this.props.compact;
+    const nofile = !!this.props.nofile;
+    const btn = (k, primary, needsFile) => {
+      const off = needsFile && nofile;
+      return { label: s[k][0], tip: s[k][1], icon: I[k], showLabel: !compact, pad: compact ? 6 : 10, disabled: off,
+        color: off ? t.dis : (primary ? t.tx : t.tx2), border: primary ? t.line2 : 'transparent', bg: primary ? t.bg3 : 'transparent' };
+    };
+    const panels = ['pl', 'pb', 'pr'].map(k => {
+      const on = !compact || k === 'none';
+      return { label: s[k][0], tip: s[k][1], icon: I[k], on, bg: on ? t.accBg : 'transparent', color: on ? t.acc : t.tx3 };
+    });
+    return {
+      t, s, hasFile: !nofile, showLabels: !compact,
+      menus: s.menus.map(m => ({ label: m[0], tip: m[1] })),
+      groupA: [btn('open', true, false), btn('recent', false, false)],
+      groupB: [btn('exp', false, true), btn('goto', false, true), btn('ePrev', false, true), btn('eNext', false, true)],
+      panels
+    };
+  }
+}
+</script>
+</body>
+</html>

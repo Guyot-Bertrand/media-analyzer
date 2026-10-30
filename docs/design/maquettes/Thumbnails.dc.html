@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Barre de vignettes</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; background: {{t.bg2}}; color: {{t.tx}}; font-family: IBM Plex Sans, system-ui, sans-serif; font-size: 12px; line-height: 16px">
+  <div style="flex: 1; min-height: 0; display: flex; align-items: center; gap: 8px; padding: 6px 10px 4px">
+    <div role="group" aria-label="{{s.navBack}}" style="display: flex; gap: 2px; flex: none">
+      <sc-for list="{{navL}}" as="b" hint-placeholder-count="3">
+        <button title="{{b.tip}}" aria-label="{{b.label}}" onClick="{{b.go}}" style="width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 1px; border: 1px solid {{t.line2}}; border-radius: 5px; background: {{t.bg1}}; color: {{t.tx2}}; font: inherit; font-family: IBM Plex Mono, monospace; font-size: 10px; font-weight: 600; cursor: pointer">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{b.icon}}"></path></svg>{{b.txt}}
+        </button>
+      </sc-for>
+    </div>
+
+    <div role="listbox" aria-label="{{s.thumbs}}" style="flex: 1; min-width: 0; display: flex; gap: 6px; align-items: stretch">
+      <sc-for list="{{cards}}" as="c" hint-placeholder-count="11">
+        <button role="option" aria-selected="{{c.cur}}" title="{{c.tip}}" onClick="{{c.go}}" style="position: relative; flex: 1 1 0; min-width: 0; max-width: 156px; display: flex; flex-direction: column; gap: 3px; padding: 3px; border: {{c.bw}}px solid {{c.border}}; border-radius: 6px; background: {{c.bg}}; color: inherit; font: inherit; text-align: left; cursor: pointer">
+          <span style="position: relative; display: block; width: 100%; height: {{imgH}}px; border-radius: 3px; overflow: hidden; background: #101010">
+            <span style="position: absolute; inset: 0 0 30% 0; display: flex; opacity: 0.85"><span style="flex: 1; background: #BFBFBF"></span><span style="flex: 1; background: #BFBF00"></span><span style="flex: 1; background: #00BFBF"></span><span style="flex: 1; background: #00BF00"></span><span style="flex: 1; background: #BF00BF"></span><span style="flex: 1; background: #BF0000"></span><span style="flex: 1; background: #0000BF"></span></span>
+            <span style="position: absolute; left: 3px; top: 3px; min-width: 15px; padding: 0 3px; border-radius: 3px; background: {{c.badgeBg}}; color: #FFFFFF; font-family: IBM Plex Mono, monospace; font-size: 10px; font-weight: 600; line-height: 14px; text-align: center; box-shadow: 0 0 0 1px rgba(0,0,0,0.45)">{{c.type}}</span>
+            <sc-if value="{{c.hasMsg}}" hint-placeholder-val="{{ false }}"><span style="position: absolute; right: 3px; top: 3px; padding: 1px; border-radius: 3px; background: rgba(0,0,0,0.7); line-height: 0"><dc-import name="Led" state="{{c.msg}}" theme="dark" size="11" hint-size="11px,11px"></dc-import></span></sc-if>
+            <span style="position: absolute; left: 3px; bottom: 3px; display: flex; gap: 2px">
+              <sc-for list="{{c.tags}}" as="tg" hint-placeholder-count="0">
+                <span style="padding: 0 3px; border-radius: 2px; background: rgba(0,0,0,0.78); color: #E6EAF0; font-family: IBM Plex Mono, monospace; font-size: 9px; line-height: 12px">{{tg}}</span>
+              </sc-for>
+            </span>
+          </span>
+          <span style="display: flex; justify-content: space-between; gap: 4px; padding: 0 2px; font-family: IBM Plex Mono, monospace; font-size: 11px; line-height: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden">
+            <span title="{{s.decTip}}" style="color: {{c.numColor}}; font-weight: {{c.weight}}">{{c.dTxt}}</span>
+            <span title="{{s.presTip}}" style="color: {{t.tx3}}">p {{c.pTxt}}</span>
+          </span>
+          <sc-if value="{{c.rStart}}" hint-placeholder-val="{{ false }}"><span aria-hidden="true" style="position: absolute; left: -4px; top: -2px; bottom: -2px; width: 4px; border: 2px solid {{t.acc}}; border-right: 0; border-radius: 3px 0 0 3px"></span></sc-if>
+          <sc-if value="{{c.rEnd}}" hint-placeholder-val="{{ false }}"><span aria-hidden="true" style="position: absolute; right: -4px; top: -2px; bottom: -2px; width: 4px; border: 2px solid {{t.acc}}; border-left: 0; border-radius: 0 3px 3px 0"></span></sc-if>
+        </button>
+      </sc-for>
+    </div>
+
+    <div role="group" aria-label="{{s.navFwd}}" style="display: flex; gap: 2px; flex: none">
+      <sc-for list="{{navR}}" as="b" hint-placeholder-count="3">
+        <button title="{{b.tip}}" aria-label="{{b.label}}" onClick="{{b.go}}" style="width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 1px; border: 1px solid {{t.line2}}; border-radius: 5px; background: {{t.bg1}}; color: {{t.tx2}}; font: inherit; font-family: IBM Plex Mono, monospace; font-size: 10px; font-weight: 600; cursor: pointer">
+          {{b.txt}}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{b.icon}}"></path></svg>
+        </button>
+      </sc-for>
+    </div>
+
+    <div style="flex: none; display: flex; flex-direction: column; gap: 5px; width: {{sideW}}px">
+      <label title="{{s.gotoTip}}" style="display: flex; align-items: center; gap: 6px; color: {{t.tx3}}; font-size: 11px; white-space: nowrap">{{s.goto}}
+        <input type="text" inputmode="numeric" value="{{gotoVal}}" aria-label="{{s.gotoAria}}" style="flex: 1; min-width: 0; height: 26px; box-sizing: border-box; padding: 0 8px; border: 1px solid {{t.line2}}; border-radius: 5px; background: {{t.field}}; color: {{t.tx}}; font-family: IBM Plex Mono, monospace; font-size: 11.5px">
+      </label>
+      <div role="radiogroup" aria-label="{{s.mode}}" title="{{s.modeTip}}" style="display: flex; padding: 2px; gap: 2px; border: 1px solid {{t.line}}; border-radius: 6px">
+        <sc-for list="{{modes}}" as="m" hint-placeholder-count="3">
+          <button role="radio" aria-checked="{{m.on}}" title="{{m.tip}}" onClick="{{m.pick}}" style="flex: 1; height: 22px; padding: 0 4px; border: 0; border-radius: 4px; background: {{m.bg}}; color: {{m.color}}; font: inherit; font-size: 11px; cursor: pointer; white-space: nowrap">{{m.label}}</button>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+
+  <sc-if value="{{showRange}}" hint-placeholder-val="{{ false }}">
+    <div style="flex: none; display: flex; align-items: center; gap: 8px; padding: 0 10px 4px; font-size: 11px; color: {{t.tx2}}">
+      <span style="width: 8px; height: 8px; border: 2px solid {{t.acc}}; border-radius: 2px"></span>
+      <span>{{s.range}}</span>
+      <span style="padding: 0 5px; border-radius: 3px; background: {{t.bg3}}; color: {{t.tx3}}; font-size: 10px; line-height: 14px">{{s.rangeSoon}}</span>
+    </div>
+  </sc-if>
+
+  <div style="height: 26px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 10px 4px">
+    <span style="font-family: IBM Plex Mono, monospace; font-size: 10.5px; color: {{t.tx3}}">00:00:00</span>
+    <div title="{{s.barTip}}" style="position: relative; flex: 1; height: 14px; border-radius: 3px; background: {{t.bg1}}; border: 1px solid {{t.line}}; overflow: hidden">
+      <div style="position: absolute; left: 0; top: 0; bottom: 0; width: {{idx}}%; background: {{t.bg3}}"></div>
+      <sc-if value="{{busy}}" hint-placeholder-val="{{ false }}">
+        <div title="{{s.notIndexed}}" style="position: absolute; left: {{idx}}%; right: 0; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, transparent 0 4px, {{t.line}} 4px 5px)"></div>
+        <div style="position: absolute; left: {{idx}}%; top: 0; bottom: 0; width: 2px; background: {{t.acc}}"></div>
+      </sc-if>
+      <sc-if value="{{corrupt}}" hint-placeholder-val="{{ false }}">
+        <div title="{{s.corruptTip}}" style="position: absolute; left: 55.2%; width: 1.4%; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, {{t.errBg}} 0 3px, {{t.err}} 3px 4px)"></div>
+      </sc-if>
+      <sc-for list="{{marks}}" as="mk" hint-placeholder-count="5">
+        <button title="{{mk.tip}}" aria-label="{{mk.tip}}" style="position: absolute; left: {{mk.left}}%; top: 0; bottom: 0; width: 7px; margin-left: -3px; padding: 0; border: 0; background: transparent; cursor: pointer">
+          <span style="display: block; width: 3px; height: 100%; margin: 0 auto; background: {{mk.color}}"></span>
+        </button>
+      </sc-for>
+      <div aria-hidden="true" style="position: absolute; left: {{curPos}}%; top: -1px; bottom: -1px; width: 2px; margin-left: -1px; background: {{t.tx}}"></div>
+    </div>
+    <span style="font-family: IBM Plex Mono, monospace; font-size: 10.5px; color: {{t.tx3}}">00:23:01</span>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"lang":{"editor":"enum","options":["fr","en"],"default":"fr"},"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"compact":{"editor":"boolean","default":false},"showRange":{"editor":"boolean","default":false},"corrupt":{"editor":"boolean","default":false},"indexing":{"editor":"range","min":0,"max":100,"step":1,"unit":"%","default":100},"frames":{"editor":null},"current":{"editor":null},"onPick":{"editor":null},"$preview":{"width":1920,"height":132}}'>
+const TH={dark:{bg1:'#12161D',bg2:'#181D26',bg3:'#2A3140',sel:'#2B2550',line:'#262D39',line2:'#384152',tx:'#E6EAF0',tx2:'#AEB7C4',tx3:'#8792A2',acc:'#A994FF',accBg:'rgba(169,148,255,0.16)',field:'#0E1218',ok:'#3FB950',warn:'#F0883E',err:'#FF6B61',errBg:'rgba(255,107,97,0.25)'},light:{bg1:'#FFFFFF',bg2:'#F4F6F9',bg3:'#DDE3EC',sel:'#ECE6FF',line:'#D8DDE5',line2:'#BCC5D1',tx:'#121820',tx2:'#3B4655',tx3:'#576274',acc:'#6440D8',accBg:'rgba(100,64,216,0.10)',field:'#FFFFFF',ok:'#1A7F37',warn:'#B54708',err:'#C4232D',errBg:'rgba(196,35,45,0.18)'}};
+const TYPE={I:'#C8323A',P:'#237A35',B:'#2563D6'};
+const DEF=[[12445,12444,'B'],[12446,12445,'B'],[12447,12449,'P'],[12448,12447,'B'],[12449,12448,'B'],[12450,12452,'I'],[12451,12450,'B'],[12452,12451,'B'],[12453,12455,'P'],[12454,12453,'B'],[12455,12454,'B']].map(function(r,i){var pkt=4140593+(r[0]-12450)*332+((i*37)%23);return {d:r[0],p:r[1],type:r[2],pts:3600000+r[1]*1800,pkt:pkt,byte:pkt*188,tags:r[2]==='I'?['VPS','SPS','PPS','SEI']:(i===8?['SEI']:[]),msg:r[0]===12450?'warn':''};});
+const IC={first:'M6 5v14M18 6l-7 6 7 6',prevI:'M15 6l-6 6 6 6',prev:'M15 6l-6 6 6 6',next:'M9 6l6 6-6 6',nextI:'M9 6l6 6-6 6',last:'M18 5v14M6 6l7 6-7 6'};
+const L={
+  fr:{navBack:'Navigation arrière',navFwd:'Navigation avant',thumbs:'Vignettes',first:['Début','Première image du fichier (Début)'],prevI:['I précédente','Image I précédente (Ctrl+←)'],prev:['Image précédente','Image précédente (←)'],next:['Image suivante','Image suivante (→)'],nextI:['I suivante','Image I suivante (Ctrl+→)'],last:['Fin','Dernière image du fichier (Fin)'],
+    decTip:'Index de décodage',presTip:'Index de présentation',goto:'Aller à',gotoAria:'Aller à l’image n° (index de présentation)',gotoTip:'Index de présentation, ou temps hh:mm:ss.ms (Ctrl+G)',mode:'Mode de navigation',modeTip:'Images affichées dans la barre de vignettes',modes:[['Toutes','Toutes les images'],['RAP','Points d’accès aléatoire seulement : IDR, CRA, BLA'],['I seules','Images I seulement']],
+    tip:(f,l)=>'Position : '+f.byteTxt+' o · Paquet n° '+f.pktTxt+' · PTS '+f.ptsTxt+' — clic droit : début / fin de sélection',
+    barTip:'Position dans le fichier — cliquer pour y aller ; repères : erreurs (rouge), avertissements (orange)',notIndexed:'Partie du fichier non encore indexée',corruptTip:'Zone corrompue : 12,4 Mo illisibles (paquets 12 680 410 → 12 746 320)',
+    range:'Sélection : images 12 450 → 12 455 (ordre de décodage) · 6 images · début recalé sur l’image I',rangeSoon:'découpe : V1',
+    marks:[[9.65,'err','Continuity count error · PID 0x0101 · 00:02:13.400'],[18.0,'warn','SEI mastering_display_colour_volume absente · image 12 452'],[42.8,'err','Continuity count error · PID 0x0101 · 00:09:51.220'],[63.2,'warn','PCR accuracy 612 ns · PID 0x0100 · 00:14:32.680'],[74.2,'err','Continuity count error · PID 0x0101 · 00:17:05.060']]},
+  en:{navBack:'Backward navigation',navFwd:'Forward navigation',thumbs:'Thumbnails',first:['First','First picture in file (Home)'],prevI:['Previous I','Previous I picture (Ctrl+←)'],prev:['Previous picture','Previous picture (←)'],next:['Next picture','Next picture (→)'],nextI:['Next I','Next I picture (Ctrl+→)'],last:['Last','Last picture in file (End)'],
+    decTip:'Decoding index',presTip:'Presentation index',goto:'Go to',gotoAria:'Go to picture number (presentation index)',gotoTip:'Presentation index, or time hh:mm:ss.ms (Ctrl+G)',mode:'Navigation mode',modeTip:'Pictures shown in the thumbnail bar',modes:[['All','All pictures'],['RAP','Random access points only: IDR, CRA, BLA'],['I only','I pictures only']],
+    tip:(f,l)=>'Position: '+f.byteTxt+' B · Packet #'+f.pktTxt+' · PTS '+f.ptsTxt+' — right-click: set selection start / end',
+    barTip:'Position in file — click to jump; markers: errors (red), warnings (orange)',notIndexed:'Part of the file not indexed yet',corruptTip:'Corrupted area: 12.4 MB unreadable (packets 12,680,410 → 12,746,320)',
+    range:'Selection: pictures 12,450 → 12,455 (decoding order) · 6 pictures · start snapped to the I picture',rangeSoon:'trimming: V1',
+    marks:[[9.65,'err','Continuity count error · PID 0x0101 · 00:02:13.400'],[18.0,'warn','mastering_display_colour_volume SEI missing · picture 12,452'],[42.8,'err','Continuity count error · PID 0x0101 · 00:09:51.220'],[63.2,'warn','PCR accuracy 612 ns · PID 0x0100 · 00:14:32.680'],[74.2,'err','Continuity count error · PID 0x0101 · 00:17:05.060']]}
+};
+const nf=(n,l)=>String(n).replace(/\B(?=(\d{3})+(?!\d))/g,l==='en'?',':' ');
+class Component extends DCLogic {
+  renderVals() {
+    const lang = this.props.lang ?? 'fr';
+    const t = TH[this.props.theme ?? 'dark'] || TH.dark;
+    const s = L[lang] || L.fr;
+    const compact = !!this.props.compact;
+    const all = this.props.frames || (compact ? DEF.slice(2, 9) : DEF);
+    const cur = this.props.current ?? this.state.cur ?? 12450;
+    const pick = (d) => { if (this.props.onPick) this.props.onPick(d); else this.setState({cur: d}); };
+    const idxCur = Math.max(0, all.findIndex(f => f.d === cur));
+    const iIdx = all.findIndex(f => f.type === 'I');
+    const go = {
+      first: () => pick(all[0].d), last: () => pick(all[all.length - 1].d),
+      prev: () => pick(all[Math.max(0, idxCur - 1)].d), next: () => pick(all[Math.min(all.length - 1, idxCur + 1)].d),
+      prevI: () => pick(all[iIdx >= 0 ? iIdx : 0].d), nextI: () => pick(all[iIdx >= 0 ? iIdx : all.length - 1].d)
+    };
+    const nb = (k, txt) => ({label: s[k][0], tip: s[k][1], icon: IC[k], txt, go: go[k]});
+    const showRange = !!this.props.showRange;
+    const cards = all.map((f, i) => {
+      const isCur = f.d === cur;
+      const inRange = showRange && f.d >= 12450 && f.d <= 12455;
+      const ff = {byteTxt: nf(f.byte, lang), pktTxt: nf(f.pkt, lang), ptsTxt: nf(f.pts, lang)};
+      return {
+        d: f.d, type: f.type, badgeBg: TYPE[f.type], dTxt: nf(f.d, lang), pTxt: nf(f.p, lang), tags: f.tags || [],
+        hasMsg: !!f.msg, msg: f.msg || 'ok', cur: isCur, bw: isCur ? 2 : 1,
+        border: isCur ? t.acc : (inRange ? t.acc : t.line), bg: isCur ? t.sel : (inRange ? t.accBg : t.bg1),
+        numColor: isCur ? t.tx : t.tx2, weight: isCur ? 600 : 400,
+        rStart: showRange && f.d === 12450, rEnd: showRange && f.d === 12455,
+        tip: s.tip(ff, lang), go: () => pick(f.d)
+      };
+    });
+    const mode = this.state.mode ?? 0;
+    const idx = Number(this.props.indexing ?? 100);
+    const marks = s.marks.filter(m => m[0] <= idx).map(m => ({left: m[0], color: m[1] === 'err' ? t.err : t.warn, tip: m[2]}));
+    const curF = all[idxCur] || {p: 12452};
+    return {
+      t, s, cards, marks, idx, busy: idx < 100, showRange, corrupt: !!this.props.corrupt,
+      imgH: compact ? 40 : 56, sideW: compact ? 150 : 196,
+      navL: [nb('first', ''), nb('prevI', 'I'), nb('prev', '')],
+      navR: [nb('next', ''), nb('nextI', 'I'), nb('last', '')],
+      gotoVal: String(curF.p), curPos: (curF.p / 69092 * 100).toFixed(2),
+      modes: s.modes.map((m, i) => ({label: m[0], tip: m[1], on: mode === i, bg: mode === i ? t.accBg : 'transparent', color: mode === i ? t.tx : t.tx3, pick: () => this.setState({mode: i})}))
+    };
+  }
+}
+</script>
+</body>
+</html>

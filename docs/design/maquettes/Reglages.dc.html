@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Réglages</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div role="dialog" aria-labelledby="settings-title" style="position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; background: #12161D; color: #E6EAF0; font-family: IBM Plex Sans, system-ui, sans-serif; font-size: 12px; line-height: 16px; border: 1px solid #384152">
+  <div style="height: 40px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 8px 0 16px; background: #181D26; border-bottom: 1px solid #262D39">
+    <h1 id="settings-title" style="margin: 0; font-size: 13px; font-weight: 600">Réglages</h1>
+    <label style="display: flex; align-items: center; gap: 6px; height: 26px; width: 260px; margin-left: 24px; box-sizing: border-box; padding: 0 8px; border: 1px solid #384152; border-radius: 5px; background: #0E1218; color: #8792A2">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4"></path></svg>
+      <input type="search" placeholder="Rechercher un réglage" aria-label="Rechercher un réglage" style="flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: #E6EAF0; font: inherit">
+    </label>
+    <div style="flex: 1"></div>
+    <button title="Fermer sans appliquer (Échap)" aria-label="Fermer" style="width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 5px; background: transparent; color: #AEB7C4; cursor: pointer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+  </div>
+
+  <div style="flex: 1; min-height: 0; display: flex">
+    <nav aria-label="Sections" style="width: 220px; flex: none; display: flex; flex-direction: column; gap: 2px; padding: 10px 8px; background: #0E1218; border-right: 1px solid #262D39">
+      <sc-for list="{{nav}}" as="n" hint-placeholder-count="4">
+        <button aria-current="{{n.cur}}" onClick="{{n.pick}}" style="height: 32px; display: flex; align-items: center; gap: 10px; padding: 0 10px; border: 0; border-radius: 5px; background: {{n.bg}}; color: {{n.color}}; font: inherit; font-weight: {{n.weight}}; text-align: left; cursor: pointer">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{n.icon}}"></path></svg>{{n.label}}
+        </button>
+      </sc-for>
+      <div style="flex: 1"></div>
+      <p style="margin: 0; padding: 8px 10px; color: #8792A2; font-size: 11px; line-height: 15px">Les réglages s’ouvrent sur la section de l’analyse courante. Les sections des analyses à venir apparaîtront ici.</p>
+    </nav>
+
+    <section aria-labelledby="sec-title" style="flex: 1; min-width: 0; overflow: auto; padding: 20px 28px 24px">
+      <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 4px">
+        <h2 id="sec-title" style="margin: 0; font-size: 16px; line-height: 22px; font-weight: 600">{{cur.title}}</h2>
+        <div style="flex: 1"></div>
+        <label title="Activer ou désactiver toutes les options de cette section" style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 10px; border: 1px solid #384152; border-radius: 5px; color: #E6EAF0; cursor: pointer; white-space: nowrap">
+          <input type="checkbox" checked="{{allOn}}" onChange="{{toggleAll}}" style="width: 15px; height: 15px; margin: 0; accent-color: #A994FF">Tout cocher
+        </label>
+      </div>
+      <p style="margin: 0 0 18px; color: #AEB7C4; line-height: 18px">{{cur.desc}}</p>
+
+      <sc-for list="{{groups}}" as="g" hint-placeholder-count="2">
+        <div style="margin-bottom: 18px">
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; color: #AEB7C4; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase">{{g.title}}<span style="flex: 1; height: 1px; background: #262D39"></span></div>
+          <sc-for list="{{g.items}}" as="it" hint-placeholder-count="4">
+            <div title="{{it.tip}}" style="min-height: 34px; display: flex; align-items: center; gap: 12px; padding: 2px 0; border-bottom: 1px solid #1B212B">
+              <sc-if value="{{it.isCheck}}" hint-placeholder-val="{{ true }}">
+                <label style="flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; cursor: pointer">
+                  <input type="checkbox" checked="{{it.on}}" onChange="{{it.toggle}}" style="width: 15px; height: 15px; margin: 0; flex: none; accent-color: #A994FF">
+                  <sc-if value="{{it.hasNum}}" hint-placeholder-val="{{ false }}"><span style="width: 28px; flex: none; font-family: IBM Plex Mono, monospace; font-size: 11.5px; color: #8792A2">{{it.num}}</span></sc-if>
+                  <span style="color: {{it.color}}">{{it.label}}</span>
+                  <sc-if value="{{it.hasRef}}" hint-placeholder-val="{{ false }}"><span style="color: #8792A2; font-size: 11px">{{it.ref}}</span></sc-if>
+                </label>
+              </sc-if>
+              <sc-if value="{{it.isText}}" hint-placeholder-val="{{ false }}">
+                <span style="flex: 1; min-width: 0; color: #E6EAF0">{{it.label}}</span>
+              </sc-if>
+              <sc-if value="{{it.hasField}}" hint-placeholder-val="{{ false }}">
+                <label style="display: flex; align-items: center; gap: 6px; color: #8792A2">
+                  <span>{{it.fieldLabel}}</span>
+                  <input type="text" inputmode="numeric" value="{{it.value}}" aria-label="{{it.label}} — {{it.fieldLabel}}" disabled="{{it.off}}" style="width: {{it.fieldW}}px; height: 26px; box-sizing: border-box; padding: 0 8px; border: 1px solid #384152; border-radius: 5px; background: #0E1218; color: {{it.fieldColor}}; font-family: IBM Plex Mono, monospace; font-size: 11.5px; text-align: {{it.align}}">
+                  <span style="width: 22px; font-family: IBM Plex Mono, monospace; font-size: 11px">{{it.unit}}</span>
+                </label>
+              </sc-if>
+              <sc-if value="{{it.hasChoice}}" hint-placeholder-val="{{ false }}">
+                <div role="radiogroup" aria-label="{{it.label}}" style="display: flex; padding: 2px; gap: 2px; border: 1px solid #262D39; border-radius: 6px">
+                  <sc-for list="{{it.choices}}" as="c" hint-placeholder-count="2">
+                    <button role="radio" aria-checked="{{c.on}}" style="height: 24px; padding: 0 10px; border: 0; border-radius: 4px; background: {{c.bg}}; color: {{c.color}}; font: inherit; cursor: pointer; white-space: nowrap">{{c.label}}</button>
+                  </sc-for>
+                </div>
+              </sc-if>
+              <sc-if value="{{it.hasBtn}}" hint-placeholder-val="{{ false }}">
+                <button style="height: 26px; padding: 0 10px; border: 1px solid #384152; border-radius: 5px; background: transparent; color: #E6EAF0; font: inherit; cursor: pointer">{{it.btn}}</button>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </sc-for>
+    </section>
+  </div>
+
+  <div style="height: 52px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 16px; background: #181D26; border-top: 1px solid #262D39">
+    <button title="Rétablir les valeurs par défaut de cette section" style="height: 30px; padding: 0 12px; border: 0; border-radius: 5px; background: transparent; color: #AEB7C4; font: inherit; cursor: pointer">Valeurs par défaut</button>
+    <span style="color: #8792A2; font-size: 11px">Les modifications TR 101 290 relancent l’analyse du fichier ouvert.</span>
+    <div style="flex: 1"></div>
+    <button title="Fermer sans appliquer (Échap)" style="height: 30px; padding: 0 14px; border: 1px solid #384152; border-radius: 5px; background: transparent; color: #E6EAF0; font: inherit; cursor: pointer">Annuler</button>
+    <button title="Appliquer sans fermer" style="height: 30px; padding: 0 14px; border: 1px solid #384152; border-radius: 5px; background: #222937; color: #E6EAF0; font: inherit; cursor: pointer">Appliquer</button>
+    <button title="Appliquer et fermer (Entrée)" style="height: 30px; padding: 0 18px; border: 0; border-radius: 5px; background: #A994FF; color: #0B0E13; font: inherit; font-weight: 600; cursor: pointer">OK</button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"section":{"editor":"enum","options":["display","logs","ts","video"],"default":"ts"},"$preview":{"width":1100,"height":720}}'>
+const IC={display:'M4 5h16v11H4zM9 20h6M12 16v4',logs:'M6 3h8l4 4v14H6zM14 3v4h4M9 12h6M9 16h6',ts:'M12 3l9 5-9 5-9-5zM3 13l9 5 9-5',video:'M3 6h13v12H3zM16 10l5-3v10l-5-3'};
+const C=(id,label,tip,o)=>Object.assign({id,kind:'check',label,tip},o||{});
+const S={
+  display:{title:'Affichage',desc:'Langue, thème et présentation des valeurs numériques.',groups:[
+    {title:'Interface',items:[{id:'lang',kind:'choice',label:'Langue',tip:'Appliquée à chaud, sans redémarrage (Ctrl+Maj+L)',choices:['Français','English'],sel:0},{id:'theme',kind:'choice',label:'Thème',tip:'Le thème sombre fait ressortir l’image',choices:['Sombre','Clair','Système'],sel:0},{id:'dens',kind:'choice',label:'Densité des tableaux',tip:'Hauteur des lignes des tableaux et des arbres',choices:['Compacte','Confortable'],sel:0}]},
+    {title:'Valeurs',items:[C('hex','Afficher les valeurs de syntaxe en hexadécimal par défaut','Bascule également disponible dans la vue Syntaxe (Ctrl+H)',{on:false}),C('pidboth','Afficher les PID en hexadécimal et en décimal','Exemple : 0x0100 (256)'),C('nearest','Zoom sans lissage (pixels nets)','Interpolation au plus proche voisin pour l’inspection pixel'),C('tips','Afficher les références normatives dans les infobulles','Exemple : ETSI TR 101 290 §5.2.1')]}]},
+  logs:{title:'Journaux',desc:'Fichiers journaux persistants du rapport.',groups:[
+    {title:'Écriture',items:[C('logon','Écrire le rapport dans un fichier journal','Un fichier par fichier analysé'),{id:'dir',kind:'text',label:'~/.local/share/media-analyzer/logs',tip:'Dossier des journaux',btn:'Parcourir…'},{id:'reopen',kind:'choice',label:'À la réouverture d’un fichier',tip:'Comportement si un journal existe déjà',choices:['Écraser','Versionner'],sel:1}]},
+    {title:'Volume',items:[C('mute','Mettre en sourdine un type de message après N occurrences','Les occurrences suivantes sont comptées mais non listées',{field:['N =','1000','',72]}),C('info','Journaliser les messages d’information','Infos de structure, détection des flux, fin d’indexation')]}]},
+  ts:{title:'TS / TR 101 290',desc:'Tests de conformité du Transport Stream selon ETSI TR 101 290. Chaque test peut être désactivé ; les seuils s’appliquent à la prochaine analyse.',groups:[
+    {title:'Général',items:[C('auto','Lancer l’analyse automatiquement à l’ouverture','Analyse en arrière-plan, annulable'),C('dvb','Standard DVB : lire la SDT et les tables DVB','Noms de service, ONID, contrôles DVB'),C('tei','Ignorer les paquets avec transport_error_indicator = 1','Ces paquets ne sont alors pas analysés',{on:false})]},
+    {title:'Priorité 1',items:[C('1.1','TS sync loss','Perte de synchronisation',{num:'1.1',field:['Hystérésis','5','paq.',56]}),C('1.2','Sync byte error','Octet de synchro ≠ 0x47',{num:'1.2'}),C('1.3','PAT error','Absence de PAT, table_id incorrect ou embrouillage',{num:'1.3',field:['Intervalle max','500','ms',72]}),C('1.4','Continuity count error','Compteur de continuité incorrect',{num:'1.4'}),C('1.5','PMT error','Absence de PMT ou embrouillage',{num:'1.5',field:['Intervalle max','500','ms',72]}),C('1.6','PID error','PID référencé absent',{num:'1.6',field:['Délai','5000','ms',72]})]},
+    {title:'Priorité 2',items:[C('2.1','Transport error','transport_error_indicator = 1',{num:'2.1'}),C('2.2','CRC error','CAT, PAT, PMT, NIT, EIT, BAT, SDT, TOT',{num:'2.2'}),C('2.3','PCR repetition error','Intervalle entre deux PCR',{num:'2.3',field:['Intervalle max','40','ms',72]}),C('2.4','PCR discontinuity indicator error','Saut de PCR non signalé',{num:'2.4',field:['Saut max','100','ms',72]}),C('2.5','PCR accuracy error','Gigue du PCR',{num:'2.5',field:['Tolérance ±','500','ns',72]}),C('2.6','PTS error','Intervalle entre deux PTS',{num:'2.6',field:['Intervalle max','700','ms',72]})]}]},
+  video:{title:'Vidéo',desc:'Décodage et navigation image par image.',groups:[
+    {title:'Décodage',items:[C('hw','Décodage matériel (VA-API) quand il est disponible','Bascule automatique vers le décodage logiciel en cas d’échec'),C('gop','Nombre de GOP décodés lors d’un saut','Plus de GOP : navigation arrière plus fluide, plus de mémoire',{field:['GOP','2','',56]}),C('cache','Cache d’images décodées','Mémoire réservée aux images décodées autour de la position',{field:['Taille','512','Mo',72]})]},
+    {title:'Navigation',items:[{id:'nav',kind:'choice',label:'Mode par défaut de la barre de vignettes',tip:'Toutes les images, points d’accès aléatoire ou images I',choices:['Toutes','RAP','I seules'],sel:0},{id:'thumbs',kind:'choice',label:'Nombre de vignettes',tip:'Automatique selon la largeur de la fenêtre',choices:['Auto','7','9','11'],sel:0}]}]}
+};
+class Component extends DCLogic {
+  renderVals() {
+    const sec = this.state.section ?? this.props.section ?? 'ts';
+    const off = this.state.off ?? {tei: true, hex: true};
+    const cur = S[sec] || S.ts;
+    const checks = [];
+    cur.groups.forEach(g => g.items.forEach(i => { if (i.kind === 'check') checks.push(i.id); }));
+    const allOn = checks.every(id => !off[id]);
+    const groups = cur.groups.map(g => ({title: g.title, items: g.items.map(i => {
+      const isOff = !!off[i.id];
+      const f = i.field;
+      return {
+        tip: i.tip, label: i.label, isCheck: i.kind === 'check', isText: i.kind === 'text' || i.kind === 'choice',
+        on: !isOff, off: isOff, color: isOff ? '#8792A2' : '#E6EAF0',
+        hasNum: !!i.num, num: i.num || '', hasRef: false, ref: '',
+        hasField: !!f, fieldLabel: f ? f[0] : '', value: f ? f[1] : '', unit: f ? f[2] : '', fieldW: f ? f[3] : 0, align: 'right', fieldColor: isOff ? '#6E7888' : '#E6EAF0',
+        hasChoice: i.kind === 'choice', choices: (i.choices || []).map((c, k) => ({label: c, on: k === i.sel, bg: k === i.sel ? 'rgba(169,148,255,0.18)' : 'transparent', color: k === i.sel ? '#E6EAF0' : '#8792A2'})),
+        hasBtn: !!i.btn, btn: i.btn || '',
+        toggle: () => this.setState({off: Object.assign({}, off, {[i.id]: !isOff})})
+      };
+    })}));
+    const nav = ['display', 'logs', 'ts', 'video'].map(k => ({label: S[k].title, icon: IC[k], cur: k === sec ? 'page' : 'false', bg: k === sec ? '#2B2550' : 'transparent', color: k === sec ? '#E6EAF0' : '#AEB7C4', weight: k === sec ? 600 : 400, pick: () => this.setState({section: k})}));
+    return {
+      cur, groups, nav, allOn,
+      toggleAll: () => { const n = Object.assign({}, off); checks.forEach(id => { n[id] = allOn; }); this.setState({off: n}); }
+    };
+  }
+}
+</script>
+</body>
+</html>

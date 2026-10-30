@@ -1,0 +1,43 @@
+{
+  "v": 3,
+  "createdOnFiles": {"v": 1, "at": "2026-10-29T10:00:00Z"},
+  "title": "Media Analyzer — maquettes MVP",
+  "launch": {"view": "canvas"},
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {"x": 0, "y": 0, "w": 1920, "h": 1080, "title": "Écran principal — onglet Vidéo", "expand": "fill", "is_interactive": true},
+    "Syntaxe.dc.html": {"x": 2000, "y": 0, "w": 1920, "h": 1080, "title": "Onglet Syntaxe", "expand": "fill", "is_interactive": true},
+    "Transport.dc.html": {"x": 4000, "y": 0, "w": 1920, "h": 1080, "title": "Onglet Transport (TR 101 290)", "expand": "fill", "is_interactive": true},
+    "Accueil.dc.html": {"x": 6000, "y": 0, "w": 1920, "h": 1080, "title": "Écran d’accueil", "expand": "fill"},
+    "Indexation.dc.html": {"x": 0, "y": 1480, "w": 1920, "h": 1080, "title": "État — indexation et analyse en cours", "expand": "fill", "is_interactive": true},
+    "MainEN.dc.html": {"x": 2000, "y": 1480, "w": 1920, "h": 1080, "title": "Écran principal — English", "expand": "fill", "is_interactive": true},
+    "Portable.dc.html": {"x": 4000, "y": 1480, "w": 1366, "h": 768, "title": "Portable 1366 × 768 — panneaux repliés", "expand": "fill", "is_interactive": true},
+    "Reglages.dc.html": {"x": 5446, "y": 1480, "w": 1100, "h": 720, "title": "Réglages", "is_interactive": true},
+    "Etats.dc.html": {"x": 6626, "y": 1480, "w": 1600, "h": 1100, "title": "États transverses"},
+    "Systeme.dc.html": {"x": 0, "y": 2980, "w": 1600, "h": 1500, "title": "Système visuel"},
+    "TitleBar.dc.html": {"x": 1680, "y": 2980, "w": 1920, "h": 64, "title": "Composant — TitleBar"},
+    "StatusBar.dc.html": {"x": 1680, "y": 3124, "w": 1920, "h": 24, "title": "Composant — StatusBar"},
+    "Thumbnails.dc.html": {"x": 1680, "y": 3228, "w": 1920, "h": 132, "title": "Composant — Thumbnails", "is_interactive": true},
+    "Report.dc.html": {"x": 1680, "y": 3440, "w": 1920, "h": 212, "title": "Composant — Report", "is_interactive": true},
+    "StructureTree.dc.html": {"x": 1680, "y": 3732, "w": 280, "h": 648, "title": "Composant — StructureTree", "is_interactive": true},
+    "DataPanel.dc.html": {"x": 2040, "y": 3732, "w": 308, "h": 648, "title": "Composant — DataPanel", "is_interactive": true},
+    "VideoView.dc.html": {"x": 2428, "y": 3732, "w": 1330, "h": 616, "title": "Composant — VideoView", "is_interactive": true},
+    "Led.dc.html": {"x": 3838, "y": 3732, "w": 64, "h": 40, "title": "Composant — Led"},
+    "SyntaxView.dc.html": {"x": 1680, "y": 4500, "w": 1330, "h": 616, "title": "Composant — SyntaxView", "is_interactive": true},
+    "TransportView.dc.html": {"x": 3090, "y": 4500, "w": 1330, "h": 616, "title": "Composant — TransportView"},
+    "BitrateView.dc.html": {"x": 4500, "y": 4500, "w": 1330, "h": 616, "title": "Composant — BitrateView"}
+  },
+  "order": [
+    "Main.dc.html", "Syntaxe.dc.html", "Transport.dc.html", "Accueil.dc.html",
+    "Indexation.dc.html", "MainEN.dc.html", "Portable.dc.html", "Reglages.dc.html", "Etats.dc.html",
+    "Systeme.dc.html", "TitleBar.dc.html", "StatusBar.dc.html", "Thumbnails.dc.html", "Report.dc.html",
+    "StructureTree.dc.html", "DataPanel.dc.html", "VideoView.dc.html", "Led.dc.html",
+    "SyntaxView.dc.html", "TransportView.dc.html", "BitrateView.dc.html"
+  ],
+  "notes": {
+    "row1": {"x": 0, "y": -260, "text": "Écrans MVP — 1920 × 1080, thème sombre", "kind": "title1", "maxW": 7920},
+    "row2": {"x": 0, "y": 1220, "text": "États, variantes et réglages", "kind": "title1", "maxW": 8226},
+    "row3": {"x": 0, "y": 2720, "text": "Système visuel et composants React", "kind": "title1", "maxW": 5830}
+  },
+  "designSystems": []
+}

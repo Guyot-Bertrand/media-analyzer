@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>LED d’état</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="display: inline-flex; flex: none; vertical-align: middle; width: {{sz}}px; height: {{sz}}px; line-height: 0">
+  <sc-if value="{{isOk}}" hint-placeholder-val="{{ true }}">
+    <svg width="{{sz}}" height="{{sz}}" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5.5" fill="{{c.ok}}"></circle><path d="M3.3 6.2l1.8 1.8 3.6-3.8" fill="none" stroke="{{c.glyph}}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+  </sc-if>
+  <sc-if value="{{isWarn}}" hint-placeholder-val="{{ false }}">
+    <svg width="{{sz}}" height="{{sz}}" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 0.6l5.6 10.2H0.4z" fill="{{c.warn}}" stroke="{{c.warn}}" stroke-width="0.8" stroke-linejoin="round"></path><path d="M6 4.2v3" stroke="{{c.glyph}}" stroke-width="1.5" stroke-linecap="round"></path><circle cx="6" cy="9" r="0.85" fill="{{c.glyph}}"></circle></svg>
+  </sc-if>
+  <sc-if value="{{isErr}}" hint-placeholder-val="{{ false }}">
+    <svg width="{{sz}}" height="{{sz}}" viewBox="0 0 12 12" aria-hidden="true"><path d="M3.6 0.4h4.8l3.2 3.2v4.8l-3.2 3.2H3.6L0.4 8.4V3.6z" fill="{{c.err}}"></path><path d="M4 4l4 4M8 4l-4 4" stroke="{{c.glyph}}" stroke-width="1.6" stroke-linecap="round"></path></svg>
+  </sc-if>
+  <sc-if value="{{isInfo}}" hint-placeholder-val="{{ false }}">
+    <svg width="{{sz}}" height="{{sz}}" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5" fill="none" stroke="{{c.info}}" stroke-width="1.3"></circle><path d="M6 5.4v3.2" stroke="{{c.info}}" stroke-width="1.4" stroke-linecap="round"></path><circle cx="6" cy="3.6" r="0.8" fill="{{c.info}}"></circle></svg>
+  </sc-if>
+  <sc-if value="{{isRun}}" hint-placeholder-val="{{ false }}">
+    <svg width="{{sz}}" height="{{sz}}" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.6" fill="none" stroke="{{c.runTrack}}" stroke-width="1.8"></circle><path d="M6 1.4a4.6 4.6 0 0 1 4.6 4.6" fill="none" stroke="{{c.run}}" stroke-width="1.8" stroke-linecap="round"></path></svg>
+  </sc-if>
+  <sc-if value="{{isOff}}" hint-placeholder-val="{{ false }}">
+    <svg width="{{sz}}" height="{{sz}}" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.8" fill="none" stroke="{{c.off}}" stroke-width="1.3" stroke-dasharray="2 1.6"></circle></svg>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"state":{"editor":"enum","options":["ok","warn","err","info","run","off"],"default":"ok"},"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"size":{"editor":"int","min":8,"max":24,"default":12},"$preview":{"width":64,"height":40}}'>
+const C={dark:{ok:'#3FB950',warn:'#F0883E',err:'#FF6B61',info:'#8792A2',run:'#A994FF',runTrack:'#384152',off:'#6E7888',glyph:'#0B0E13'},light:{ok:'#1A7F37',warn:'#B54708',err:'#C4232D',info:'#576274',run:'#6440D8',runTrack:'#D8DDE5',off:'#8A94A3',glyph:'#FFFFFF'}};
+class Component extends DCLogic {
+  renderVals() {
+    const st = this.props.state ?? 'ok';
+    const c = C[this.props.theme ?? 'dark'] || C.dark;
+    return {
+      c, sz: Number(this.props.size ?? 12),
+      isOk: st === 'ok', isWarn: st === 'warn', isErr: st === 'err',
+      isInfo: st === 'info', isRun: st === 'run', isOff: st === 'off'
+    };
+  }
+}
+</script>
+</body>
+</html>

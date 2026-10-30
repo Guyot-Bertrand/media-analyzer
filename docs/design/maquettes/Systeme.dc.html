@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Système visuel</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1600px; height: 1500px; box-sizing: border-box; padding: 40px; display: flex; flex-direction: column; gap: 32px; background: #0B0E13; color: #E6EAF0; font-family: IBM Plex Sans, system-ui, sans-serif; font-size: 12px; line-height: 16px">
+  <header style="display: flex; align-items: baseline; gap: 16px">
+    <h1 style="margin: 0; font-size: 28px; line-height: 34px; font-weight: 600">Media Analyzer — système visuel</h1>
+    <span style="color: #AEB7C4; font-size: 13px">Outil dense et sobre · sombre par défaut · IBM Plex Sans + IBM Plex Mono · accent violet réservé à la sélection et au focus</span>
+  </header>
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px">
+    <sc-for list="{{palettes}}" as="p" hint-placeholder-count="2">
+      <section style="padding: 20px; border: 1px solid #262D39; border-radius: 10px; background: {{p.bg}}; color: {{p.fg}}">
+        <h2 style="margin: 0 0 14px; font-size: 15px; font-weight: 600">{{p.title}}</h2>
+        <div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px">
+          <sc-for list="{{p.sw}}" as="c" hint-placeholder-count="18">
+            <div style="display: flex; flex-direction: column; gap: 4px">
+              <div style="height: 40px; border-radius: 6px; background: {{c.hex}}; border: 1px solid {{p.edge}}"></div>
+              <span style="font-size: 11px; font-weight: 500">{{c.name}}</span>
+              <span style="font-family: IBM Plex Mono, monospace; font-size: 10.5px; color: {{p.muted}}">{{c.hex}}</span>
+            </div>
+          </sc-for>
+        </div>
+      </section>
+    </sc-for>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px">
+    <section style="padding: 20px; border: 1px solid #262D39; border-radius: 10px; background: #12161D">
+      <h2 style="margin: 0 0 4px; font-size: 15px; font-weight: 600">Code d’état : couleur + forme</h2>
+      <p style="margin: 0 0 14px; color: #AEB7C4; line-height: 18px">Chaque état a une forme propre, lisible sans la couleur (daltonisme, impression N&amp;B).</p>
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <sc-for list="{{states}}" as="st" hint-placeholder-count="6">
+          <div style="display: flex; align-items: center; gap: 12px">
+            <dc-import name="Led" state="{{st.k}}" theme="dark" size="16" hint-size="16px,16px"></dc-import>
+            <span style="padding: 6px; border-radius: 4px; background: #FFFFFF; line-height: 0"><dc-import name="Led" state="{{st.k}}" theme="light" size="16" hint-size="16px,16px"></dc-import></span>
+            <span style="width: 110px; font-weight: 500">{{st.label}}</span>
+            <span style="color: #8792A2">{{st.shape}}</span>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <section style="padding: 20px; border: 1px solid #262D39; border-radius: 10px; background: #12161D">
+      <h2 style="margin: 0 0 4px; font-size: 15px; font-weight: 600">Types d’image</h2>
+      <p style="margin: 0 0 14px; color: #AEB7C4; line-height: 18px">Badge plein, lettre blanche (contraste ≥ 5:1). Jamais en LED : le type ne se confond pas avec l’état.</p>
+      <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px">
+        <sc-for list="{{types}}" as="ty" hint-placeholder-count="5">
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 6px; width: 64px">
+            <span style="min-width: 22px; padding: 2px 6px; border-radius: 4px; background: {{ty.c}}; color: #FFFFFF; font-family: IBM Plex Mono, monospace; font-size: 13px; font-weight: 600; text-align: center">{{ty.k}}</span>
+            <span style="color: #AEB7C4; font-size: 11px; text-align: center">{{ty.label}}</span>
+          </div>
+        </sc-for>
+      </div>
+      <span style="display: block; margin-bottom: 8px; color: #8792A2; font-size: 11px">Combinaison sur une vignette : type (badge) + état (LED)</span>
+      <div style="display: flex; gap: 10px">
+        <div style="position: relative; width: 120px; height: 68px; border-radius: 4px; background: #2A3140">
+          <span style="position: absolute; left: 4px; top: 4px; padding: 0 4px; border-radius: 3px; background: #C8323A; color: #FFFFFF; font-family: IBM Plex Mono, monospace; font-size: 10px; font-weight: 600; line-height: 14px">I</span>
+          <span style="position: absolute; right: 4px; top: 4px; padding: 1px; border-radius: 3px; background: rgba(0,0,0,0.7); line-height: 0"><dc-import name="Led" state="warn" theme="dark" size="11" hint-size="11px,11px"></dc-import></span>
+        </div>
+        <div style="position: relative; width: 120px; height: 68px; border-radius: 4px; background: #2A3140">
+          <span style="position: absolute; left: 4px; top: 4px; padding: 0 4px; border-radius: 3px; background: #2563D6; color: #FFFFFF; font-family: IBM Plex Mono, monospace; font-size: 10px; font-weight: 600; line-height: 14px">B</span>
+          <span style="position: absolute; right: 4px; top: 4px; padding: 1px; border-radius: 3px; background: rgba(0,0,0,0.7); line-height: 0"><dc-import name="Led" state="err" theme="dark" size="11" hint-size="11px,11px"></dc-import></span>
+        </div>
+      </div>
+    </section>
+
+    <section style="padding: 20px; border: 1px solid #262D39; border-radius: 10px; background: #12161D">
+      <h2 style="margin: 0 0 14px; font-size: 15px; font-weight: 600">Typographie</h2>
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <sc-for list="{{typo}}" as="tp" hint-placeholder-count="7">
+          <div style="display: flex; align-items: baseline; gap: 12px">
+            <span style="width: 92px; flex: none; color: #8792A2; font-family: IBM Plex Mono, monospace; font-size: 10.5px">{{tp.spec}}</span>
+            <span style="font-family: {{tp.font}}; font-size: {{tp.size}}px; line-height: {{tp.lh}}px; font-weight: {{tp.w}}; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{tp.sample}}</span>
+          </div>
+        </sc-for>
+      </div>
+      <p style="margin: 14px 0 0; color: #8792A2; font-size: 11px; line-height: 16px">Monospace pour toute valeur, offset, PID, hexadécimal et élément de syntaxe ; chiffres tabulaires partout. Pas de texte sous 10,5 px.</p>
+    </section>
+  </div>
+
+  <section style="padding: 20px; border: 1px solid #262D39; border-radius: 10px; background: #12161D">
+    <h2 style="margin: 0 0 16px; font-size: 15px; font-weight: 600">Composants de base</h2>
+    <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 28px 32px">
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <span style="color: #8792A2; font-size: 11px">Boutons · 28–30 px</span>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap">
+          <button style="height: 30px; padding: 0 14px; border: 0; border-radius: 5px; background: #A994FF; color: #0B0E13; font: inherit; font-weight: 600">Principal</button>
+          <button style="height: 30px; padding: 0 12px; border: 1px solid #384152; border-radius: 5px; background: #222937; color: #E6EAF0; font: inherit">Secondaire</button>
+          <button style="height: 30px; padding: 0 12px; border: 0; border-radius: 5px; background: transparent; color: #AEB7C4; font: inherit">Discret</button>
+          <button disabled="{{ true }}" style="height: 30px; padding: 0 12px; border: 1px dashed #384152; border-radius: 5px; background: transparent; color: #6E7888; font: inherit">Bientôt</button>
+        </div>
+        <div style="display: flex; gap: 6px; align-items: center">
+          <button aria-label="Ouvrir" title="Ouvrir (Ctrl+O)" style="width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #384152; border-radius: 5px; background: #222937; color: #E6EAF0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg></button>
+          <button aria-label="Image suivante" style="width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #384152; border-radius: 5px; background: #12161D; color: #AEB7C4"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></button>
+          <button aria-label="Focus clavier" style="width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #384152; border-radius: 5px; background: #12161D; color: #AEB7C4; outline: 2px solid #7C5CFF; outline-offset: 2px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg></button>
+          <span style="color: #8792A2; font-size: 11px">focus : contour 2 px #7C5CFF, décalé de 2 px</span>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <span style="color: #8792A2; font-size: 11px">Bascules et sélecteurs</span>
+        <div style="display: flex; gap: 4px">
+          <button aria-pressed="true" style="width: 28px; height: 26px; border: 1px solid #A994FF; border-radius: 5px; background: rgba(169,148,255,0.16); color: #E6EAF0; font: inherit; font-family: IBM Plex Mono, monospace">Y</button>
+          <button aria-pressed="true" style="width: 28px; height: 26px; border: 1px solid #A994FF; border-radius: 5px; background: rgba(169,148,255,0.16); color: #E6EAF0; font: inherit; font-family: IBM Plex Mono, monospace">U</button>
+          <button aria-pressed="false" style="width: 28px; height: 26px; border: 1px solid #384152; border-radius: 5px; background: transparent; color: #8792A2; font: inherit; font-family: IBM Plex Mono, monospace">V</button>
+        </div>
+        <div role="radiogroup" aria-label="Exemple" style="display: flex; width: max-content; padding: 2px; gap: 2px; border: 1px solid #262D39; border-radius: 6px">
+          <button role="radio" aria-checked="true" style="height: 22px; padding: 0 10px; border: 0; border-radius: 4px; background: rgba(169,148,255,0.16); color: #E6EAF0; font: inherit; font-size: 11px">Toutes</button>
+          <button role="radio" aria-checked="false" style="height: 22px; padding: 0 10px; border: 0; border-radius: 4px; background: transparent; color: #8792A2; font: inherit; font-size: 11px">RAP</button>
+          <button role="radio" aria-checked="false" style="height: 22px; padding: 0 10px; border: 0; border-radius: 4px; background: transparent; color: #8792A2; font: inherit; font-size: 11px">I seules</button>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px"><input type="checkbox" checked="{{ true }}" style="width: 15px; height: 15px; margin: 0; accent-color: #A994FF">Case à cocher</label>
+        <label style="display: flex; align-items: center; gap: 8px; color: #AEB7C4">Seuil <input type="text" value="500" aria-label="Seuil" style="width: 72px; height: 26px; box-sizing: border-box; padding: 0 8px; border: 1px solid #384152; border-radius: 5px; background: #0E1218; color: #E6EAF0; font-family: IBM Plex Mono, monospace; font-size: 11.5px; text-align: right"> ms</label>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <span style="color: #8792A2; font-size: 11px">Onglets · progression · infobulle</span>
+        <div role="tablist" aria-label="Exemple d’onglets" style="height: 32px; display: flex; gap: 2px; padding: 0 4px; background: #181D26; border-bottom: 1px solid #262D39">
+          <button role="tab" aria-selected="true" style="padding: 0 12px; border: 0; border-bottom: 2px solid #A994FF; background: transparent; color: #E6EAF0; font: inherit; font-weight: 600">Vidéo</button>
+          <button role="tab" aria-selected="false" style="display: flex; align-items: center; gap: 6px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #AEB7C4; font: inherit">Syntaxe <dc-import name="Led" state="warn" theme="dark" size="10" hint-size="10px,10px"></dc-import></button>
+          <button role="tab" aria-selected="false" style="display: flex; align-items: center; gap: 6px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #AEB7C4; font: inherit">Transport <dc-import name="Led" state="err" theme="dark" size="10" hint-size="10px,10px"></dc-import></button>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 11px">
+          <dc-import name="Led" state="run" theme="dark" size="11" hint-size="11px,11px"></dc-import>Indexation 64 %
+          <span style="position: relative; width: 120px; height: 6px; border-radius: 3px; background: #384152; overflow: hidden"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 64%; background: #A994FF"></span></span>
+          <button style="height: 18px; padding: 0 8px; border: 1px solid #384152; border-radius: 4px; background: transparent; color: #E6EAF0; font: inherit">Annuler</button>
+        </div>
+        <div role="tooltip" style="max-width: 300px; padding: 8px 10px; border: 1px solid #384152; border-radius: 6px; background: #222937; box-shadow: 0 8px 20px rgba(0,0,0,0.4); line-height: 16px">
+          <span style="display: block; font-weight: 600">1.4 Continuity count error</span>
+          <span style="display: block; color: #AEB7C4">Ordre incorrect des paquets, paquet perdu ou dupliqué.</span>
+          <span style="display: block; margin-top: 4px; color: #8792A2; font-size: 11px">ETSI TR 101 290 §5.2.1 · F8 : erreur suivante</span>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <span style="color: #8792A2; font-size: 11px">Espacements et rayons</span>
+        <div style="display: flex; align-items: flex-end; gap: 10px">
+          <sc-for list="{{spaces}}" as="sp" hint-placeholder-count="6">
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 4px">
+              <span style="width: {{sp}}px; height: {{sp}}px; background: #A994FF; border-radius: 2px"></span>
+              <span style="font-family: IBM Plex Mono, monospace; font-size: 10.5px; color: #8792A2">{{sp}}</span>
+            </div>
+          </sc-for>
+        </div>
+        <span style="color: #AEB7C4; line-height: 18px">Grille de 4 px. Lignes de tableau 21–22 px, arbres 34–36 px (2 lignes), cibles de clic ≥ 24 px. Rayons : 3 (badges), 5 (contrôles), 6–8 (panneaux), 10 (cartes).</span>
+      </div>
+    </div>
+  </section>
+
+  <section style="padding: 20px; border: 1px solid #262D39; border-radius: 10px; background: #12161D">
+    <h2 style="margin: 0 0 14px; font-size: 15px; font-weight: 600">Lignes denses : tableau et arbre</h2>
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px">
+      <div role="table" aria-label="États des lignes" style="border: 1px solid #262D39; border-radius: 6px; overflow: hidden; font-family: IBM Plex Mono, monospace; font-size: 11.5px">
+        <sc-for list="{{rowStates}}" as="r" hint-placeholder-count="5">
+          <div role="row" style="height: 22px; display: flex; align-items: center; gap: 10px; padding: 0 10px; border-left: 2px solid {{r.bar}}; background: {{r.bg}}; color: {{r.c}}">
+            <span style="width: 200px">{{r.el}}</span><span style="width: 60px; text-align: right">{{r.v}}</span><span style="flex: 1; font-family: IBM Plex Sans, system-ui, sans-serif; font-size: 12px">{{r.label}}</span>
+          </div>
+        </sc-for>
+      </div>
+      <div role="tree" aria-label="Exemple d’arbre" style="border: 1px solid #262D39; border-radius: 6px; overflow: hidden">
+        <sc-for list="{{tree}}" as="n" hint-placeholder-count="4">
+          <div role="treeitem" aria-selected="{{n.sel}}" style="min-height: 36px; display: flex; align-items: center; gap: 8px; padding: 2px 10px 2px {{n.indent}}px; border-left: 2px solid {{n.bar}}; background: {{n.bg}}">
+            <span style="flex: 1; display: flex; flex-direction: column">
+              <span style="display: flex; align-items: center; gap: 6px; font-weight: {{n.w}}">{{n.label}} <dc-import name="Led" state="{{n.led}}" theme="dark" size="11" hint-size="11px,11px"></dc-import></span>
+              <span style="color: #8792A2; font-size: 11px">{{n.info}}</span>
+            </span>
+            <span style="display: flex; flex-direction: column; align-items: flex-end; font-family: IBM Plex Mono, monospace; font-size: 11px; color: #AEB7C4"><span>{{n.pid}}</span><span style="color: #8792A2">{{n.dec}}</span></span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1600,"height":1500}}'>
+const D=[['Fond app','#0B0E13'],['Panneau','#12161D'],['En-tête','#181D26'],['Relief','#222937'],['Sélection','#2B2550'],['Ligne','#262D39'],['Ligne forte','#384152'],['Texte','#E6EAF0'],['Texte 2','#AEB7C4'],['Texte 3','#8792A2'],['Accent','#A994FF'],['Focus','#7C5CFF'],['OK','#3FB950'],['Avertissement','#F0883E'],['Erreur','#FF6B61'],['Type I / IDR','#C8323A'],['Type P','#237A35'],['Type B','#2563D6']];
+const Lt=[['Fond app','#E6E9EF'],['Panneau','#FFFFFF'],['En-tête','#F4F6F9'],['Relief','#E9EDF3'],['Sélection','#ECE6FF'],['Ligne','#D8DDE5'],['Ligne forte','#BCC5D1'],['Texte','#121820'],['Texte 2','#3B4655'],['Texte 3','#576274'],['Accent','#6440D8'],['Focus','#7C5CFF'],['OK','#1A7F37'],['Avertissement','#B54708'],['Erreur','#C4232D'],['Type I / IDR','#C8323A'],['Type P','#237A35'],['Type B','#2563D6']];
+const sw=(a)=>a.map(x=>({name:x[0],hex:x[1]}));
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      palettes: [
+        {title: 'Palette sombre (par défaut)', bg: '#12161D', fg: '#E6EAF0', muted: '#8792A2', edge: '#384152', sw: sw(D)},
+        {title: 'Palette claire', bg: '#FFFFFF', fg: '#121820', muted: '#576274', edge: '#D8DDE5', sw: sw(Lt)}
+      ],
+      states: [
+        {k: 'ok', label: 'OK', shape: 'disque + coche'},
+        {k: 'warn', label: 'Avertissement', shape: 'triangle + point d’exclamation'},
+        {k: 'err', label: 'Erreur', shape: 'octogone + croix'},
+        {k: 'info', label: 'Information', shape: 'cercle + « i »'},
+        {k: 'run', label: 'En cours', shape: 'anneau avec arc d’accent'},
+        {k: 'off', label: 'Non analysé', shape: 'cercle en pointillés'}
+      ],
+      types: [
+        {k: 'I', label: 'I', c: '#C8323A'}, {k: 'IDR', label: 'IDR / CRA / BLA', c: '#C8323A'},
+        {k: 'P', label: 'P', c: '#237A35'}, {k: 'B', label: 'B', c: '#2563D6'}
+      ],
+      typo: [
+        {spec: 'Sans 22 / 600', font: 'IBM Plex Sans, sans-serif', size: 22, lh: 28, w: 600, sample: 'Titre d’écran'},
+        {spec: 'Sans 15 / 600', font: 'IBM Plex Sans, sans-serif', size: 15, lh: 20, w: 600, sample: 'Titre de section'},
+        {spec: 'Sans 12 / 400', font: 'IBM Plex Sans, sans-serif', size: 12, lh: 16, w: 400, sample: 'Texte d’interface, libellés, menus'},
+        {spec: 'Sans 11 / 600 MAJ', font: 'IBM Plex Sans, sans-serif', size: 11, lh: 14, w: 600, sample: 'EN-TÊTE DE PANNEAU'},
+        {spec: 'Mono 12 / 400', font: 'IBM Plex Mono, monospace', size: 12, lh: 16, w: 400, sample: '0x0100 · 26 013 600 · 4 140 594'},
+        {spec: 'Mono 11,5 / 400', font: 'IBM Plex Mono, monospace', size: 11.5, lh: 16, w: 400, sample: 'slice_pic_order_cnt_lsb 196'},
+        {spec: 'Mono 10,5 / 400', font: 'IBM Plex Mono, monospace', size: 10.5, lh: 14, w: 400, sample: '6B 1C 80 00 00 00 01 4E'}
+      ],
+      spaces: [2, 4, 8, 12, 16, 24],
+      rowStates: [
+        {el: 'pic_width_in_luma_samples', v: '3840', label: 'Normale', bg: 'transparent', bar: 'transparent', c: '#AEB7C4'},
+        {el: 'general_level_idc', v: '153', label: 'Survol', bg: '#1B212B', bar: 'transparent', c: '#AEB7C4'},
+        {el: 'slice_pic_order_cnt_lsb', v: '196', label: 'Sélectionnée', bg: '#2B2550', bar: '#A994FF', c: '#E6EAF0'},
+        {el: 'mastering_display_…', v: 'absente', label: 'Avertissement', bg: 'rgba(240,136,62,0.12)', bar: '#F0883E', c: '#F0883E'},
+        {el: 'continuity_counter', v: '9', label: 'Erreur', bg: 'rgba(255,107,97,0.12)', bar: '#FF6B61', c: '#FF6B61'}
+      ],
+      tree: [
+        {label: 'Programme 1 « Canal Démo UHD »', info: 'PMT · PCR_PID 0x0100', pid: '0x1000', dec: '4096', led: 'err', indent: 10, w: 600, sel: false, bg: 'transparent', bar: 'transparent'},
+        {label: 'Vidéo HEVC', info: '3840 × 2160p50 · Main 10', pid: '0x0100', dec: '256', led: 'warn', indent: 26, w: 500, sel: true, bg: '#2B2550', bar: '#A994FF'},
+        {label: 'Audio AAC-LC', info: '2.0 · fra', pid: '0x0101', dec: '257', led: 'err', indent: 26, w: 400, sel: false, bg: 'transparent', bar: 'transparent'},
+        {label: 'Sous-titres', info: 'DVB Subtitles · non analysé', pid: '0x0103', dec: '259', led: 'off', indent: 26, w: 400, sel: false, bg: 'transparent', bar: 'transparent'}
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Panneau Données</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; background: {{t.bg1}}; color: {{t.tx}}; font-family: IBM Plex Sans, system-ui, sans-serif; font-size: 12px; line-height: 16px">
+  <sc-if value="{{open}}" hint-placeholder-val="{{ true }}">
+    <div style="height: 32px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 6px 0 12px; background: {{t.bg2}}; border-bottom: 1px solid {{t.line}}">
+      <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: {{t.tx2}}">{{s.title}}</span>
+      <div style="flex: 1"></div>
+      <button title="{{s.exportTip}}" aria-label="{{s.export}}" style="width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 4px; background: transparent; color: {{t.tx2}}; cursor: pointer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg></button>
+      <button title="{{s.hideTip}}" aria-label="{{s.hide}}" style="width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 4px; background: transparent; color: {{t.tx2}}; cursor: pointer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></button>
+    </div>
+    <div role="tablist" aria-label="{{s.title}}" style="height: 30px; flex: none; display: flex; align-items: stretch; gap: 2px; padding: 0 8px; border-bottom: 1px solid {{t.line}}">
+      <sc-for list="{{tabs}}" as="tb" hint-placeholder-count="2">
+        <button role="tab" aria-selected="{{tb.sel}}" title="{{tb.tip}}" onClick="{{tb.pick}}" style="padding: 0 10px; border: 0; border-bottom: 2px solid {{tb.bar}}; background: transparent; color: {{tb.color}}; font: inherit; font-weight: {{tb.weight}}; cursor: pointer; white-space: nowrap">{{tb.label}}</button>
+      </sc-for>
+    </div>
+    <div style="flex: 1; min-height: 0; overflow: auto; padding: 2px 0 10px">
+      <sc-for list="{{groups}}" as="g" hint-placeholder-count="3">
+        <div style="display: flex; align-items: center; gap: 6px; padding: 10px 12px 4px; font-size: 11px; font-weight: 600; color: {{t.tx2}}">
+          <span>{{g.title}}</span>
+          <sc-if value="{{g.soon}}" hint-placeholder-val="{{ false }}"><span style="padding: 0 5px; border-radius: 3px; background: {{t.bg3}}; color: {{t.tx3}}; font-size: 10px; font-weight: 400; line-height: 14px">{{s.soon}}</span></sc-if>
+          <div style="flex: 1; height: 1px; background: {{t.line}}"></div>
+        </div>
+        <sc-for list="{{g.rows}}" as="r" hint-placeholder-count="6">
+          <div style="display: flex; align-items: center; gap: 8px; min-height: 22px; padding: 0 8px 0 12px; background: {{r.bg}}">
+            <span title="{{r.tip}}" style="width: 112px; flex: none; color: {{t.tx3}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: help">{{r.k}}</span>
+            <button title="{{s.copyTip}}" onClick="{{r.pick}}" style="flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 4px; border: 0; border-radius: 3px; background: transparent; color: {{r.vColor}}; font: inherit; font-family: {{r.font}}; font-size: {{r.fs}}px; font-variant-numeric: tabular-nums; text-align: left; cursor: copy">
+              <sc-if value="{{r.badge}}" hint-placeholder-val="{{ false }}"><span style="min-width: 16px; padding: 0 4px; border-radius: 3px; background: {{r.badgeBg}}; color: #FFFFFF; font-family: IBM Plex Mono, monospace; font-weight: 600; font-size: 11px; line-height: 15px; text-align: center">{{r.badgeTxt}}</span></sc-if>
+              <span style="flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{r.v}}</span>
+              <sc-if value="{{r.sel}}" hint-placeholder-val="{{ false }}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="{{t.acc}}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9zM5 15H4V4h11v1"></path></svg></sc-if>
+            </button>
+          </div>
+        </sc-for>
+      </sc-for>
+    </div>
+  </sc-if>
+  <sc-if value="{{rail}}" hint-placeholder-val="{{ false }}">
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 0">
+      <button title="{{s.showTip}}" aria-label="{{s.show}}" style="width: 32px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 4px; background: transparent; color: {{t.tx2}}; cursor: pointer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg></button>
+      <div aria-hidden="true" style="width: 20px; height: 1px; margin: 2px 0 6px; background: {{t.line}}"></div>
+      <span title="{{s.typeTip}}" style="min-width: 18px; padding: 1px 4px; border-radius: 3px; background: {{badge}}; color: #FFFFFF; font-family: IBM Plex Mono, monospace; font-weight: 600; font-size: 11px; line-height: 15px; text-align: center">{{f.type}}</span>
+      <span style="writing-mode: vertical-rl; transform: rotate(180deg); margin-top: 10px; color: {{t.tx3}}; font-family: IBM Plex Mono, monospace; font-size: 11px; white-space: nowrap">{{s.title}} · POC {{f.poc}} · PTS {{ptsS}}</span>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"lang":{"editor":"enum","options":["fr","en"],"default":"fr"},"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"collapsed":{"editor":"boolean","default":false},"frame":{"editor":null},"$preview":{"width":308,"height":648}}'>
+const TH={dark:{bg1:'#12161D',bg2:'#181D26',bg3:'#222937',sel:'#2B2550',line:'#262D39',tx:'#E6EAF0',tx2:'#AEB7C4',tx3:'#8792A2',acc:'#A994FF'},light:{bg1:'#FFFFFF',bg2:'#F4F6F9',bg3:'#E9EDF3',sel:'#ECE6FF',line:'#D8DDE5',tx:'#121820',tx2:'#3B4655',tx3:'#576274',acc:'#6440D8'}};
+const TYPE={I:'#C8323A',P:'#237A35',B:'#2563D6'};
+const DEF={d:12450,p:12452,type:'I',size:421876,nut:'CRA_NUT',nutId:21,poc:452,pts:26013600,dts:26006400,pts0:3600000,pkt:4140594,byte:778431672,tags:['VPS','SPS','PPS','SEI']};
+const L={
+  fr:{title:'Données',export:'Exporter',exportTip:'Exporter les données affichées en texte (Ctrl+Maj+E)',hide:'Masquer',hideTip:'Replier le panneau Données (Ctrl+3)',show:'Afficher les données',showTip:'Déplier le panneau Données (Ctrl+3)',copyTip:'Cliquer pour copier la valeur (Ctrl+C)',soon:'bientôt',typeTip:'Type de l’image courante',
+    tabSeq:'Séquence / Image',tabSeqTip:'Paramètres de la séquence et de l’image courante',tabTs:'Transport',tabTsTip:'Horodatage et position dans le Transport Stream',
+    gSeq:'Séquence',gPic:'Image',gStat:'Statistiques de prédiction',gTs:'Transport',gPos:'Position',
+    seq:[['Codec','HEVC / H.265','ITU-T H.265 | ISO/IEC 23008-2'],['Profil','Main 10','general_profile_idc = 2 (H.265 annexe A.3.3)'],['Niveau / tier','5.1 · Main tier','general_level_idc = 153, general_tier_flag = 0 (annexe A.4)'],['Résolution','3840 × 2160','pic_width/height_in_luma_samples (SPS)'],['Fréquence','50 i/s · progressif','vui_time_scale / vui_num_units_in_tick (VUI)'],['SAR / DAR','1:1 / 16:9','aspect_ratio_idc = 1 (VUI, tableau E.1)'],['Chroma','4:2:0','chroma_format_idc = 1 (SPS)'],['Profondeur','10 bits luma / chroma','bit_depth_luma/chroma_minus8 = 2 (SPS)'],['Taille CTB','64 × 64','log2_diff_max_min_luma_coding_block_size = 3'],['Images','69 092','Nombre d’images indexées dans le flux'],['Durée','00:23:01.840','Écart entre le premier et le dernier PTS + 1 image'],['Débit moyen','22,4 Mbit/s','Débit moyen de l’ES vidéo (en-têtes PES compris)']],
+    pic:{type:'Type',dec:'Index de décodage',pres:'Index de présentation',poc:'POC',size:'Taille',struct:'Structure',scan:'Balayage',slices:'Slices · tiles',params:'Paramètres présents'},
+    picTips:{type:'Type d’image et nal_unit_type de la première slice',dec:'Rang de l’image dans l’ordre de décodage (0 = première image du fichier)',pres:'Rang dans l’ordre d’affichage — utilisé par « Aller à » (Ctrl+G)',poc:'PicOrderCntVal (H.265 §8.3.1)',size:'Taille de l’access unit, en-têtes NAL compris',struct:'pic_struct (SEI pic_timing) / field_seq_flag',scan:'general_progressive_source_flag / general_interlaced_source_flag',slices:'Nombre de slices et grille de tiles (PPS)',params:'Unités de paramètres présentes dans cette access unit'},
+    frame:'Image (frame)',prog:'Progressif',bytes:'octets',stat:[['Intra','Avec les décodeurs instrumentés'],['Inter','Avec les décodeurs instrumentés'],['Skip / merge','Avec les décodeurs instrumentés']],
+    ts:{pid:'PID',pts:'PTS',dts:'DTS',d:'PTS − PTS0',pkt:'N° de paquet',pos:'Position',posH:'Position (hex)',pes:'En-tête PES'},
+    tsTips:{pid:'PID du flux élémentaire sélectionné',pts:'Presentation Time Stamp, 90 kHz (ISO/IEC 13818-1 §2.4.3.7)',dts:'Decoding Time Stamp, 90 kHz',d:'Temps de présentation relatif au premier PTS du flux',pkt:'Numéro du paquet TS contenant le début de l’access unit',pos:'Offset de l’octet de synchro (0x47) de ce paquet',posH:'Même offset en hexadécimal',pes:'Longueur et options de l’en-tête PES'}},
+  en:{title:'Data',export:'Export',exportTip:'Export displayed data as text (Ctrl+Shift+E)',hide:'Hide',hideTip:'Collapse the Data panel (Ctrl+3)',show:'Show data',showTip:'Expand the Data panel (Ctrl+3)',copyTip:'Click to copy the value (Ctrl+C)',soon:'coming soon',typeTip:'Current picture type',
+    tabSeq:'Sequence / Picture',tabSeqTip:'Sequence parameters and current picture',tabTs:'Transport',tabTsTip:'Timestamps and position in the Transport Stream',
+    gSeq:'Sequence',gPic:'Picture',gStat:'Prediction statistics',gTs:'Transport',gPos:'Position',
+    seq:[['Codec','HEVC / H.265','ITU-T H.265 | ISO/IEC 23008-2'],['Profile','Main 10','general_profile_idc = 2 (H.265 annex A.3.3)'],['Level / tier','5.1 · Main tier','general_level_idc = 153, general_tier_flag = 0 (annex A.4)'],['Resolution','3840 × 2160','pic_width/height_in_luma_samples (SPS)'],['Frame rate','50 fps · progressive','vui_time_scale / vui_num_units_in_tick (VUI)'],['SAR / DAR','1:1 / 16:9','aspect_ratio_idc = 1 (VUI, table E.1)'],['Chroma','4:2:0','chroma_format_idc = 1 (SPS)'],['Bit depth','10-bit luma / chroma','bit_depth_luma/chroma_minus8 = 2 (SPS)'],['CTB size','64 × 64','log2_diff_max_min_luma_coding_block_size = 3'],['Pictures','69,092','Number of pictures indexed in the stream'],['Duration','00:23:01.840','First to last PTS + 1 picture'],['Average bitrate','22.4 Mbit/s','Average video ES bitrate (PES headers included)']],
+    pic:{type:'Type',dec:'Decoding index',pres:'Presentation index',poc:'POC',size:'Size',struct:'Structure',scan:'Scan',slices:'Slices · tiles',params:'Parameter sets present'},
+    picTips:{type:'Picture type and nal_unit_type of the first slice',dec:'Picture rank in decoding order (0 = first picture in file)',pres:'Rank in display order — used by “Go to” (Ctrl+G)',poc:'PicOrderCntVal (H.265 §8.3.1)',size:'Access unit size, NAL headers included',struct:'pic_struct (pic_timing SEI) / field_seq_flag',scan:'general_progressive_source_flag / general_interlaced_source_flag',slices:'Number of slices and tile grid (PPS)',params:'Parameter set units present in this access unit'},
+    frame:'Frame',prog:'Progressive',bytes:'bytes',stat:[['Intra','With instrumented decoders'],['Inter','With instrumented decoders'],['Skip / merge','With instrumented decoders']],
+    ts:{pid:'PID',pts:'PTS',dts:'DTS',d:'PTS − PTS0',pkt:'Packet number',pos:'Position',posH:'Position (hex)',pes:'PES header'},
+    tsTips:{pid:'PID of the selected elementary stream',pts:'Presentation Time Stamp, 90 kHz (ISO/IEC 13818-1 §2.4.3.7)',dts:'Decoding Time Stamp, 90 kHz',d:'Presentation time relative to the stream’s first PTS',pkt:'Number of the TS packet carrying the start of the access unit',pos:'Offset of that packet’s sync byte (0x47)',posH:'Same offset in hexadecimal',pes:'PES header length and options'}}
+};
+const nf=(n,l)=>{const neg=n<0;const s=String(Math.abs(n)).replace(/\B(?=(\d{3})+(?!\d))/g,l==='en'?',':' ');return (neg?'−':'')+s;};
+const sec=(v,l)=>{const s=(v/90000).toFixed(3);return (l==='en'?s:s.replace('.',','))+' s';};
+class Component extends DCLogic {
+  renderVals() {
+    const lang = this.props.lang ?? 'fr';
+    const t = TH[this.props.theme ?? 'dark'] || TH.dark;
+    const s = L[lang] || L.fr;
+    const f = this.props.frame || DEF;
+    const tab = this.state.tab ?? 'seq';
+    const selK = this.state.selK ?? 'POC';
+    const mono = 'IBM Plex Mono, monospace';
+    const row = (k, v, tip, opt) => {
+      const o = opt || {};
+      const sel = selK === k;
+      return {k, v, tip, sel, bg: sel ? t.sel : 'transparent', vColor: o.dim ? t.tx3 : t.tx, font: o.sans ? 'IBM Plex Sans, system-ui, sans-serif' : mono, fs: o.sans ? 12 : 11.5,
+        badge: !!o.badge, badgeTxt: o.badge || '', badgeBg: TYPE[o.badge] || TYPE.I, pick: () => this.setState({selK: k})};
+    };
+    const p = s.pic, pt = s.picTips, ts = s.ts, tt = s.tsTips;
+    const nalTxt = f.nut + ' (' + f.nutId + ')';
+    const groups = tab === 'seq' ? [
+      {title: s.gSeq, rows: s.seq.map(r => row(r[0], r[1], r[2]))},
+      {title: s.gPic, rows: [
+        row(p.type, nalTxt, pt.type, {badge: f.type}),
+        row(p.dec, nf(f.d, lang), pt.dec), row(p.pres, nf(f.p, lang), pt.pres), row(p.poc, String(f.poc), pt.poc),
+        row(p.size, nf(f.size, lang) + ' ' + s.bytes, pt.size), row(p.struct, s.frame, pt.struct, {sans: true}),
+        row(p.scan, s.prog, pt.scan, {sans: true}), row(p.slices, '4 · 4 × 2', pt.slices),
+        row(p.params, (f.tags && f.tags.length) ? f.tags.join(' · ') : '—', pt.params)
+      ]},
+      {title: s.gStat, soon: true, rows: s.stat.map(x => row(x[0], '—', x[1], {dim: true}))}
+    ] : [
+      {title: s.gTs, rows: [
+        row(ts.pid, '0x0100 (256)', tt.pid), row(ts.pts, nf(f.pts, lang) + ' · ' + sec(f.pts, lang), tt.pts),
+        row(ts.dts, nf(f.dts, lang) + ' · ' + sec(f.dts, lang), tt.dts), row(ts.d, nf(f.pts - f.pts0, lang) + ' · ' + sec(f.pts - f.pts0, lang), tt.d),
+        row(ts.pes, '14 o · PTS+DTS', tt.pes)
+      ]},
+      {title: s.gPos, rows: [
+        row(ts.pkt, nf(f.pkt, lang), tt.pkt), row(ts.pos, nf(f.byte, lang), tt.pos), row(ts.posH, '0x' + f.byte.toString(16).toUpperCase(), tt.posH)
+      ]}
+    ];
+    const mk = (k, label, tip) => ({label, tip, sel: tab === k, bar: tab === k ? t.acc : 'transparent', color: tab === k ? t.tx : t.tx2, weight: tab === k ? 600 : 400, pick: () => this.setState({tab: k})});
+    const collapsed = !!this.props.collapsed;
+    return { t, s, f, groups, open: !collapsed, rail: collapsed, badge: TYPE[f.type] || TYPE.I, ptsS: sec(f.pts - f.pts0, lang),
+      tabs: [mk('seq', s.tabSeq, s.tabSeqTip), mk('ts', s.tabTs, s.tabTsTip)] };
+  }
+}
+</script>
+</body>
+</html>

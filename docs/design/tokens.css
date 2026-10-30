@@ -1,0 +1,82 @@
+/* Media Analyzer — design tokens (extraits des maquettes Claude Design) */
+:root,
+:root[data-theme="dark"] {
+  --bg-0: #0B0E13;      /* fond application, barres menu/état */
+  --bg-1: #12161D;      /* panneaux */
+  --bg-2: #181D26;      /* en-têtes de panneau, barres d'outils */
+  --bg-3: #222937;      /* relief, puces */
+  --bg-hover: #1B212B;
+  --bg-selected: #2B2550;
+  --bg-field: #0E1218;
+  --line: #262D39;
+  --line-strong: #384152;
+  --text: #E6EAF0;
+  --text-2: #AEB7C4;
+  --text-3: #8792A2;
+  --text-disabled: #6E7888;
+  --accent: #A994FF;    /* sélection uniquement */
+  --on-accent: #0B0E13;
+  --accent-bg: rgba(169, 148, 255, 0.16);
+  --focus: #7C5CFF;
+  --ok: #3FB950;
+  --warn: #F0883E;
+  --err: #FF6B61;
+  --ok-bg: rgba(63, 185, 80, 0.12);
+  --warn-bg: rgba(240, 136, 62, 0.12);
+  --err-bg: rgba(255, 107, 97, 0.12);
+  --led-glyph: #0B0E13;
+  --video-bg: #000000;
+}
+
+:root[data-theme="light"] {
+  --bg-0: #E6E9EF;
+  --bg-1: #FFFFFF;
+  --bg-2: #F4F6F9;
+  --bg-3: #E9EDF3;
+  --bg-hover: #F0F2F6;
+  --bg-selected: #ECE6FF;
+  --bg-field: #FFFFFF;
+  --line: #D8DDE5;
+  --line-strong: #BCC5D1;
+  --text: #121820;
+  --text-2: #3B4655;
+  --text-3: #576274;
+  --text-disabled: #8A94A3;
+  --accent: #6440D8;
+  --on-accent: #FFFFFF;
+  --accent-bg: rgba(100, 64, 216, 0.10);
+  --focus: #7C5CFF;
+  --ok: #1A7F37;
+  --warn: #B54708;
+  --err: #C4232D;
+  --ok-bg: rgba(26, 127, 55, 0.10);
+  --warn-bg: rgba(181, 71, 8, 0.09);
+  --err-bg: rgba(196, 35, 45, 0.08);
+  --led-glyph: #FFFFFF;
+  --video-bg: #15181D;
+}
+
+:root {
+  /* Types d'image : identiques dans les deux thèmes (badge plein, texte blanc) */
+  --type-i: #C8323A;
+  --type-p: #237A35;
+  --type-b: #2563D6;
+
+  /* Séries du graphe de débits (thème sombre ; voir BitrateView pour le clair) */
+  --series-1: #8C9EFF; --series-2: #E0B45C; --series-3: #3CC9B8;
+  --series-4: #D08CE8; --series-5: #7F8A99; --series-6: #4A5466;
+
+  --font-ui: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", monospace;
+  --fs-ui: 12px;   --lh-ui: 16px;
+  --fs-mono: 11.5px;
+  --fs-small: 11px;
+  --fs-title: 15px;
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-6: 24px;
+  --radius-badge: 3px; --radius-control: 5px; --radius-panel: 6px; --radius-card: 10px;
+  --row-h: 22px; --tree-row-h: 36px; --control-h: 28px;
+}
+
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }

@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Vue Syntaxe</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; background: {{t.bg1}}; color: {{t.tx}}; font-family: IBM Plex Sans, system-ui, sans-serif; font-size: 12px; line-height: 16px">
+  <div role="toolbar" aria-label="{{s.toolbar}}" style="min-height: 36px; flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 4px 10px; border-bottom: 1px solid {{t.line}}">
+    <div role="radiogroup" aria-label="{{s.base}}" title="{{s.baseTip}}" style="display: flex; padding: 2px; gap: 2px; border: 1px solid {{t.line}}; border-radius: 6px">
+      <sc-for list="{{bases}}" as="b" hint-placeholder-count="2">
+        <button role="radio" aria-checked="{{b.on}}" onClick="{{b.pick}}" style="height: 22px; padding: 0 9px; border: 0; border-radius: 4px; background: {{b.bg}}; color: {{b.color}}; font: inherit; font-size: 11px; cursor: pointer">{{b.label}}</button>
+      </sc-for>
+    </div>
+    <label style="display: flex; align-items: center; gap: 6px; height: 26px; width: 260px; box-sizing: border-box; padding: 0 8px; border: 1px solid {{t.line2}}; border-radius: 5px; background: {{t.field}}; color: {{t.tx3}}">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4"></path></svg>
+      <input type="search" value="pic_order" aria-label="{{s.search}}" title="{{s.searchTip}}" style="flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: {{t.tx}}; font-family: IBM Plex Mono, monospace; font-size: 11.5px">
+      <span style="font-size: 11px; white-space: nowrap">1 / 3</span>
+    </label>
+    <sc-for list="{{tools}}" as="b" hint-placeholder-count="4">
+      <button title="{{b.tip}}" aria-pressed="{{b.on}}" onClick="{{b.click}}" style="height: 26px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid {{b.border}}; border-radius: 5px; background: {{b.bg}}; color: {{b.color}}; font: inherit; cursor: pointer; white-space: nowrap">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{b.icon}}"></path></svg>{{b.label}}
+      </button>
+    </sc-for>
+    <div style="flex: 1"></div>
+    <span style="color: {{t.tx3}}; font-size: 11px; white-space: nowrap">{{s.legend}}</span>
+  </div>
+
+  <div style="flex: 1; min-height: 0; display: flex; gap: 1px; background: {{t.line}}">
+    <sc-for list="{{panes}}" as="p" hint-placeholder-count="2">
+      <section aria-label="{{p.title}}" style="flex: {{p.flex}}; min-width: 0; display: flex; flex-direction: column; background: {{t.bg1}}">
+        <div style="height: 30px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: {{t.bg2}}; border-bottom: 1px solid {{t.line}}">
+          <span style="font-weight: 600">{{p.title}}</span>
+          <span style="color: {{t.tx3}}; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{p.sub}}</span>
+        </div>
+        <div role="row" style="height: 22px; flex: none; display: flex; align-items: center; padding: 0 10px; border-bottom: 1px solid {{t.line}}; color: {{t.tx3}}; font-size: 11px">
+          <span role="columnheader" style="flex: 1; min-width: 0">{{s.cEl}}</span>
+          <span role="columnheader" style="width: 84px; text-align: right; padding-right: 10px">{{s.cVal}}</span>
+          <span role="columnheader" title="{{s.cLenTip}}" style="width: 52px; text-align: right; padding-right: 10px">{{s.cLen}}</span>
+          <span role="columnheader" title="{{s.cOffTip}}" style="width: 58px; text-align: right; padding-right: 12px">{{s.cOff}}</span>
+          <span role="columnheader" style="width: {{interpW}}px">{{s.cInt}}</span>
+        </div>
+        <div role="treegrid" aria-label="{{p.title}}" style="flex: 1; min-height: 0; overflow: auto">
+          <sc-for list="{{p.rows}}" as="r" hint-placeholder-count="14">
+            <button role="row" title="{{r.tip}}" onClick="{{r.pick}}" style="width: 100%; height: 21px; display: flex; align-items: center; padding: 0 10px; border: 0; border-left: 2px solid {{r.bar}}; background: {{r.bg}}; color: {{r.color}}; font: inherit; font-family: IBM Plex Mono, monospace; font-size: 11.5px; font-variant-numeric: tabular-nums; text-align: left; cursor: default">
+              <span role="gridcell" style="flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; padding-left: {{r.indent}}px; white-space: nowrap; overflow: hidden">
+                <span aria-hidden="true" style="width: 10px; flex: none; color: {{t.tx3}}"><sc-if value="{{r.node}}" hint-placeholder-val="{{ false }}"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="{{r.caret}}"></path></svg></sc-if></span>
+                <span style="overflow: hidden; text-overflow: ellipsis; font-weight: {{r.weight}}; font-family: {{r.font}}">{{r.el}}</span>
+              </span>
+              <span role="gridcell" style="width: 84px; text-align: right; padding-right: 10px; white-space: nowrap; overflow: hidden; color: {{r.valColor}}">{{r.val}}</span>
+              <span role="gridcell" style="width: 52px; text-align: right; padding-right: 10px; color: {{t.tx3}}">{{r.len}}</span>
+              <span role="gridcell" style="width: 58px; text-align: right; padding-right: 12px; color: {{t.tx3}}">{{r.off}}</span>
+              <span role="gridcell" style="width: {{interpW}}px; display: flex; align-items: center; gap: 6px; font-family: IBM Plex Sans, system-ui, sans-serif; font-size: 12px; white-space: nowrap; overflow: hidden">
+                <sc-if value="{{r.hasLed}}" hint-placeholder-val="{{ false }}"><dc-import name="Led" state="{{r.st}}" theme="{{theme}}" size="11" hint-size="11px,11px"></dc-import></sc-if>
+                <span style="overflow: hidden; text-overflow: ellipsis; color: {{r.intColor}}">{{r.interp}}</span>
+              </span>
+            </button>
+          </sc-for>
+        </div>
+      </section>
+    </sc-for>
+  </div>
+
+  <sc-if value="{{showHex}}" hint-placeholder-val="{{ true }}">
+    <section aria-label="{{s.hex}}" style="height: {{hexH}}px; flex: none; display: flex; flex-direction: column; border-top: 1px solid {{t.line}}; background: {{t.bg2}}">
+      <div style="height: 24px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 12px; border-bottom: 1px solid {{t.line}}; font-size: 11px; color: {{t.tx3}}">
+        <span style="font-weight: 600; color: {{t.tx2}}">{{s.hex}}</span>
+        <span>{{s.hexSel}}</span>
+      </div>
+      <div style="flex: 1; min-height: 0; overflow: hidden; padding: 4px 12px; font-family: IBM Plex Mono, monospace; font-size: 11.5px; line-height: 18px; font-variant-numeric: tabular-nums">
+        <sc-for list="{{hexRows}}" as="h" hint-placeholder-count="3">
+          <div style="display: flex; gap: 16px; white-space: nowrap">
+            <span style="width: 72px; color: {{t.tx3}}">{{h.off}}</span>
+            <span style="display: flex; gap: 0">
+              <sc-for list="{{h.bytes}}" as="b" hint-placeholder-count="16">
+                <span style="width: 22px; margin-right: {{b.gap}}px; text-align: center; border-radius: 2px; background: {{b.bg}}; color: {{b.color}}">{{b.v}}</span>
+              </sc-for>
+            </span>
+            <span style="color: {{t.tx3}}; letter-spacing: 0.04em">{{h.ascii}}</span>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"lang":{"editor":"enum","options":["fr","en"],"default":"fr"},"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"compact":{"editor":"boolean","default":false},"$preview":{"width":1330,"height":616}}'>
+const TH={dark:{bg1:'#12161D',bg2:'#181D26',bg3:'#222937',sel:'#2B2550',line:'#262D39',line2:'#384152',tx:'#E6EAF0',tx2:'#AEB7C4',tx3:'#8792A2',acc:'#A994FF',accBg:'rgba(169,148,255,0.16)',accHl:'rgba(169,148,255,0.38)',field:'#0E1218',ok:'#3FB950',warn:'#F0883E',err:'#FF6B61',warnBg:'rgba(240,136,62,0.12)',errBg:'rgba(255,107,97,0.12)'},light:{bg1:'#FFFFFF',bg2:'#F4F6F9',bg3:'#E9EDF3',sel:'#ECE6FF',line:'#D8DDE5',line2:'#BCC5D1',tx:'#121820',tx2:'#3B4655',tx3:'#576274',acc:'#6440D8',accBg:'rgba(100,64,216,0.10)',accHl:'rgba(100,64,216,0.24)',field:'#FFFFFF',ok:'#1A7F37',warn:'#B54708',err:'#C4232D',warnBg:'rgba(181,71,8,0.09)',errBg:'rgba(196,35,45,0.08)'}};
+const L={
+  fr:{toolbar:'Outils de la vue Syntaxe',base:'Base',baseTip:'Affichage des valeurs en décimal ou en hexadécimal (Ctrl+H)',dec:'Déc.',hexB:'Hex.',search:'Rechercher un élément',searchTip:'Rechercher un élément de syntaxe dans les deux arbres (Ctrl+F, F3 : suivant)',
+    expand:'Tout déplier',expandTip:'Déplier tous les nœuds (Ctrl+Maj++)',collapse:'Tout replier',collapseTip:'Replier tous les nœuds (Ctrl+Maj+-)',hexBtn:'Vue hexadécimale',hexBtnTip:'Afficher les octets de l’élément sélectionné (Ctrl+Maj+H)',next:'Message suivant',nextTip:'Aller à la prochaine ligne en erreur ou en avertissement (F8)',
+    legend:'Longueur et offset en bits · offset depuis le début de l’access unit',
+    left:'Paramètres actifs',leftSub:'VPS 0 · SPS 0 · PPS 0 — activés par l’image 12 452',right:'Access unit courante',rightSub:'Image 12 452 (déc. 12 450) · CRA · 8 unités NAL · 421 876 octets',
+    cEl:'Élément',cVal:'Valeur',cLen:'Long.',cLenTip:'Longueur en bits',cOff:'Offset',cOffTip:'Offset en bits',cInt:'Interprétation',
+    hex:'Vue hexadécimale',hexSel:'slice_pic_order_cnt_lsb · bits 1 206 à 1 213 · octets 0x96–0x97 surlignés',
+    tipWarn:'ETSI TS 101 154 §5.14.4 : la SEI mastering_display_colour_volume doit accompagner une signalisation PQ (HDR10)',tipOk:'Valeur conforme à la contrainte',tipRow:'Clic : sélectionner · Double-clic : déplier · Ctrl+C : copier la valeur'},
+  en:{toolbar:'Syntax view tools',base:'Base',baseTip:'Show values in decimal or hexadecimal (Ctrl+H)',dec:'Dec.',hexB:'Hex.',search:'Search an element',searchTip:'Search a syntax element in both trees (Ctrl+F, F3: next)',
+    expand:'Expand all',expandTip:'Expand all nodes (Ctrl+Shift++)',collapse:'Collapse all',collapseTip:'Collapse all nodes (Ctrl+Shift+-)',hexBtn:'Hexadecimal view',hexBtnTip:'Show the bytes of the selected element (Ctrl+Shift+H)',next:'Next message',nextTip:'Go to the next row in error or warning (F8)',
+    legend:'Length and offset in bits · offset from start of access unit',
+    left:'Active parameter sets',leftSub:'VPS 0 · SPS 0 · PPS 0 — activated by picture 12,452',right:'Current access unit',rightSub:'Picture 12,452 (dec. 12,450) · CRA · 8 NAL units · 421,876 bytes',
+    cEl:'Element',cVal:'Value',cLen:'Length',cLenTip:'Length in bits',cOff:'Offset',cOffTip:'Offset in bits',cInt:'Interpretation',
+    hex:'Hexadecimal view',hexSel:'slice_pic_order_cnt_lsb · bits 1,206 to 1,213 · bytes 0x96–0x97 highlighted',
+    tipWarn:'ETSI TS 101 154 §5.14.4: the mastering_display_colour_volume SEI must accompany PQ signalling (HDR10)',tipOk:'Value complies with the constraint',tipRow:'Click: select · Double-click: expand · Ctrl+C: copy value'}
+};
+const TR={'1 sous-couche':'1 sub-layer','progressif':'progressive','Level 5.1 · conforme':'Level 5.1 · compliant','1:1 (carré)':'1:1 (square)','plage limitée':'limited range','50 i/s':'50 fps','tiles activés':'tiles enabled','4 colonnes':'4 columns','2 lignes':'2 rows','Absente : requise avec PQ (HDR10)':'Missing: required with PQ (HDR10)','absente':'missing','104 312 octets':'104,312 bytes','pic_type 0 · I':'pic_type 0 · I'};
+const LEFT=[
+  [0,'VPS · video_parameter_set_rbsp()','','',184,'','','','c'],
+  [0,'SPS · seq_parameter_set_rbsp()','','',584,'','','','n'],
+  [1,'sps_video_parameter_set_id','0','0x0',4,16,''],
+  [1,'sps_max_sub_layers_minus1','0','0x0',3,20,'1 sous-couche'],
+  [1,'profile_tier_level( 1, 0 )','','',88,24,'Main 10 · Main tier · L5.1','','n'],
+  [2,'general_tier_flag','0','0x0',1,26,'Main tier'],
+  [2,'general_profile_idc','2','0x02',5,27,'Main 10','ok'],
+  [2,'general_progressive_source_flag','1','0x1',1,64,'progressif'],
+  [2,'general_level_idc','153','0x99',8,104,'Level 5.1 · conforme','ok'],
+  [1,'chroma_format_idc','1','0x1',3,113,'4:2:0'],
+  [1,'pic_width_in_luma_samples','3840','0xF00',23,116,''],
+  [1,'pic_height_in_luma_samples','2160','0x870',23,139,''],
+  [1,'bit_depth_luma_minus8','2','0x2',3,163,'10 bits'],
+  [1,'log2_max_pic_order_cnt_lsb_minus4','4','0x4',5,169,'MaxPicOrderCntLsb = 256'],
+  [1,'log2_diff_max_min_luma_coding_block_size','3','0x3',5,175,'CTB 64 × 64'],
+  [1,'vui_parameters()','','',212,237,'','','n'],
+  [2,'aspect_ratio_idc','1','0x01',8,238,'1:1 (carré)'],
+  [2,'video_full_range_flag','0','0x0',1,252,'plage limitée'],
+  [2,'colour_primaries','9','0x09',8,254,'BT.2020'],
+  [2,'transfer_characteristics','16','0x10',8,262,'PQ · SMPTE ST 2084'],
+  [2,'matrix_coeffs','9','0x09',8,270,'BT.2020 NCL'],
+  [2,'vui_time_scale','50','0x32',32,320,'50 i/s'],
+  [0,'PPS · pic_parameter_set_rbsp()','','',200,'','','','n'],
+  [1,'init_qp_minus26','0','0x0',1,24,'QP init 26'],
+  [1,'tiles_enabled_flag','1','0x1',1,41,'tiles activés'],
+  [1,'num_tile_columns_minus1','3','0x3',5,44,'4 colonnes'],
+  [1,'num_tile_rows_minus1','1','0x1',3,49,'2 lignes']
+];
+const RIGHT=[
+  [0,'AUD (35) · access_unit_delimiter','','',56,0,'pic_type 0 · I','','c'],
+  [0,'VPS (32)','','',192,56,'','','c'],
+  [0,'SPS (33)','','',600,248,'','','c'],
+  [0,'PPS (34)','','',200,848,'','','c'],
+  [0,'SEI prefix (39)','','',104,1048,'','','n'],
+  [1,'content_light_level_info (144)','','',48,1096,'MaxCLL 1000 · MaxFALL 400 cd/m²'],
+  [1,'mastering_display_colour_volume (137)','absente','','—','—','Absente : requise avec PQ (HDR10)','warn'],
+  [0,'CRA_NUT (21) · slice 0','','',834528,1152,'','','n'],
+  [1,'nal_unit_type','21','0x15',6,1185,'CRA_NUT'],
+  [1,'nuh_temporal_id_plus1','1','0x1',3,1197,'TemporalId 0'],
+  [1,'slice_segment_header()','','',40,1200,'','','n'],
+  [2,'first_slice_segment_in_pic_flag','1','0x1',1,1200,''],
+  [2,'slice_pic_parameter_set_id','0','0x0',1,1202,'PPS 0'],
+  [2,'slice_type','2','0x2',3,1203,'I'],
+  [2,'slice_pic_order_cnt_lsb','196','0xC4',8,1206,'POC 452','','',true],
+  [2,'short_term_ref_pic_set_sps_flag','1','0x1',1,1214,''],
+  [2,'slice_sao_luma_flag','1','0x1',1,1215,''],
+  [2,'slice_qp_delta','−4','−0x4',7,1217,'SliceQpY = 22'],
+  [2,'num_entry_point_offsets','1','0x1',3,1224,''],
+  [1,'slice_segment_data()','104 312 octets','','834 488',1240,'','','c'],
+  [0,'CRA_NUT (21) · slice 1','','','832 760','835 680','','','c'],
+  [0,'CRA_NUT (21) · slice 2','','','841 016','1 668 440','','','c'],
+  [0,'CRA_NUT (21) · slice 3','','','862 104','2 509 456','','','c']
+];
+const HEX=[[0x80,'6B 1C 80 00 00 00 01 4E 01 90 04 03 E8 01 90 80'],[0x90,'00 00 00 01 2A 01 AF 13 89 5C 7B 52 E0 9D 3F 0A'],[0xA0,'61 C2 88 F4 17 5B E0 23 9C 46 D1 0B 7A 58 E2 91']];
+const nf=(n,l)=>typeof n==='number'?String(n).replace(/\B(?=(\d{3})+(?!\d))/g,l==='en'?',':' '):n;
+class Component extends DCLogic {
+  renderVals() {
+    const lang = this.props.lang ?? 'fr';
+    const theme = this.props.theme ?? 'dark';
+    const t = TH[theme] || TH.dark;
+    const s = L[lang] || L.fr;
+    const hex = this.state.hex ?? false;
+    const showHex = this.state.showHex ?? true;
+    const sel = this.state.sel ?? 'R:slice_pic_order_cnt_lsb';
+    const tr = (x) => lang === 'en' && TR[x] ? TR[x] : x;
+    const mk = (side) => (r) => {
+      const [d, el, v, vh, len, off, interp, st, kind] = r;
+      const id = side + ':' + el;
+      const isSel = id === sel;
+      const node = kind === 'n' || kind === 'c';
+      const warn = st === 'warn', err = st === 'err';
+      return {
+        el, indent: d * 14, node, caret: kind === 'n' ? 'M6 9l6 6 6-6' : 'M9 6l6 6-6 6',
+        weight: d === 0 ? 600 : 400, font: d === 0 ? 'IBM Plex Sans, system-ui, sans-serif' : 'IBM Plex Mono, monospace',
+        val: tr(hex && vh ? vh : v), len: nf(len, lang), off: nf(off, lang), interp: tr(interp),
+        st: st || 'ok', hasLed: !!st,
+        bg: isSel ? t.sel : (warn ? t.warnBg : (err ? t.errBg : 'transparent')), bar: isSel ? t.acc : (warn ? t.warn : (err ? t.err : 'transparent')),
+        color: warn ? t.warn : (err ? t.err : (d === 0 ? t.tx : t.tx2)), valColor: warn ? t.warn : (err ? t.err : t.tx), intColor: warn ? t.warn : (err ? t.err : t.tx2),
+        tip: warn ? s.tipWarn : (st === 'ok' ? s.tipOk : s.tipRow),
+        pick: () => this.setState({sel: id})
+      };
+    };
+    const compact = !!this.props.compact;
+    const pressed = (on) => ({border: on ? t.acc : t.line2, bg: on ? t.accBg : 'transparent', color: on ? t.tx : t.tx2});
+    return {
+      t, s, theme, showHex, interpW: compact ? 150 : 210, hexH: compact ? 92 : 112,
+      bases: [{label: s.dec, on: !hex, pick: () => this.setState({hex: false})}, {label: s.hexB, on: hex, pick: () => this.setState({hex: true})}].map(b => Object.assign(b, {bg: b.on ? t.accBg : 'transparent', color: b.on ? t.tx : t.tx3})),
+      tools: [
+        Object.assign({label: s.expand, tip: s.expandTip, icon: 'M7 9l5-5 5 5M7 15l5 5 5-5', on: false, click: null}, pressed(false)),
+        Object.assign({label: s.collapse, tip: s.collapseTip, icon: 'M7 4l5 5 5-5M7 20l5-5 5 5', on: false, click: null}, pressed(false)),
+        Object.assign({label: s.hexBtn, tip: s.hexBtnTip, icon: 'M4 5h16v14H4zM8 9h2M8 12h2M8 15h2M13 9h3M13 12h3M13 15h3', on: showHex, click: () => this.setState({showHex: !showHex})}, pressed(showHex)),
+        Object.assign({label: s.next, tip: s.nextTip, icon: 'M10 6l6 6-6 6M5 6v8M5 18v0.5', on: false, click: null}, pressed(false))
+      ],
+      panes: [
+        {title: s.left, sub: s.leftSub, flex: '1 1 0', rows: LEFT.map(mk('L'))},
+        {title: s.right, sub: s.rightSub, flex: '1 1 0', rows: RIGHT.map(mk('R'))}
+      ],
+      hexRows: HEX.map(([o, line]) => {
+        const bytes = line.split(' ').map((v, i) => {
+          const addr = o + i;
+          const hl = addr === 0x96 || addr === 0x97;
+          const nal = addr >= 0x94 && addr <= 0x95;
+          return {v, gap: i === 7 ? 10 : 2, bg: hl ? t.accHl : (nal ? t.bg3 : 'transparent'), color: hl ? t.tx : t.tx2};
+        });
+        const ascii = line.split(' ').map(h => { const c = parseInt(h, 16); return c >= 32 && c < 127 ? String.fromCharCode(c) : '·'; }).join('');
+        return {off: '0x' + o.toString(16).toUpperCase().padStart(8, '0'), bytes, ascii};
+      })
+    };
+  }
+}
+</script>
+</body>
+</html>

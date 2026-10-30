@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Vue Transport TR 101 290</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; background: {{t.bg1}}; color: {{t.tx}}; font-family: IBM Plex Sans, system-ui, sans-serif; font-size: 12px; line-height: 16px">
+  <div role="toolbar" aria-label="{{s.toolbar}}" style="min-height: 36px; flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 4px 10px; border-bottom: 1px solid {{t.line}}">
+    <sc-for list="{{filters}}" as="f" hint-placeholder-count="2">
+      <button title="{{f.tip}}" style="height: 26px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid {{t.line2}}; border-radius: 5px; background: {{t.field}}; color: {{t.tx2}}; font: inherit; cursor: pointer; white-space: nowrap">{{f.label}} <span style="color: {{t.tx}}">{{f.value}}</span><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+    </sc-for>
+    <div aria-hidden="true" style="width: 1px; height: 18px; background: {{t.line2}}"></div>
+    <span style="display: flex; align-items: center; gap: 6px; color: {{t.tx2}}; white-space: nowrap">
+      <dc-import name="Led" state="{{runLed}}" theme="{{theme}}" size="11" hint-size="11px,11px"></dc-import>{{stateTxt}}
+    </span>
+    <div style="flex: 1"></div>
+    <sc-if value="{{busy}}" hint-placeholder-val="{{ false }}">
+      <button title="{{s.stopTip}}" style="height: 26px; padding: 0 10px; border: 1px solid {{t.line2}}; border-radius: 5px; background: transparent; color: {{t.tx}}; font: inherit; cursor: pointer">{{s.stop}}</button>
+    </sc-if>
+    <sc-if value="{{done}}" hint-placeholder-val="{{ true }}">
+      <button title="{{s.rerunTip}}" style="height: 26px; padding: 0 10px; border: 1px solid {{t.line2}}; border-radius: 5px; background: transparent; color: {{t.tx2}}; font: inherit; cursor: pointer">{{s.rerun}}</button>
+    </sc-if>
+    <button title="{{s.exportTip}}" style="height: 26px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid {{t.line2}}; border-radius: 5px; background: transparent; color: {{t.tx2}}; font: inherit; cursor: pointer"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg>{{s.export}}</button>
+  </div>
+
+  <div style="flex: none; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 10px 10px 4px">
+    <sc-for list="{{kpis}}" as="k" hint-placeholder-count="4">
+      <div title="{{k.tip}}" style="display: flex; flex-direction: column; gap: 4px; padding: 8px 12px; border: 1px solid {{k.border}}; border-radius: 6px; background: {{k.bg}}">
+        <span style="display: flex; align-items: center; gap: 6px; color: {{t.tx2}}; font-size: 11px">
+          <sc-if value="{{k.hasLed}}" hint-placeholder-val="{{ true }}"><dc-import name="Led" state="{{k.led}}" theme="{{theme}}" size="11" hint-size="11px,11px"></dc-import></sc-if>{{k.label}}
+        </span>
+        <span style="font-size: {{kSize}}px; line-height: 22px; font-weight: 600; font-family: IBM Plex Mono, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{k.value}}</span>
+        <span style="color: {{t.tx3}}; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{k.sub}}</span>
+      </div>
+    </sc-for>
+  </div>
+
+  <div role="table" aria-label="TR 101 290" style="flex: 1; min-height: 0; overflow: auto; padding: 0 10px 10px">
+    <sc-for list="{{sections}}" as="sec" hint-placeholder-count="2">
+      <div role="row" style="position: sticky; top: 0; z-index: 1; height: 28px; display: flex; align-items: center; gap: 8px; padding: 6px 0 0; background: {{t.bg1}}; color: {{t.tx2}}; font-size: 11px; border-bottom: 1px solid {{t.line}}">
+        <span role="columnheader" style="width: {{colName}}px; flex: none; font-weight: 600; color: {{t.tx}}; font-size: 12px">{{sec.title}}</span>
+        <span role="columnheader" style="width: 70px; flex: none; text-align: right">{{s.cOcc}}</span>
+        <span role="columnheader" title="{{s.cMeasTip}}" style="width: {{colMeas}}px; flex: none; text-align: right">{{s.cMeas}}</span>
+        <span role="columnheader" title="{{s.cFirstTip}}" style="width: 100px; flex: none; text-align: right">{{s.cFirst}}</span>
+        <span role="columnheader" style="width: 100px; flex: none; text-align: right">{{s.cLast}}</span>
+        <span role="columnheader" style="flex: 1; min-width: 0; display: flex; justify-content: space-between; padding-left: 16px; font-family: IBM Plex Mono, monospace; font-size: 10.5px; color: {{t.tx3}}"><span>{{s.cDist}} 00:00</span><span>05:45</span><span>11:30</span><span>17:15</span><span>23:01</span></span>
+      </div>
+      <sc-for list="{{sec.rows}}" as="r" hint-placeholder-count="6">
+        <div role="row" title="{{r.tip}}" style="height: 30px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid {{t.line}}; background: {{r.bg}}">
+          <span role="cell" style="width: {{colName}}px; flex: none; display: flex; align-items: center; gap: 8px; padding-left: 6px; white-space: nowrap; overflow: hidden">
+            <dc-import name="Led" state="{{r.led}}" theme="{{theme}}" size="12" hint-size="12px,12px"></dc-import>
+            <span style="width: 26px; flex: none; font-family: IBM Plex Mono, monospace; font-size: 11.5px; color: {{t.tx3}}">{{r.num}}</span>
+            <span style="overflow: hidden; text-overflow: ellipsis; font-weight: {{r.weight}}">{{r.name}}</span>
+          </span>
+          <span role="cell" style="width: 70px; flex: none; text-align: right; font-family: IBM Plex Mono, monospace; font-size: 12px; font-weight: {{r.weight}}; color: {{r.occColor}}">{{r.occ}}</span>
+          <span role="cell" style="width: {{colMeas}}px; flex: none; text-align: right; font-family: IBM Plex Mono, monospace; font-size: 11.5px; color: {{t.tx2}}; white-space: nowrap">{{r.meas}}</span>
+          <span role="cell" style="width: 100px; flex: none; text-align: right">
+            <sc-if value="{{r.hasOcc}}" hint-placeholder-val="{{ false }}"><button title="{{s.jumpTip}}" style="padding: 0 2px; border: 0; background: transparent; color: {{t.acc}}; font-family: IBM Plex Mono, monospace; font-size: 11.5px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer">{{r.first}}</button></sc-if>
+            <sc-if value="{{r.noOcc}}" hint-placeholder-val="{{ true }}"><span style="color: {{t.tx3}}">—</span></sc-if>
+          </span>
+          <span role="cell" style="width: 100px; flex: none; text-align: right">
+            <sc-if value="{{r.hasOcc}}" hint-placeholder-val="{{ false }}"><button title="{{s.jumpTip}}" style="padding: 0 2px; border: 0; background: transparent; color: {{t.acc}}; font-family: IBM Plex Mono, monospace; font-size: 11.5px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer">{{r.last}}</button></sc-if>
+            <sc-if value="{{r.noOcc}}" hint-placeholder-val="{{ true }}"><span style="color: {{t.tx3}}">—</span></sc-if>
+          </span>
+          <span role="cell" aria-label="{{s.cDist}}" style="flex: 1; min-width: 0; height: 18px; display: flex; align-items: flex-end; gap: 1px; padding-left: 16px">
+            <sc-for list="{{r.bins}}" as="b" hint-placeholder-count="48">
+              <span style="flex: 1; min-width: 0; height: {{b.h}}px; border-radius: 1px; background: {{b.c}}"></span>
+            </sc-for>
+          </span>
+        </div>
+      </sc-for>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"lang":{"editor":"enum","options":["fr","en"],"default":"fr"},"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"indexing":{"editor":"range","min":0,"max":100,"step":1,"unit":"%","default":100},"compact":{"editor":"boolean","default":false},"$preview":{"width":1330,"height":616}}'>
+const TH={dark:{bg1:'#12161D',bg2:'#181D26',bg3:'#222937',line:'#262D39',line2:'#384152',tx:'#E6EAF0',tx2:'#AEB7C4',tx3:'#8792A2',acc:'#A994FF',field:'#0E1218',ok:'#3FB950',warn:'#F0883E',err:'#FF6B61',okDim:'rgba(63,185,80,0.35)',pend:'#262D39',errBg:'rgba(255,107,97,0.08)',warnBg:'rgba(240,136,62,0.08)',errLine:'rgba(255,107,97,0.45)',warnLine:'rgba(240,136,62,0.45)'},light:{bg1:'#FFFFFF',bg2:'#F4F6F9',bg3:'#E9EDF3',line:'#D8DDE5',line2:'#BCC5D1',tx:'#121820',tx2:'#3B4655',tx3:'#576274',acc:'#6440D8',field:'#FFFFFF',ok:'#1A7F37',warn:'#B54708',err:'#C4232D',okDim:'rgba(26,127,55,0.35)',pend:'#E1E6ED',errBg:'rgba(196,35,45,0.06)',warnBg:'rgba(181,71,8,0.06)',errLine:'rgba(196,35,45,0.4)',warnLine:'rgba(181,71,8,0.4)'}};
+const L={
+  fr:{toolbar:'Outils de la vue Transport',prog:'Programme',progTip:'Limiter les indicateurs à un programme (PAT/PMT)',pid:'PID',pidTip:'Limiter les indicateurs à un PID',all:'Tous',done:'Analyse terminée · 22 970 569 paquets · 00:23:01.840',busy:'Analyse en cours · 14 701 164 / 22 970 569 paquets · résultats partiels',stop:'Interrompre',stopTip:'Interrompre l’analyse TR 101 290 — les résultats partiels restent affichés',rerun:'Relancer',rerunTip:'Relancer l’analyse avec les réglages actuels (seuils, tests actifs)',export:'Exporter',exportTip:'Exporter le tableau de bord en CSV ou texte (Ctrl+E)',
+    p1:'Priorité 1',p2:'Priorité 2',cOcc:'Occurrences',cMeas:'Mesure max / seuil',cMeasTip:'Pire valeur mesurée sur le fichier, comparée au seuil configuré',cFirst:'Première',cFirstTip:'Cliquer pour aller à l’image et au paquet concernés',cLast:'Dernière',cDist:'Répartition',jumpTip:'Aller à cette occurrence (image, paquet, message du rapport)',partial:' (partiel)',
+    names:{'1.1':'TS sync loss','1.2':'Sync byte error','1.3':'PAT error','1.4':'Continuity count error','1.5':'PMT error','1.6':'PID error','2.1':'Transport error','2.2':'CRC error','2.3':'PCR repetition error','2.4':'PCR discontinuity indicator error','2.5':'PCR accuracy error','2.6':'PTS error'},
+    tips:{'1.1':'Perte de synchronisation : 2 octets de synchro 0x47 consécutifs ou plus manquants (ETSI TR 101 290 §5.2.1)','1.2':'Octet de synchro différent de 0x47','1.3':'PAT absente pendant plus de 0,5 s, table_id ≠ 0x00 ou embrouillée','1.4':'Ordre incorrect des paquets, paquet perdu ou dupliqué plus d’une fois','1.5':'PMT absente pendant plus de 0,5 s ou embrouillée','1.6':'PID référencé absent pendant une durée configurable (5 s par défaut)','2.1':'transport_error_indicator = 1 dans l’en-tête TS','2.2':'CRC 32 incorrect dans CAT, PAT, PMT, NIT, EIT, BAT, SDT ou TOT','2.3':'Intervalle entre deux PCR supérieur à 40 ms','2.4':'Écart entre deux PCR > 100 ms sans discontinuity_indicator','2.5':'Gigue du PCR supérieure à ±500 ns','2.6':'Intervalle entre deux PTS supérieur à 700 ms'},
+    k1:'Priorité 1',k1v:'1 indicateur en erreur',k1s:'Continuity count · 3 occurrences · PID 0x0101',k2:'Priorité 2',k2v:'1 avertissement',k2s:'PCR accuracy · 612 ns · PID 0x0100',k3:'Paquets analysés',k3s:'188 octets · 0 paquet avec transport_error_indicator',k4:'Débit du multiplex',k4v:'25,00 Mbit/s',k4s:'CBR · bourrage (PID 0x1FFF) 6,4 %',k1t:'Synthèse des indicateurs de priorité 1 (indispensables au décodage)',k2t:'Synthèse des indicateurs de priorité 2 (surveillance recommandée)'},
+  en:{toolbar:'Transport view tools',prog:'Program',progTip:'Limit indicators to one program (PAT/PMT)',pid:'PID',pidTip:'Limit indicators to one PID',all:'All',done:'Analysis complete · 22,970,569 packets · 00:23:01.840',busy:'Analysis in progress · 14,701,164 / 22,970,569 packets · partial results',stop:'Stop',stopTip:'Stop the TR 101 290 analysis — partial results stay visible',rerun:'Run again',rerunTip:'Run the analysis again with current settings (thresholds, enabled tests)',export:'Export',exportTip:'Export the dashboard as CSV or text (Ctrl+E)',
+    p1:'Priority 1',p2:'Priority 2',cOcc:'Occurrences',cMeas:'Worst value / threshold',cMeasTip:'Worst value measured in the file, compared with the configured threshold',cFirst:'First',cFirstTip:'Click to jump to the picture and packet concerned',cLast:'Last',cDist:'Distribution',jumpTip:'Jump to this occurrence (picture, packet, report message)',partial:' (partial)',
+    names:{'1.1':'TS sync loss','1.2':'Sync byte error','1.3':'PAT error','1.4':'Continuity count error','1.5':'PMT error','1.6':'PID error','2.1':'Transport error','2.2':'CRC error','2.3':'PCR repetition error','2.4':'PCR discontinuity indicator error','2.5':'PCR accuracy error','2.6':'PTS error'},
+    tips:{'1.1':'Loss of synchronisation: 2 or more consecutive corrupted 0x47 sync bytes (ETSI TR 101 290 §5.2.1)','1.2':'Sync byte not equal to 0x47','1.3':'PAT missing for more than 0.5 s, table_id ≠ 0x00 or scrambled','1.4':'Incorrect packet order, lost packet or packet duplicated more than once','1.5':'PMT missing for more than 0.5 s or scrambled','1.6':'Referenced PID missing for a configurable time (5 s by default)','2.1':'transport_error_indicator = 1 in the TS header','2.2':'Wrong CRC 32 in CAT, PAT, PMT, NIT, EIT, BAT, SDT or TOT','2.3':'Interval between two PCRs greater than 40 ms','2.4':'PCR gap > 100 ms without discontinuity_indicator','2.5':'PCR jitter greater than ±500 ns','2.6':'Interval between two PTSs greater than 700 ms'},
+    k1:'Priority 1',k1v:'1 indicator in error',k1s:'Continuity count · 3 occurrences · PID 0x0101',k2:'Priority 2',k2v:'1 warning',k2s:'PCR accuracy · 612 ns · PID 0x0100',k3:'Packets analyzed',k3s:'188 bytes · 0 packets with transport_error_indicator',k4:'Multiplex bitrate',k4v:'25.00 Mbit/s',k4s:'CBR · stuffing (PID 0x1FFF) 6.4 %',k1t:'Summary of priority 1 indicators (essential for decoding)',k2t:'Summary of priority 2 indicators (monitoring recommended)'}
+};
+const P1=[['1.1','—'],['1.2','—'],['1.3','98 ms / 500 ms'],['1.4','',[[9.65,'00:02:13.400'],[42.8,'00:09:51.220'],[74.2,'00:17:05.060']],'err'],['1.5','102 ms / 500 ms'],['1.6','1,8 s / 5 s']];
+const P2=[['2.1','—'],['2.2','—'],['2.3','36 ms / 40 ms'],['2.4','—'],['2.5','612 ns / ±500 ns',[[63.2,'00:14:32.680']],'warn'],['2.6','40 ms / 700 ms']];
+const NB=48;
+class Component extends DCLogic {
+  renderVals() {
+    const lang = this.props.lang ?? 'fr';
+    const theme = this.props.theme ?? 'dark';
+    const t = TH[theme] || TH.dark;
+    const s = L[lang] || L.fr;
+    const idx = Number(this.props.indexing ?? 100);
+    const busy = idx < 100;
+    const compact = !!this.props.compact;
+    const loc = (x) => lang === 'en' ? x.replace(/(\d),(\d)/g, '$1.$2') : x;
+    const mkRow = (r) => {
+      const [num, meas, occs, kind] = r;
+      const found = (occs || []).filter(o => o[0] <= idx);
+      const n = found.length;
+      const k = n ? kind : (busy ? 'run' : 'ok');
+      const bins = [];
+      for (let i = 0; i < NB; i++) {
+        const p0 = i / NB * 100;
+        const hit = found.some(o => Math.floor(o[0] / 100 * NB) === i);
+        if (p0 >= idx) bins.push({h: 18, c: t.pend});
+        else if (hit) bins.push({h: 18, c: kind === 'err' ? t.err : t.warn});
+        else bins.push({h: 3, c: t.okDim});
+      }
+      return {
+        num, name: s.names[num], tip: s.tips[num], led: k, occ: String(n),
+        meas: meas ? loc(meas) + (busy && meas !== '—' ? s.partial : '') : (busy ? s.partial.trim() : '—'),
+        hasOcc: n > 0, noOcc: n === 0, first: n ? found[0][1] : '', last: n ? found[n - 1][1] : '',
+        weight: n ? 600 : 400, occColor: n ? (kind === 'err' ? t.err : t.warn) : t.tx3,
+        bg: n ? (kind === 'err' ? t.errBg : t.warnBg) : 'transparent', bins
+      };
+    };
+    const cc = P1[3][2].filter(o => o[0] <= idx).length;
+    const kpis = [
+      {label: s.k1, value: s.k1v, sub: busy ? s.k1s.replace('3 occurrences', cc + ' occurrences') : s.k1s, tip: s.k1t, led: 'err', hasLed: true, border: t.errLine, bg: t.errBg},
+      {label: s.k2, value: s.k2v, sub: s.k2s, tip: s.k2t, led: 'warn', hasLed: true, border: t.warnLine, bg: t.warnBg},
+      {label: s.k3, value: busy ? (lang === 'en' ? '14,701,164' : '14 701 164') : (lang === 'en' ? '22,970,569' : '22 970 569'), sub: s.k3s, tip: s.k3s, led: busy ? 'run' : 'ok', hasLed: true, border: t.line, bg: t.bg2},
+      {label: s.k4, value: s.k4v, sub: s.k4s, tip: s.k4s, led: 'ok', hasLed: false, border: t.line, bg: t.bg2}
+    ];
+    return {
+      t, s, theme, busy, done: !busy, kpis, kSize: compact ? 13 : 15,
+      colName: compact ? 220 : 270, colMeas: compact ? 120 : 140,
+      runLed: busy ? 'run' : 'err', stateTxt: busy ? s.busy : s.done,
+      filters: [{label: s.prog, value: s.all, tip: s.progTip}, {label: s.pid, value: s.all, tip: s.pidTip}],
+      sections: [{title: s.p1, rows: P1.map(mkRow)}, {title: s.p2, rows: P2.map(mkRow)}]
+    };
+  }
+}
+</script>
+</body>
+</html>

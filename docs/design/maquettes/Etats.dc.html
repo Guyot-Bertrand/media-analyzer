@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>États transverses</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1600px; height: 1100px; box-sizing: border-box; padding: 32px; display: flex; flex-direction: column; gap: 28px; background: #0B0E13; color: #E6EAF0; font-family: IBM Plex Sans, system-ui, sans-serif; font-size: 12px; line-height: 16px">
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px">
+    <section style="display: flex; flex-direction: column; gap: 8px">
+      <h2 style="margin: 0; font-size: 14px; font-weight: 600">Chargement d’une image</h2>
+      <p style="margin: 0; color: #AEB7C4; line-height: 18px">Indicateur discret dans la zone image ; le reste de l’interface reste utilisable et les données de l’image sont déjà affichées.</p>
+      <div style="position: relative; height: 320px; border: 1px solid #262D39; border-radius: 6px; overflow: hidden">
+        <dc-import name="VideoView" lang="fr" theme="dark" state="loading" compact="{{ true }}" hint-size="100%,100%"></dc-import>
+      </div>
+    </section>
+    <section style="display: flex; flex-direction: column; gap: 8px">
+      <h2 style="margin: 0; font-size: 14px; font-weight: 600">Image non décodable</h2>
+      <p style="margin: 0; color: #AEB7C4; line-height: 18px">Message explicite, cause probable et action immédiate. Syntaxe et métadonnées restent consultables.</p>
+      <div style="position: relative; height: 320px; border: 1px solid #262D39; border-radius: 6px; overflow: hidden">
+        <dc-import name="VideoView" lang="fr" theme="dark" state="undecodable" compact="{{ true }}" hint-size="100%,100%"></dc-import>
+      </div>
+    </section>
+    <section style="display: flex; flex-direction: column; gap: 8px">
+      <h2 style="margin: 0; font-size: 14px; font-weight: 600">Zone corrompue : une donnée, pas une panne</h2>
+      <p style="margin: 0; color: #AEB7C4; line-height: 18px">La zone est décrite dans l’arbre et le rapport, et hachurée sur la barre de position. L’analyse continue après la zone.</p>
+      <div style="height: 320px; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid #262D39; border-radius: 6px; background: #12161D">
+        <div style="display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: 5px; background: #181D26">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#AEB7C4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none; margin-top: 1px"><path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5"></path></svg>
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 2px">
+            <span style="display: flex; align-items: center; gap: 6px; font-weight: 600">Transport Stream <dc-import name="Led" state="err" theme="dark" size="11" hint-size="11px,11px"></dc-import></span>
+            <span style="color: #8792A2; font-size: 11px">1 zone illisible · 12,4 Mo · paquets 12 680 410 → 12 746 320</span>
+          </div>
+        </div>
+        <div role="table" aria-label="Extrait du rapport" style="display: flex; flex-direction: column; border: 1px solid #262D39; border-radius: 5px; overflow: hidden">
+          <div role="row" style="height: 26px; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: rgba(255,107,97,0.10); border-left: 2px solid #FF6B61">
+            <dc-import name="Led" state="err" theme="dark" size="11" hint-size="11px,11px"></dc-import>
+            <span style="width: 34px; color: #FF6B61">TS</span>
+            <span style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">1.1 TS sync loss — 65 910 paquets ignorés, resynchronisation à 00:12:43.120</span>
+          </div>
+          <div role="row" style="height: 26px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-top: 1px solid #262D39">
+            <dc-import name="Led" state="warn" theme="dark" size="11" hint-size="11px,11px"></dc-import>
+            <span style="width: 34px; color: #F0883E">HEVC</span>
+            <span style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Images 38 140 à 38 171 non décodables : référence dans la zone illisible</span>
+          </div>
+          <div role="row" style="height: 26px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-top: 1px solid #262D39">
+            <dc-import name="Led" state="info" theme="dark" size="11" hint-size="11px,11px"></dc-import>
+            <span style="width: 34px; color: #AEB7C4">TS</span>
+            <span style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Analyse reprise à l’image I 38 172 (00:12:43.440)</span>
+          </div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <span style="color: #8792A2; font-size: 11px">Barre de position</span>
+          <div style="position: relative; height: 14px; border-radius: 3px; background: #2A3140; border: 1px solid #262D39; overflow: hidden">
+            <div title="Zone corrompue : 12,4 Mo illisibles" style="position: absolute; left: 55.2%; width: 3%; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, rgba(255,107,97,0.25) 0 3px, #FF6B61 3px 4px)"></div>
+            <div style="position: absolute; left: 18%; top: -1px; bottom: -1px; width: 2px; background: #E6EAF0"></div>
+          </div>
+          <span style="color: #8792A2; font-size: 11px">Hachures rouges : zone illisible · cliquer pour aller au premier paquet valide qui suit</span>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px">
+    <sc-for list="{{dialogs}}" as="d" hint-placeholder-count="3">
+      <section style="display: flex; flex-direction: column; gap: 8px">
+        <h2 style="margin: 0; font-size: 14px; font-weight: 600">{{d.case}}</h2>
+        <div role="alertdialog" aria-label="{{d.title}}" style="display: flex; flex-direction: column; gap: 12px; padding: 18px 20px; border: 1px solid #384152; border-radius: 8px; background: #181D26; box-shadow: 0 12px 32px rgba(0,0,0,0.45)">
+          <div style="display: flex; align-items: flex-start; gap: 12px">
+            <span style="flex: none; margin-top: 1px"><dc-import name="Led" state="{{d.led}}" theme="dark" size="20" hint-size="20px,20px"></dc-import></span>
+            <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px">
+              <span style="font-size: 14px; line-height: 20px; font-weight: 600">{{d.title}}</span>
+              <span style="font-family: IBM Plex Mono, monospace; font-size: 11.5px; color: #AEB7C4; word-break: break-all">{{d.file}}</span>
+              <span style="color: #AEB7C4; line-height: 18px">{{d.body}}</span>
+            </div>
+          </div>
+          <details style="color: #8792A2; font-size: 11px">
+            <summary style="cursor: pointer">Détails techniques</summary>
+            <span style="display: block; margin-top: 6px; font-family: IBM Plex Mono, monospace; line-height: 16px">{{d.detail}}</span>
+          </details>
+          <div style="display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap">
+            <button style="height: 30px; padding: 0 12px; border: 1px solid #384152; border-radius: 5px; background: transparent; color: #E6EAF0; font: inherit; cursor: pointer">{{d.secondary}}</button>
+            <button style="height: 30px; padding: 0 14px; border: 0; border-radius: 5px; background: #A994FF; color: #0B0E13; font: inherit; font-weight: 600; cursor: pointer">{{d.primary}}</button>
+          </div>
+        </div>
+      </section>
+    </sc-for>
+  </div>
+
+  <section style="display: flex; flex-direction: column; gap: 8px">
+    <h2 style="margin: 0; font-size: 14px; font-weight: 600">Sélection d’une plage pour la découpe (état visuel, fonction en V1) et zone corrompue sur la barre de position</h2>
+    <p style="margin: 0; color: #AEB7C4">Clic droit sur une vignette : début, puis fin. La plage est recalée sur l’image I précédente et encadrée ; la barre de position montre la zone illisible hachurée.</p>
+    <div style="position: relative; height: 150px; border: 1px solid #262D39; border-radius: 6px; overflow: hidden">
+      <dc-import name="Thumbnails" lang="fr" theme="dark" show-range="{{ true }}" corrupt="{{ true }}" hint-size="100%,100%"></dc-import>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1600,"height":1100}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      dialogs: [
+        {case: 'Fichier illisible', led: 'err', title: 'Impossible de lire ce fichier', file: '~/Bureau/capture_0412.ts', body: 'Vous n’avez pas les droits de lecture sur ce fichier. Demandez l’accès à son propriétaire ou copiez-le dans un dossier qui vous appartient.', detail: 'open(): EACCES (permission refusée) · propriétaire : ingest:video · mode 0640', secondary: 'Fermer', primary: 'Choisir un autre fichier…'},
+        {case: 'Format non pris en charge', led: 'warn', title: 'Format non pris en charge pour l’instant', file: '/mnt/nas/archives/interview_master.mxf', body: 'Ce fichier est un conteneur MXF (SMPTE 377M). Cette version analyse les Transport Streams et les flux élémentaires bruts ; le MXF est prévu dans une version ultérieure.', detail: 'Signature détectée : 06 0E 2B 34 02 05 01 01 (MXF partition pack)', secondary: 'Fermer', primary: 'Ouvrir comme ES brut…'},
+        {case: 'Fichier distant inaccessible', led: 'warn', title: 'Le serveur de fichiers ne répond plus', file: '/mnt/nas/ingest/2026-10/DEMO_UHD_20261014_2000.ts', body: 'La lecture s’est interrompue à 2,57 Go. La partie déjà indexée reste disponible ; l’indexation reprendra quand le partage sera de nouveau accessible.', detail: 'read(): EIO après 30 s · partage nas:/ingest (NFS v4.1)', secondary: 'Continuer hors ligne', primary: 'Réessayer'}
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
