@@ -5,8 +5,8 @@ mod common;
 
 use common::{band, check, is_not_decodable, navigator, never, oracle_walk, source, whole};
 use ma_decode::{
-    AuSource, DecodeEvent, DecodeMode, Leading, ModePref, NavConfig, NotDecodable, RapKind,
-    start_for,
+    AuSource, ConvertPath, DecodeEvent, DecodeMode, Leading, ModePref, NavConfig, NotDecodable,
+    RapKind, start_for,
 };
 use ma_ffmpeg::FfmpegFactory;
 use ma_testkit::{manifest, require_vaapi};
@@ -27,16 +27,25 @@ fn oracle_hevc_vaapi() {
     }
     let name = "hevc_720p_main10";
     oracle_walk(name, ModePref::Auto, 50, whole);
-    // Mode réel et transferts : une image convertie = un transfert GPU → RAM pleine résolution.
+    // Mode réel et transferts : une bande 1:1 passe par la VPP (seule la bande est transférée),
+    // l'image entière en 1:1 est un transfert pleine résolution.
     let mut nav = navigator(source(name), ModePref::Auto);
-    let vp = band(manifest(name).dims());
+    let dims = manifest(name).dims();
     for p in [0, 1, 2, 120] {
-        check(&mut nav, name, p, vp, 0);
+        check(&mut nav, name, p, band(dims), 0);
     }
     assert_eq!(nav.mode(), DecodeMode::Hardware);
     let stats = nav.stats().decoder;
     assert!(stats.converted >= 4, "{stats:?}");
-    assert_eq!(stats.full_res_transfers, stats.converted);
+    assert_eq!(stats.path, ConvertPath::VaapiVpp);
+    assert_eq!(stats.full_res_transfers, 0);
+    check(&mut nav, name, 121, whole(dims), 0);
+    let after = nav.stats().decoder;
+    assert_eq!(
+        after.full_res_transfers,
+        after.converted - stats.converted,
+        "{after:?}"
+    );
     assert!(
         nav.take_events()
             .iter()

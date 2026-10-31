@@ -4,15 +4,17 @@ use std::os::raw::c_int;
 use std::path::PathBuf;
 
 use ma_decode::{
-    Codec, DecodeError, DecodeErrorKind, DecodeMode, Decoder, DecoderFactory, DecoderStats,
-    ModePref, Received, Size, Viewport,
+    Codec, ConvertPath, DecodeError, DecodeErrorKind, DecodeMode, Decoder, DecoderFactory,
+    DecoderStats, ModePref, Planes, Received, Size, Viewport,
 };
 use rsmpeg::avcodec::{AVCodec, AVCodecContext};
 use rsmpeg::avutil::{AVFrame, AVHWDeviceContext};
 use rsmpeg::error::RsmpegError;
 use rsmpeg::ffi;
 
-use crate::{hw, packet, planes};
+use crate::cpu_scale::CpuScaler;
+use crate::gpu_scale::GpuScaler;
+use crate::{hw, packet};
 
 /// Fabrique de [`FfmpegDecoder`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -86,6 +88,13 @@ pub struct FfmpegDecoder {
     stats: DecoderStats,
     /// Cause de l'échec d'ouverture VA-API en [`ModePref::Auto`].
     hw_unavailable: Option<String>,
+    /// Chemin de conversion des images VA-API : [`ConvertPath::VaapiVpp`] si le périphérique
+    /// offre la VPP (détecté à l'ouverture), sinon [`ConvertPath::VaapiMapped`].
+    vaapi_path: ConvertPath,
+    /// Réduction et recadrage des images VA-API (VPP).
+    gpu: GpuScaler,
+    /// Réduction et recadrage des images logicielles (libswscale).
+    cpu: CpuScaler,
 }
 
 impl FfmpegDecoder {
@@ -95,6 +104,10 @@ impl FfmpegDecoder {
     fn open(dec: &AVCodec, device: Option<AVHWDeviceContext>) -> Result<Self, DecodeError> {
         let mut ctx = AVCodecContext::new(dec);
         let hw_device = device.is_some();
+        let vaapi_path = match &device {
+            Some(dev) if hw::has_vpp(dev) => ConvertPath::VaapiVpp,
+            _ => ConvertPath::VaapiMapped,
+        };
         if let Some(dev) = device {
             ctx.set_hw_device_ctx(dev);
         }
@@ -119,6 +132,9 @@ impl FfmpegDecoder {
             threads,
             stats: DecoderStats::default(),
             hw_unavailable: None,
+            vaapi_path,
+            gpu: GpuScaler::default(),
+            cpu: CpuScaler::default(),
         })
     }
 
@@ -129,6 +145,48 @@ impl FfmpegDecoder {
     #[must_use]
     pub fn hw_unavailable(&self) -> Option<&str> {
         self.hw_unavailable.as_deref()
+    }
+
+    /// Diagnostic : nombre de graphes de filtres VA-API (VPP) en cache, 4 au plus.
+    #[must_use]
+    pub fn gpu_graphs(&self) -> usize {
+        self.gpu.graphs()
+    }
+
+    /// Force le chemin de conversion des images VA-API : [`ConvertPath::VaapiMapped`] (projection
+    /// et conversion CPU, comme sans VPP) ou [`ConvertPath::VaapiTransfer`] (transfert complet
+    /// puis conversion CPU). Réservé aux tests et aux bancs : par défaut, le chemin est détecté à
+    /// l'ouverture. Tout autre chemin est ignoré.
+    pub fn force_vaapi_path(&mut self, path: ConvertPath) {
+        if matches!(path, ConvertPath::VaapiMapped | ConvertPath::VaapiTransfer) {
+            self.vaapi_path = path;
+        }
+    }
+
+    /// Conversion d'une image VA-API sans VPP : projection en lecture (ou, si elle échoue, ou
+    /// si [`ConvertPath::VaapiTransfer`] est forcé, transfert complet), puis réduction ou
+    /// recadrage par le CPU. La surface entière passe en RAM : compté comme transfert pleine
+    /// résolution.
+    fn convert_without_vpp(
+        &mut self,
+        frame: &AVFrame,
+        vp: &Viewport,
+    ) -> Result<(Planes, ConvertPath), DecodeError> {
+        let mapped = if self.vaapi_path == ConvertPath::VaapiMapped {
+            hw::map_read(frame).ok()
+        } else {
+            None
+        };
+        let (ram, path) = if let Some(m) = mapped {
+            (m, ConvertPath::VaapiMapped)
+        } else {
+            let mut sw = AVFrame::new();
+            sw.hwframe_transfer_data(frame)
+                .map_err(|e| Self::gpu(format!("transfert GPU → RAM : {e}")))?;
+            (sw, ConvertPath::VaapiTransfer)
+        };
+        self.stats.full_res_transfers += 1;
+        Ok((self.cpu.scale(&ram, vp)?, path))
     }
 
     /// Le décodage est matériel, ou peut l'être (aucune image encore vue).
@@ -181,22 +239,19 @@ impl FfmpegDecoder {
                 full.w, full.h
             ),
         })?;
-        if vp.is_reduced() {
-            return Err(DecodeError {
-                kind: DecodeErrorKind::Unsupported,
-                detail: "réduction : Tâche 9".into(),
-            });
-        }
-        let image = if vaapi {
-            let mut sw = AVFrame::new();
-            sw.hwframe_transfer_data(frame)
-                .map_err(|e| Self::gpu(format!("transfert GPU → RAM : {e}")))?;
-            self.stats.full_res_transfers += 1;
-            planes::extract(&sw, vp.region)?
+        // Réduction (8 bits) ou région 1:1 (profondeur native) : seule l'image affichée est
+        // transférée en RAM.
+        let (image, path) = if !vaapi {
+            (self.cpu.scale(frame, &vp)?, ConvertPath::Software)
+        } else if self.vaapi_path == ConvertPath::VaapiVpp {
+            let image = self.gpu.scale(frame, &vp);
+            self.stats.full_res_transfers += std::mem::take(&mut self.gpu.full_res_transfers);
+            (image?, ConvertPath::VaapiVpp)
         } else {
-            planes::extract(frame, vp.region)?
+            self.convert_without_vpp(frame, &vp)?
         };
         self.stats.converted += 1;
+        self.stats.path = path;
         Ok(Received::Frame {
             pts,
             image,

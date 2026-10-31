@@ -12,7 +12,9 @@
 
 #![deny(unsafe_op_in_unsafe_fn, clippy::undocumented_unsafe_blocks)]
 
+mod cpu_scale;
 mod decoder;
+mod gpu_scale;
 mod hw;
 mod packet;
 mod planes;

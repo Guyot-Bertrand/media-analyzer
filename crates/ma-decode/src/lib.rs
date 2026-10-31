@@ -12,8 +12,8 @@ mod types;
 
 pub use blocks::{BlockAttr, BlockKind, BlockNode, BlockTree};
 pub use decoder::{
-    DecodeError, DecodeErrorKind, DecodeEvent, DecodeMode, Decoder, DecoderFactory, DecoderStats,
-    ModePref, Received,
+    ConvertPath, DecodeError, DecodeErrorKind, DecodeEvent, DecodeMode, Decoder, DecoderFactory,
+    DecoderStats, ModePref, Received,
 };
 pub use navigator::{Direction, FrameError, NavConfig, NavStats, Navigator};
 pub use plan::{NotDecodable, start_for};

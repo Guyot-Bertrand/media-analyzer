@@ -27,7 +27,12 @@ fn half(v: usize) -> usize {
 
 /// (octets utiles par ligne, nombre de lignes) de chaque plan d'une image de taille `w` × `h`
 /// (chroma 4:2:0, arrondie vers le haut pour les tailles impaires).
-fn plane_dims(layout: PixelLayout, bps: usize, w: usize, h: usize) -> Vec<(usize, usize)> {
+pub(crate) fn plane_dims(
+    layout: PixelLayout,
+    bps: usize,
+    w: usize,
+    h: usize,
+) -> Vec<(usize, usize)> {
     match layout {
         PixelLayout::Planar8 | PixelLayout::Planar10 => {
             vec![
@@ -44,7 +49,7 @@ fn plane_dims(layout: PixelLayout, bps: usize, w: usize, h: usize) -> Vec<(usize
 
 /// (décalage en octets dans la ligne, première ligne) du point (`x`, `y`) de l'image, `x` et `y`
 /// pairs, dans le plan `plane`.
-fn plane_origin(
+pub(crate) fn plane_origin(
     layout: PixelLayout,
     bps: usize,
     plane: usize,

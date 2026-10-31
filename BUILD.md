@@ -62,6 +62,15 @@ VA-API échouent au lieu d'être sautés. Sans périphérique, ils affichent `VA
 exécuté`, et la couverture de `ma-ffmpeg` est affichée sans être bloquante (avertissement
 `couverture de ma-ffmpeg non garantie : pas de VA-API`).
 
+### Traitement vidéo VA-API (VPP)
+
+La réduction et le recadrage sur le GPU (`scale_vaapi`) demandent l'entrypoint
+`VAProfileNone : VAEntrypointVideoProc` (`vainfo`). Le pilote Intel libre d'Ubuntu
+(`intel-media-va-driver`) ne l'a pas : installer `intel-media-va-driver-non-free` (multiverse) ;
+sous Fedora, `intel-media-driver` de RPM Fusion nonfree. Sans VPP, le moteur reste en décodage
+matériel mais lit la surface entière (`ConvertPath::VaapiMapped`), et les tests VPP de
+`ma-ffmpeg` (PERF.XFER.01) échouent.
+
 ## 4. Outils de test uniquement (non requis pour construire)
 
 - **TSDuck** (oracle TS) : paquet `.deb` / `.rpm` des releases https://github.com/tsduck/tsduck/releases

@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use common::{band, check, navigator, never, quiet_ffmpeg, source, whole};
 use ma_decode::{
-    AuSource, Codec, DecodeErrorKind, DecodeEvent, DecodeMode, Decoder, DecoderFactory, FrameError,
-    ModePref, PictureType, PixelLayout, Received, Rect, Size, Viewport,
+    AuSource, Codec, ConvertPath, DecodeErrorKind, DecodeEvent, DecodeMode, Decoder,
+    DecoderFactory, FrameError, ModePref, PictureType, PixelLayout, Received, Rect, Size, Viewport,
 };
 use ma_ffmpeg::{FfmpegFactory, MAX_AU_BYTES, vaapi_available};
 use ma_testkit::{CorruptingSource, TsAuSource, corpus_file, manifest, require_vaapi};
@@ -153,39 +153,55 @@ fn native_layout_and_byte_strides() {
             .collect();
         assert_eq!(got, expected, "{name} {pref:?}");
         assert_eq!(d.stats().converted, 1);
-        let transfers = u64::from(pref == ModePref::Auto);
-        assert_eq!(d.stats().full_res_transfers, transfers);
+        // Région plus petite que l'image : VPP en VA-API, aucun transfert pleine résolution.
+        assert_eq!(d.stats().full_res_transfers, 0);
+        let path = if pref == ModePref::Auto {
+            ConvertPath::VaapiVpp
+        } else {
+            ConvertPath::Software
+        };
+        assert_eq!(d.stats().path, path);
     }
 }
 
+/// Viewport réduit : image rendue, sans transfert pleine résolution ; viewport hors de l'image :
+/// `Unsupported` (R7), sans transfert.
 #[test]
-fn reduced_or_empty_viewport_is_unsupported() {
+fn reduced_viewport_is_rendered_and_empty_is_unsupported() {
     let src = source("h264_720p_closed");
     let full = Size { w: 1280, h: 720 };
     let mut prefs = vec![ModePref::SoftwareOnly];
     if require_vaapi() {
         prefs.push(ModePref::Auto);
     }
+    let reduced = Viewport::fit(full, Size { w: 640, h: 360 });
+    let outside = Viewport::region_1to1(
+        full,
+        Rect {
+            x: 2000,
+            y: 0,
+            w: 10,
+            h: 10,
+        },
+    );
     for pref in prefs {
-        let reduced = Viewport::fit(full, Size { w: 640, h: 360 });
-        let outside = Viewport::region_1to1(
-            full,
-            Rect {
-                x: 2000,
-                y: 0,
-                w: 10,
-                h: 10,
-            },
-        );
-        for (vp, needle) in [(reduced, "réduction"), (outside, "viewport")] {
+        for vp in [reduced, outside] {
             let mut d = open(Codec::H264, pref);
             let mut buf = Vec::new();
             src.read_au(0, &mut buf).unwrap();
             d.send(src.entry(0).unwrap().pts, &buf).unwrap();
             d.send_eof().unwrap();
-            let err = d.receive(&|_| Some(vp)).unwrap_err();
-            assert_eq!(err.kind, DecodeErrorKind::Unsupported, "{pref:?} {err}");
-            assert!(err.detail.contains(needle), "{err}");
+            let r = d.receive(&|_| Some(vp));
+            if vp == reduced {
+                let Ok(Received::Frame { image, .. }) = r else {
+                    panic!("{pref:?} : image attendue, {r:?}");
+                };
+                assert_eq!(image.size, Size { w: 640, h: 360 });
+            } else {
+                let err = r.unwrap_err();
+                assert_eq!(err.kind, DecodeErrorKind::Unsupported, "{pref:?} {err}");
+                assert!(err.detail.contains("viewport"), "{err}");
+            }
             assert_eq!(d.stats().full_res_transfers, 0, "aucun transfert inutile");
         }
     }

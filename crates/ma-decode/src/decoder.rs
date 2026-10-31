@@ -53,13 +53,33 @@ pub enum Received {
     },
 }
 
-/// Compteurs d'un décodeur.
+/// Chemin de conversion (réduction, recadrage, transfert en RAM) d'une image décodée.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ConvertPath {
+    /// Aucune image convertie.
+    #[default]
+    Unknown,
+    /// Image logicielle, convertie en RAM.
+    Software,
+    /// VA-API avec traitement vidéo (VPP) : réduction et recadrage sur le GPU, seule l'image
+    /// affichée est transférée en RAM.
+    VaapiVpp,
+    /// VA-API sans VPP (pilote qui ne l'offre pas) : surface entière projetée en lecture
+    /// (`av_hwframe_map`), réduite ou recadrée par le CPU. Mode dégradé : pas de repli logiciel.
+    VaapiMapped,
+    /// VA-API sans VPP ni projection : transfert complet de la surface, puis conversion CPU.
+    VaapiTransfer,
+}
+
+/// Compteurs et diagnostic d'un décodeur.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DecoderStats {
     /// Images converties vers la sortie demandée.
     pub converted: u64,
-    /// Transferts GPU vers RAM en pleine résolution.
+    /// Transferts (ou projections) GPU vers RAM d'une image en pleine résolution.
     pub full_res_transfers: u64,
+    /// Chemin de conversion de la dernière image convertie.
+    pub path: ConvertPath,
 }
 
 /// Décodeur d'un flux d'unités d'accès.
@@ -121,5 +141,6 @@ mod tests {
     fn stats_default_is_zero() {
         assert_eq!(DecoderStats::default().converted, 0);
         assert_eq!(DecoderStats::default().full_res_transfers, 0);
+        assert_eq!(DecoderStats::default().path, ConvertPath::Unknown);
     }
 }
