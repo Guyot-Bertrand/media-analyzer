@@ -50,8 +50,11 @@ un intervalle de 0 puis 200 ms, appliqué aussi après le placement ; le premier
 placement est publié à part (`first_ms`). Chaque image est vérifiée par son numéro incrusté relu
 sur le canvas (en 1:1 sur une image UHD, seuls les 8 bits de poids faible sont dans la région).
 Résultats : `target/bench/ui-<affichage>-<fichier>-<mode>-<horodatage>.json` à la racine du dépôt,
-avec le mode réel (décodage et chemin de conversion) et la somme des RSS des processus de
-l'application (processus WebKit compris).
+avec le mode réel (décodage et chemin de conversion, avant et après chaque série), le layout des
+images par série, la somme des RSS et des PSS (`smaps_rollup`) des processus de l'application
+(processus WebKit compris), le moteur WebGL (masqué par WebKitGTK : « Apple GPU ») avec, par
+processus, la présence d'un nœud `/dev/dri/renderD*` ouvert, et `complete` (toutes les séries
+passées).
 
 ## Interface
 
@@ -61,5 +64,6 @@ l'application (processus WebKit compris).
   `TypeError`). En-têtes `x-backend-ms`, `x-pres`, `x-corrupt`.
 - `window.bench` : `open(path, mode)`, `goto(n)`, `step(±1)`, `setView('fit'|'1to1')`,
   `lastTiming()` (`total` = demande → `gl.finish` après `drawArrays`, `fetch`, `draw`, `backend`,
-  `bytes`), `stats()`, `rss()`. Une seule demande en vol : une commande pendant une autre échoue.
+  `bytes`), `stats()`, `rss()`, `renderer()`. Une panique côté Rust en servant une image revient
+  en enveloppe `MAE1`. Une seule demande en vol : une commande pendant une autre échoue.
 - Les durées viennent de `performance.now()`, arrondi à la milliseconde par WebKitGTK.

@@ -62,6 +62,7 @@ export interface Bench {
   current(): number | null;
   info(): OpenInfo | null;
   stats(): Promise<unknown>;
+  renderer(): { renderer: string; unmasked: string | null; vendor: string };
   rss(): Promise<unknown>;
 }
 
@@ -126,7 +127,8 @@ async function show(pres: number): Promise<Shown> {
     const mask = read?.mask ?? 0;
     status.textContent = `${info.name} · image ${pres} / ${info.frames - 1} · ${view} · ${f.width}×${f.height} · ${last.total.toFixed(1)} ms`;
     return {
-      pres,
+      // Numéro servi par le moteur (en-tête x-pres), comparé au numéro demandé par le test.
+      pres: Number(res.headers.get("x-pres") ?? Number.NaN),
       code: read?.code ?? null,
       mask,
       expected: (pres % info.code_modulo) & mask,
@@ -169,6 +171,7 @@ window.bench = {
   info: () => info,
   stats: () => invoke("engine_stats"),
   rss: () => invoke("rss"),
+  renderer: () => renderer.renderer(),
 };
 
 // Lancement à la main : fichier de MA_BENCH_OPEN, flèches gauche/droite, touche V (vue).

@@ -87,11 +87,19 @@ struct ProcessRss {
     pid: u32,
     name: String,
     rss_kib: u64,
+    /// Taille proportionnelle (pages partagées divisées entre les processus), `smaps_rollup`.
+    pss_kib: u64,
+    /// Le processus a un nœud de rendu GPU ouvert (`/dev/dri/renderD*`) : indice de rendu
+    /// matériel, `WebKitGTK` masquant le nom du moteur WebGL.
+    gpu_render_node: bool,
 }
 
 #[derive(Serialize)]
 struct RssReport {
+    /// Somme des `VmRSS` (les pages partagées sont comptées dans chaque processus).
     total_kib: u64,
+    /// Somme des `Pss` : empreinte sans double compte des pages partagées.
+    pss_total_kib: u64,
     processes: Vec<ProcessRss>,
 }
 
@@ -263,6 +271,16 @@ fn status_kib(status: &str, key: &str) -> Option<u64> {
         .and_then(|v| v.split_whitespace().next()?.parse().ok())
 }
 
+/// Vrai si `pid` a un descripteur ouvert sur un nœud de rendu DRM.
+fn has_render_node(pid: u32) -> bool {
+    std::fs::read_dir(format!("/proc/{pid}/fd"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| std::fs::read_link(e.path()).ok())
+        .any(|t| t.to_string_lossy().starts_with("/dev/dri/renderD"))
+}
+
 /// Mémoire résidente de ce processus et de tous ses descendants (processus `WebKit` compris).
 #[tauri::command]
 fn rss() -> RssReport {
@@ -306,11 +324,17 @@ fn rss() -> RssReport {
                 .trim()
                 .to_owned(),
             rss_kib: status_kib(st, "VmRSS:").unwrap_or(0),
+            pss_kib: std::fs::read_to_string(format!("/proc/{pid}/smaps_rollup"))
+                .ok()
+                .and_then(|r| status_kib(&r, "Pss:"))
+                .unwrap_or(0),
+            gpu_render_node: has_render_node(pid),
         })
         .collect();
     processes.sort_by_key(|p| p.pid);
     RssReport {
         total_kib: processes.iter().map(|p| p.rss_kib).sum(),
+        pss_total_kib: processes.iter().map(|p| p.pss_kib).sum(),
         processes,
     }
 }
@@ -432,7 +456,19 @@ pub fn run() {
             let (path, query) = (uri.path().to_owned(), uri.query().map(str::to_owned));
             // La demande est servie hors du fil principal : le décodage peut prendre du temps.
             std::thread::spawn(move || {
-                responder.respond(frame_response(session.as_deref(), &path, query.as_deref()));
+                // Une panique ne doit pas laisser le `fetch` sans réponse : enveloppe d'erreur.
+                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    frame_response(session.as_deref(), &path, query.as_deref())
+                }))
+                .unwrap_or_else(|e| {
+                    let msg = e
+                        .downcast_ref::<String>()
+                        .cloned()
+                        .or_else(|| e.downcast_ref::<&str>().map(|m| (*m).to_owned()))
+                        .unwrap_or_default();
+                    error_response(&format!("panique en servant {path} : {msg}"))
+                });
+                responder.respond(res);
             });
         })
         .invoke_handler(tauri::generate_handler![
@@ -494,5 +530,6 @@ mod tests {
         let r = rss();
         assert!(r.processes.iter().any(|p| p.pid == std::process::id()));
         assert!(r.total_kib > 0);
+        assert!(r.pss_total_kib > 0 && r.pss_total_kib <= r.total_kib);
     }
 }

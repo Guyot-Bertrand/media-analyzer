@@ -99,6 +99,9 @@ void main() {
   if (r.x < 0 || r.y < 0 || r.x >= dst.z || r.y >= dst.w) { color = vec4(0.0, 0.0, 0.0, 1.0); return; }
   ivec2 p = min(r * texSize / dst.zw, texSize - 1);
   float y = to8(texelFetch(texY, p, 0).r);
+  // Chroma : échantillon co-situé en haut à gauche (p / 2), sans le décalage vertical d'un
+  // demi-pixel de la convention MPEG-2 4:2:0 ; sans effet visible au plus proche voisin (à revoir
+  // en M6 pour un rendu filtré).
   float u; float v;
   if (pixLayout >= 2) {
     uvec2 uv = texelFetch(texU, p / 2, 0).rg;
@@ -206,6 +209,17 @@ export class YuvRenderer {
     gl.uniform2i(this.loc.texSize, f.width, f.height);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.finish();
+  }
+
+  /** Moteur de rendu WebGL (nom démasqué si l'extension existe ; WebKitGTK peut le masquer). */
+  renderer(): { renderer: string; unmasked: string | null; vendor: string } {
+    const gl = this.gl;
+    const ext = gl.getExtension("WEBGL_debug_renderer_info");
+    return {
+      renderer: String(gl.getParameter(gl.RENDERER)),
+      unmasked: ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : null,
+      vendor: String(gl.getParameter(gl.VENDOR)),
+    };
   }
 
   /**

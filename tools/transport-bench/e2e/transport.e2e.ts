@@ -24,6 +24,7 @@ const file = process.env.MA_BENCH_FILE ?? "";
 const mode = (process.env.MA_BENCH_MODE ?? "auto") as "auto" | "sw";
 const display = process.env.MA_BENCH_DISPLAY ?? "inconnu";
 const JUMPS = smoke ? 10 : 100;
+const LAYOUTS = ["Planar8", "Planar10", "SemiPlanar8 (NV12)", "SemiPlanar10 (P010)"];
 const STEPS = smoke ? 10 : 200;
 const INTERVALS = [0, 200];
 /** Graine de engine_bench (xorshift64*), pour tirer les mêmes sauts. */
@@ -119,7 +120,11 @@ interface Series {
   bytes_per_frame: number;
   out: { w: number; h: number };
   layout: number;
+  layout_name: string;
   bits_checked: string;
+  /** Mode avant la série : un repli pendant la série se voit par différence avec `mode`. */
+  mode_before: string;
+  fell_back: boolean;
   decode_mode: string;
   convert_path: string;
   mode: string;
@@ -197,16 +202,19 @@ describe("banc interface du transport d'image", () => {
       bytes_per_frame: Math.round(bytes / Math.max(1, cmds.length)),
       out: last!.out,
       layout: last!.layout,
+      layout_name: LAYOUTS[last!.layout] ?? "inconnu",
       bits_checked: `0x${mask.toString(16)}`,
       decode_mode: after.decode_mode,
       convert_path: after.convert_path,
       mode: after.mode,
+      mode_before: before.mode,
+      fell_back: after.fell_back,
       full_res_transfers: after.full_res_transfers - before.full_res_transfers,
     };
     series.push(s);
     console.log(
       `${name} ${view} ${interval} ms : n ${s.n}, p50 ${s.p50_ms?.toFixed(1)} p95 ${s.p95_ms?.toFixed(1)} max ${s.max_ms?.toFixed(1)}` +
-        ` 1er ${s.first_ms?.toFixed(1) ?? "-"} ms, ${s.mode}, bits ${s.bits_checked}`,
+        ` 1er ${s.first_ms?.toFixed(1) ?? "-"} ms, ${s.mode}, ${s.layout_name}, bits ${s.bits_checked}`,
     );
   }
 
@@ -245,8 +253,10 @@ describe("banc interface du transport d'image", () => {
     if (!info) return;
     const rss = (await browser.execute(async () => window.bench.rss())) as {
       total_kib: number;
-      processes: Array<{ pid: number; name: string; rss_kib: number }>;
+      pss_total_kib: number;
+      processes: Array<{ pid: number; name: string; rss_kib: number; pss_kib: number; gpu_render_node: boolean }>;
     };
+    const renderer = await browser.execute(() => window.bench.renderer());
     const engine = await stats();
     const result = {
       file,
@@ -265,7 +275,14 @@ describe("banc interface du transport d'image", () => {
       vaapi_available: engine.vaapi_available,
       vpp_available: engine.vpp_available,
       full_res_transfers: engine.full_res_transfers,
+      renderer,
+      // WebKitGTK masque le nom du moteur WebGL (« Apple GPU ») : indice par processus ci-dessous.
+      gpu_render_node: Object.fromEntries(rss.processes.map((p) => [p.name, p.gpu_render_node])),
+      // Parcours complet : toutes les séries passées (sinon le JSON porte des séries partielles).
+      complete: series.length === INTERVALS.length * 4,
+      expected_series: INTERVALS.length * 4,
       rss_total_kib: rss.total_kib,
+      pss_total_kib: rss.pss_total_kib,
       rss_processes: rss.processes,
       series,
     };
@@ -273,7 +290,11 @@ describe("banc interface du transport d'image", () => {
     fs.mkdirSync(dir, { recursive: true });
     const out = path.join(dir, `ui-${display}-${info.name}-${mode}${smoke ? "-smoke" : ""}-${Date.now()}.json`);
     fs.writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);
-    console.log(`RSS (somme de ${rss.processes.length} processus) : ${Math.round(rss.total_kib / 1024)} Mo ; mode ${engine.mode}`);
+    console.log(
+      `RSS (somme de ${rss.processes.length} processus) : ${Math.round(rss.total_kib / 1024)} Mo, PSS ${Math.round(rss.pss_total_kib / 1024)} Mo ; ` +
+        `mode ${engine.mode} ; rendu ${renderer.unmasked ?? renderer.renderer} ; nœud DRM ` +
+        rss.processes.map((p) => `${p.name}=${p.gpu_render_node ? "oui" : "non"}`).join(" "),
+    );
     console.log(`résultats : ${out}`);
   });
 });
