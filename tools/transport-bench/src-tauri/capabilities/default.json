@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "Permissions de la fenêtre unique du banc",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

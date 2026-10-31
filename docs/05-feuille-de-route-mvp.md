@@ -26,6 +26,14 @@
 
 **Parallélisation possible** : après M0, M1 et M2 sont indépendants. Après M2, M3 et M4 aussi. M6 peut démarrer sur le mock dès que le contrat `api` est fixé, au début de M5.
 
+## État
+
+| # | État |
+|---|---|
+| **M0** | Terminé, fusionné ; référentiel d'exigences MVP validé (point de passage n° 1). |
+| **M1** | Implémenté (branche `mvp/m1-transport-image`) ; mesures dans `06-mesures-m1.md`. Point de passage n° 2 franchi le 2026-10-31 : *go*, avec PERF.STEP.02 précisée (options 1 et 2 de `06` §5). |
+| M2 à M7 | À faire. M3 à M7 ne démarrent pas avant la décision du point de passage n° 2. |
+
 ## Points de passage avec le porteur du projet
 
 1. **Fin de M0** : validation du **référentiel d'exigences MVP** (liste, critères d'acceptation, niveaux de test).

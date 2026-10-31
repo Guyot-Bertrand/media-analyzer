@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "xtask"]
-exclude = ["spike"]
+exclude = ["spike", "tools/transport-bench"]
 
 [workspace.package]
 edition = "2024"

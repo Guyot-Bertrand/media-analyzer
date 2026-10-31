@@ -43,9 +43,10 @@
   domain: TRANS
   lot: MVP
   acceptance:
-    - Sur 200 pas consécutifs vers l'arrière, le p95 est inférieur à 100 ms et le maximum inférieur à 250 ms.
+    - Sur 200 pas consécutifs vers l'arrière, à raison d'un pas toutes les 200 ms au plus vite, le p95 est inférieur à 100 ms et le maximum inférieur à 250 ms.
+    - Le premier pas vers l'arrière qui suit un saut est exclu de cette série. Il relève du seuil du saut (PERF.SEEK.01) et affiche le même indicateur d'attente.
   levels: [e2e]
-  source: 02 §8 ; 04 §1 (condition 2), §2.1
+  source: 02 §8 ; 04 §1 (condition 2), §2.1 ; 06 §5 (décision du porteur du 2026-10-31, options 1 et 2)
   status: validated
 
 - id: PERF.XFER.01
@@ -70,7 +71,7 @@
     - Une demande explicite pendant un préchargement est servie en priorité.
   levels: [unit]
   source: 04 §1 (condition 2), §4.2
-  status: validated
+  status: implemented
 
 - id: PERF.MEM.01
   title: Mémoire inférieure à 2 Go

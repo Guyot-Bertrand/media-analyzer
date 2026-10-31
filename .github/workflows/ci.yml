@@ -19,7 +19,8 @@ jobs:
           sudo apt-get install -y build-essential curl wget file pkg-config clang libclang-dev mold \
             libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
-            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libva-dev
+            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev libavdevice-dev \
+            libswresample-dev libva-dev ffmpeg
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy, llvm-tools-preview
@@ -42,14 +43,29 @@ jobs:
       - name: Dépendances système (BUILD.md)
         run: |
           dnf install -y https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm
-          dnf install -y gcc gcc-c++ curl wget file pkgconf-pkg-config clang clang-devel mold git tar \
+          # --allowerasing : les paquets RPM Fusion remplacent ffmpeg-free s'il est présent.
+          dnf install -y --allowerasing gcc gcc-c++ curl wget file pkgconf-pkg-config clang clang-devel mold git tar \
             webkit2gtk4.1-devel gtk3-devel libsoup3-devel javascriptcoregtk4.1-devel \
-            libxdo-devel openssl-devel libappindicator-gtk3-devel librsvg2-devel ffmpeg-devel libva-devel
+            libxdo-devel openssl-devel libappindicator-gtk3-devel librsvg2-devel ffmpeg-devel libva-devel \
+            ffmpeg
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      - run: cargo build --workspace
-      - run: cargo nextest run --workspace
+      - name: Feature FFmpeg selon libavcodec (comme cargo xtask ci)
+        run: |
+          major=$(pkg-config --modversion libavcodec | cut -d. -f1)
+          case "$major" in
+            60) f=ffmpeg6 ;;
+            61) f=ffmpeg7 ;;
+            62) f=ffmpeg8 ;;
+            *) echo "libavcodec $major non prise en charge (60, 61 ou 62 attendue)"; exit 1 ;;
+          esac
+          echo "libavcodec $(pkg-config --modversion libavcodec) => $f"
+          echo "FFMPEG_FEATURE=ma-ffmpeg/$f" >> "$GITHUB_ENV"
+      - run: cargo build --workspace --features "$FFMPEG_FEATURE"
+      - name: Corpus de test (ffmpeg de RPM Fusion, avec libx264 et libx265)
+        run: cargo xtask corpus gen
+      - run: cargo nextest run --workspace --features "$FFMPEG_FEATURE"

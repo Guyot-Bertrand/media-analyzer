@@ -1,6 +1,7 @@
 //! Outillage du dépôt : traçabilité exigences ↔ tests, pipeline de vérification locale.
 
 mod ci;
+mod corpus;
 mod matrix;
 mod requirements;
 mod results;
@@ -22,11 +23,29 @@ struct Cli {
 enum Cmd {
     /// Génère la matrice de traçabilité et applique la garde.
     Trace(TraceArgs),
+    /// Corpus de test généré (numéro d'image incrusté).
+    Corpus {
+        #[command(subcommand)]
+        cmd: CorpusCmd,
+    },
     /// Enchaîne toutes les vérifications de la CI.
     Ci {
         /// Applique aussi la garde de livraison de la traçabilité.
         #[arg(long)]
         release: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum CorpusCmd {
+    /// Génère les fichiers manquants du corpus (`corpus/manifest.toml`).
+    Gen {
+        /// Génère aussi les fichiers volumineux (`uhd_big`, ≥ 4 Go).
+        #[arg(long)]
+        big: bool,
+        /// Dossier de sortie (défaut : `$MA_CORPUS_DIR` ou `~/media-analyzer-corpus/generated`).
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
 }
 
@@ -113,6 +132,12 @@ fn trace(args: &TraceArgs) -> anyhow::Result<bool> {
 fn main() -> anyhow::Result<ExitCode> {
     let ok = match Cli::parse().cmd {
         Cmd::Trace(args) => trace(&args)?,
+        Cmd::Corpus {
+            cmd: CorpusCmd::Gen { big, out },
+        } => {
+            corpus::generate(&repo_root(), big, out)?;
+            true
+        }
         Cmd::Ci { release } => ci::run(&repo_root(), release)?,
     };
     Ok(if ok {

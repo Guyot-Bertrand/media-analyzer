@@ -1,0 +1,34 @@
+[package]
+name = "transport-bench"
+description = "Banc interface du transport d'image (Tauri + WebGL2) : mesure côté interface, hors CI"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+# Hors workspace (exclu dans le Cargo.toml racine) : ses dépendances Tauri ne passent pas par
+# `cargo deny` du dépôt et ne ralentissent pas `cargo xtask ci`.
+
+[lib]
+name = "transport_bench_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.5", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ma-decode = { path = "../../../crates/ma-decode" }
+ma-ffmpeg = { path = "../../../crates/ma-ffmpeg" }
+# Source d'AU sur TS réservée aux tests et aux bancs (hypothèse « 1 PES = 1 AU »).
+ma-testkit = { path = "../../../crates/ma-testkit" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
