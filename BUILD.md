@@ -69,9 +69,11 @@ La réduction et le recadrage sur le GPU (`scale_vaapi`) demandent l'entrypoint
 (`intel-media-va-driver`) ne l'a pas : installer `intel-media-va-driver-non-free` (multiverse) ;
 sous Fedora, `intel-media-driver` de RPM Fusion nonfree. Sans VPP, le moteur reste en décodage
 matériel mais lit la surface entière (`ConvertPath::VaapiMapped`). Les tests de `ma-ffmpeg` qui
-demandent la VPP (dont PERF.XFER.01) affichent alors `VPP VA-API absente : test non exécuté`, ou
-échouent si `MA_REQUIRE_GPU=1` (fixé par `cargo xtask ci` dès qu'un périphérique existe : sur
-une machine VA-API sans VPP, lancer les tests à la main ou installer le pilote non libre).
+demandent la VPP (dont PERF.XFER.01) affichent alors `VPP VA-API absente : test non exécuté`,
+sauf si `MA_REQUIRE_VPP=1` (alors ils échouent). `cargo xtask ci` fixe `MA_REQUIRE_GPU=1` dès qu'un
+périphérique existe, et `MA_REQUIRE_VPP=1` seulement si `vainfo` annonce `VAEntrypointVideoProc`
+(`vainfo` absent : VPP non détectée) ; il affiche le mode retenu. Sans VPP, la couverture de
+`ma-ffmpeg` n'est pas bloquante (avertissement).
 
 ## 4. Outils de test uniquement (non requis pour construire)
 

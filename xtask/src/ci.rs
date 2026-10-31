@@ -75,8 +75,14 @@ pub fn has_render_node<I: IntoIterator<Item = String>>(names: I) -> bool {
     names.into_iter().any(|n| n.starts_with("renderD"))
 }
 
-/// Sépare les crates sous le seuil en échecs et en avertissements : sans GPU, la couverture de
-/// `ma-ffmpeg` n'est pas bloquante.
+/// Vrai si la sortie de `vainfo` annonce le traitement vidéo VA-API (VPP), nécessaire à la
+/// réduction sur le GPU.
+pub fn vainfo_has_vpp(vainfo: &str) -> bool {
+    vainfo.contains("VAEntrypointVideoProc")
+}
+
+/// Sépare les crates sous le seuil en échecs et en avertissements : sans GPU complet (VA-API et
+/// VPP), la couverture de `ma-ffmpeg` n'est pas bloquante.
 pub fn split_gpu_exempt(
     below: Vec<(String, Option<f64>)>,
     gpu: bool,
@@ -100,6 +106,13 @@ fn libavcodec_feature() -> anyhow::Result<(String, &'static str)> {
         anyhow::anyhow!("libavcodec {version} non prise en charge (60, 61 ou 62 attendue)")
     })?;
     Ok((version, feature))
+}
+
+/// VPP détectée par `vainfo` (absent ou en échec : non détectée).
+fn vpp_present() -> bool {
+    Command::new("vainfo")
+        .output()
+        .is_ok_and(|o| o.status.success() && vainfo_has_vpp(&String::from_utf8_lossy(&o.stdout)))
 }
 
 fn render_node_present() -> bool {
@@ -153,12 +166,25 @@ pub fn run(root: &Path, release: bool) -> anyhow::Result<bool> {
     let features = format!("ma-ffmpeg/{feature}");
     println!("==> FFmpeg : libavcodec {version} ⇒ feature {feature}");
     let gpu = render_node_present();
-    let env: &[(&str, &str)] = if gpu {
-        println!("==> VA-API : périphérique présent ⇒ MA_REQUIRE_GPU=1");
-        &[("MA_REQUIRE_GPU", "1")]
-    } else {
-        println!("==> VA-API : aucun périphérique /dev/dri/renderD*");
-        &[]
+    let vpp = gpu && vpp_present();
+    let env: &[(&str, &str)] = match (gpu, vpp) {
+        (true, true) => {
+            println!(
+                "==> VA-API : périphérique et VPP présents ⇒ MA_REQUIRE_GPU=1, MA_REQUIRE_VPP=1"
+            );
+            &[("MA_REQUIRE_GPU", "1"), ("MA_REQUIRE_VPP", "1")]
+        }
+        (true, false) => {
+            println!(
+                "==> VA-API : périphérique présent, VPP non détectée (vainfo) ⇒ MA_REQUIRE_GPU=1, \
+                 tests VPP sautés"
+            );
+            &[("MA_REQUIRE_GPU", "1")]
+        }
+        _ => {
+            println!("==> VA-API : aucun périphérique /dev/dri/renderD*");
+            &[]
+        }
     };
     let steps: Vec<(&str, Vec<&str>)> = vec![
         ("formatage", vec!["fmt", "--check"]),
@@ -205,9 +231,9 @@ pub fn run(root: &Path, release: bool) -> anyhow::Result<bool> {
         println!("    {name} : {pct:.1} %");
     }
     let below = crates_below(&cov, COVERAGE_THRESHOLD, &engine_crates(root));
-    let (below, warned) = split_gpu_exempt(below, gpu);
+    let (below, warned) = split_gpu_exempt(below, vpp);
     if warned {
-        eprintln!("avertissement : couverture de ma-ffmpeg non garantie : pas de VA-API");
+        eprintln!("avertissement : couverture de ma-ffmpeg non garantie : pas de VA-API avec VPP");
     }
     if !below.is_empty() {
         for (name, pct) in below {
@@ -278,6 +304,15 @@ SF:/repo/xtask/src/main.rs\nLF:10\nLH:0\nend_of_record\n";
         assert!(has_render_node(names(&["by-path", "card0", "renderD128"])));
         assert!(!has_render_node(names(&["by-path", "card0"])));
         assert!(!has_render_node(Vec::new()));
+    }
+
+    #[test]
+    fn vpp_is_detected_in_vainfo_output() {
+        let with = "VAProfileNone                   :\tVAEntrypointVideoProc\n";
+        let without = "VAProfileHEVCMain10             :\tVAEntrypointVLD\n";
+        assert!(vainfo_has_vpp(with));
+        assert!(!vainfo_has_vpp(without));
+        assert!(!vainfo_has_vpp(""));
     }
 
     #[test]

@@ -10,8 +10,8 @@ use ma_decode::{
 use ma_ffmpeg::{FfmpegFactory, vaapi_has_vpp};
 use ma_testkit::{TsAuSource, corpus_file, manifest, read_frame_code, require_vaapi};
 
-/// Garde de la VPP (R14) : `true` si `has_vpp`. Sinon affiche `VPP VA-API absente : test non
-/// exécuté` et rend `false`, sauf si `required` (alors le test échoue).
+/// Garde de la VPP (R14, R16) : `true` si `has_vpp`. Sinon affiche `VPP VA-API absente : test non
+/// exécuté` et rend `false`, sauf si `required` (`MA_REQUIRE_VPP=1` : alors le test échoue).
 ///
 /// # Panics
 /// Si `required` et `!has_vpp`.
@@ -21,22 +21,23 @@ pub fn vpp_gate(has_vpp: bool, required: bool) -> bool {
     }
     assert!(
         !required,
-        "VPP VA-API absente alors que MA_REQUIRE_GPU=1 (pilote iHD libre ? voir BUILD.md)"
+        "VPP VA-API absente alors que MA_REQUIRE_VPP=1 (pilote iHD libre ? voir BUILD.md)"
     );
     eprintln!("VPP VA-API absente : test non exécuté");
     false
 }
 
-/// `MA_REQUIRE_GPU=1`.
-pub fn gpu_required() -> bool {
-    std::env::var("MA_REQUIRE_GPU").is_ok_and(|v| v == "1")
+/// `MA_REQUIRE_VPP=1` (fixé par `cargo xtask ci` quand `vainfo` annonce la VPP).
+pub fn vpp_required() -> bool {
+    std::env::var("MA_REQUIRE_VPP").is_ok_and(|v| v == "1")
 }
 
 /// Garde des tests (ou des cas) qui demandent la VPP VA-API : périphérique présent
-/// ([`require_vaapi`]) et traitement vidéo offert.
+/// ([`require_vaapi`]) et traitement vidéo offert. Sans VPP, le test est sauté, sauf si
+/// `MA_REQUIRE_VPP=1`.
 pub fn require_vpp() -> bool {
     quiet_ffmpeg();
-    require_vaapi() && vpp_gate(vaapi_has_vpp(None), gpu_required())
+    require_vaapi() && vpp_gate(vaapi_has_vpp(None), vpp_required())
 }
 
 pub fn never() -> bool {

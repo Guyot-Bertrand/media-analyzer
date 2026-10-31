@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use common::{gpu_required, quiet_ffmpeg, require_vpp, vpp_gate};
+use common::{quiet_ffmpeg, require_vpp, vpp_gate, vpp_required};
 use ma_decode::{
     AuSource, ConvertPath, DecodeMode, Decoder, ModePref, PixelLayout, Planes, Received, Rect,
     Size, Viewport,
@@ -520,7 +520,8 @@ fn one_to_one_and_reduction_of_equal_output_use_distinct_graphs() {
     assert_eq!(d.stats().full_res_transfers, 0);
 }
 
-/// R14 : sans VPP, un test qui la demande est sauté, sauf si `MA_REQUIRE_GPU=1`. Le chemin sans
+/// R14, R16 : sans VPP, un test qui la demande est sauté, sauf si `MA_REQUIRE_VPP=1`
+/// (`MA_REQUIRE_GPU=1` seul ne suffit pas : machine VA-API au pilote libre). Le chemin sans
 /// VPP est forcé quand un périphérique existe (la machine de référence a la VPP).
 #[test]
 fn vpp_guard_skips_without_vpp() {
@@ -538,9 +539,13 @@ fn vpp_guard_skips_without_vpp() {
     );
     assert!(vpp_gate(true, true));
     let required = std::panic::catch_unwind(|| vpp_gate(false, true));
-    assert!(required.is_err(), "MA_REQUIRE_GPU=1 : le test échoue");
+    assert!(required.is_err(), "MA_REQUIRE_VPP=1 : le test échoue");
+    // Le garde du test suit `MA_REQUIRE_VPP`, et non `MA_REQUIRE_GPU`.
+    if !vpp_required() {
+        assert!(!vpp_gate(path == ConvertPath::VaapiVpp, vpp_required()));
+    }
     // Cohérence avec la détection publique.
-    if require_vaapi() && gpu_required() {
+    if require_vaapi() && vpp_required() {
         let src = TsAuSource::open(&corpus_file(MAIN10)).unwrap();
         let d = open(&src, ModePref::Auto);
         assert_eq!(
