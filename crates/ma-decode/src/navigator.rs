@@ -35,8 +35,13 @@ pub struct NavConfig {
     /// la cible de plus de `reorder_margin + latency`.
     pub reorder_margin: u32,
     /// Images converties après la cible.
+    ///
+    /// Ne s'applique qu'aux images qui sortent du décodeur pendant l'appel (vidage compris) : le
+    /// navigateur s'arrête dès la cible obtenue, pour un pas aussi court que possible. Le
+    /// préchargement des images suivantes relève de `FrameService` (Tâche 6).
     pub keep_ahead: u32,
-    /// Images converties avant la cible, quand la demande est l'image précédente.
+    /// Images converties avant la cible, pour une demande en arrière (image précédente de la
+    /// dernière demande de premier plan, ou préchargement [`Direction::Backward`]).
     pub keep_behind: u32,
 }
 
@@ -67,6 +72,18 @@ pub enum FrameError {
     #[error("viewport invalide : {0}")]
     Viewport(ViewportError),
 }
+
+/// Sens de navigation : choisit la fenêtre d'images converties autour de la cible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Direction {
+    /// Fenêtre `[cible, cible + keep_ahead]`.
+    Forward,
+    /// Fenêtre `[cible - keep_behind, cible]`.
+    Backward,
+}
+
+/// Plus grand nombre de RAP essayés par [`Navigator::probe_size`].
+const PROBE_ATTEMPTS: usize = 8;
 
 /// Compteurs du navigateur.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -170,6 +187,7 @@ pub struct Navigator {
     decoder: Box<dyn Decoder>,
     session: Option<Session>,
     cache: Cache,
+    /// Dernière demande de premier plan ([`Navigator::frame`]).
     last_request: Option<u32>,
     size: Option<Size>,
     events: Vec<DecodeEvent>,
@@ -208,49 +226,70 @@ impl Navigator {
         })
     }
 
-    /// Image `pres_idx` (ordre de présentation) pour le viewport `vp`.
+    /// Demande de premier plan : image `pres_idx` (ordre de présentation) pour le viewport `vp`.
     ///
-    /// Si la taille de l'image est inconnue, elle est d'abord apprise par [`Self::probe_size`].
-    /// Le viewport est ensuite validé contre cette taille, avant tout appel au décodeur ; l'image
-    /// rendue porte le viewport demandé. `cancel` est consulté entre deux AU : s'il renvoie vrai,
-    /// la demande échoue en [`FrameError::Preempted`] et le décodage en cours reste réutilisable.
+    /// Le sens se déduit de la demande de premier plan précédente : `pres_idx` juste avant elle est
+    /// un pas en arrière. Si la taille de l'image est connue, le viewport est validé contre elle
+    /// avant tout appel au décodeur ; sinon il est transmis tel quel (le décodeur le normalise) et
+    /// la taille est apprise sur l'image reçue. L'image rendue porte le viewport demandé.
+    /// `cancel` est consulté entre deux AU : s'il renvoie vrai, la demande échoue en
+    /// [`FrameError::Preempted`] et le décodage en cours reste réutilisable.
     pub fn frame(
         &mut self,
         pres_idx: u32,
         vp: Viewport,
         cancel: &dyn Fn() -> bool,
     ) -> Result<Arc<DecodedFrame>, FrameError> {
-        let len = self.src.len();
-        if pres_idx >= len {
-            return Err(FrameError::OutOfRange { pres_idx, len });
-        }
-        let size = self.probe_size(cancel).map_err(|e| match e {
-            // Aucune image décodable dans le fichier : celle-ci non plus.
-            FrameError::NotDecodable { reason, .. } => {
-                FrameError::NotDecodable { pres_idx, reason }
-            }
-            e => e,
-        })?;
-        vp.normalized(size).map_err(FrameError::Viewport)?;
-        let frame = self.fetch(pres_idx, vp, cancel)?;
+        let backward = self
+            .last_request
+            .is_some_and(|last| pres_idx.checked_add(1) == Some(last));
+        let dir = if backward {
+            Direction::Backward
+        } else {
+            Direction::Forward
+        };
+        let frame = self.request(pres_idx, vp, dir, cancel)?;
         self.last_request = Some(pres_idx);
         Ok(frame)
     }
 
-    /// Taille d'affichage des images ; si elle est inconnue, décode la première image décodable
-    /// avec un viewport minimal.
+    /// Demande de préchargement : comme [`Self::frame`], avec la fenêtre du sens `dir`, sans
+    /// modifier la dernière demande de premier plan.
+    pub fn prefetch_frame(
+        &mut self,
+        pres_idx: u32,
+        vp: Viewport,
+        dir: Direction,
+        cancel: &dyn Fn() -> bool,
+    ) -> Result<Arc<DecodedFrame>, FrameError> {
+        self.request(pres_idx, vp, dir, cancel)
+    }
+
+    /// Taille d'affichage des images ; si elle est inconnue, décode avec un viewport minimal la
+    /// première image décodable, puis, en cas d'échec (hors préemption et erreur de lecture), les
+    /// RAP suivants, dans la limite de 8 essais.
     pub fn probe_size(&mut self, cancel: &dyn Fn() -> bool) -> Result<Size, FrameError> {
         if let Some(size) = self.size {
             return Ok(size);
         }
-        let pres_idx = self.first_decodable()?;
-        self.fetch(pres_idx, PROBE_VIEWPORT, cancel)?;
-        self.size.ok_or_else(|| {
+        let mut last_err = None;
+        for pres_idx in self.probe_candidates()? {
+            match self.fetch(pres_idx, PROBE_VIEWPORT, Direction::Forward, cancel) {
+                Ok(_) => {}
+                Err(e @ (FrameError::Preempted | FrameError::Io(_))) => return Err(e),
+                Err(e) => last_err = Some(e),
+            }
+            // La taille a pu être apprise sur une autre image, même en cas d'échec.
+            if let Some(size) = self.size {
+                return Ok(size);
+            }
+        }
+        Err(last_err.unwrap_or_else(|| {
             FrameError::Decoder(DecodeError {
                 kind: DecodeErrorKind::Internal,
                 detail: "taille d'image inconnue après décodage".into(),
             })
-        })
+        }))
     }
 
     /// Vrai si l'image est en cache pour ce viewport (sans la marquer comme utilisée).
@@ -291,8 +330,9 @@ impl Navigator {
             .and_then(|d| self.src.entry(d))
     }
 
-    /// Image de présentation de la première AU décodable (en ordre de décodage).
-    fn first_decodable(&self) -> Result<u32, FrameError> {
+    /// Images à essayer pour apprendre la taille : la première AU décodable (en ordre de
+    /// décodage), puis les RAP décodables suivants, 8 au plus en tout.
+    fn probe_candidates(&self) -> Result<Vec<u32>, FrameError> {
         let len = self.src.len();
         let not_decodable = |reason| FrameError::NotDecodable {
             pres_idx: 0,
@@ -304,25 +344,51 @@ impl Navigator {
         let first_rap = (0..len)
             .find(|&d| self.src.entry(d).is_some_and(|e| e.rap != RapKind::None))
             .ok_or(not_decodable(NotDecodable::BeforeFirstRap))?;
-        (first_rap..len)
-            .find_map(|d| {
-                start_for(&*self.src, d).ok()?;
-                self.src.entry(d).map(|e| e.pres_idx)
-            })
-            .ok_or(not_decodable(NotDecodable::LeadingOfFirstRap))
+        let decodable = |d: u32| {
+            start_for(&*self.src, d).ok()?;
+            self.src.entry(d)
+        };
+        let first = (first_rap..len)
+            .find_map(decodable)
+            .ok_or(not_decodable(NotDecodable::LeadingOfFirstRap))?;
+        let next_raps = (first.decode_idx + 1..len)
+            .filter_map(decodable)
+            .filter(|e| e.rap != RapKind::None);
+        Ok(std::iter::once(first)
+            .chain(next_raps)
+            .take(PROBE_ATTEMPTS)
+            .map(|e| e.pres_idx)
+            .collect())
+    }
+
+    /// Demande validée (numéro d'image, viewport), servie par [`Self::fetch`].
+    fn request(
+        &mut self,
+        pres_idx: u32,
+        vp: Viewport,
+        dir: Direction,
+        cancel: &dyn Fn() -> bool,
+    ) -> Result<Arc<DecodedFrame>, FrameError> {
+        let len = self.src.len();
+        if pres_idx >= len {
+            return Err(FrameError::OutOfRange { pres_idx, len });
+        }
+        // Taille inconnue : seuls les viewports vides sont détectables ici.
+        let bound = self.size.unwrap_or(Size {
+            w: u32::MAX,
+            h: u32::MAX,
+        });
+        vp.normalized(bound).map_err(FrameError::Viewport)?;
+        self.fetch(pres_idx, vp, dir, cancel)
     }
 
     /// `pts` → image des images à convertir : fenêtre autour de la cible, hors images déjà en
     /// cache (la cible y est toujours).
-    fn window(&self, target: u32, vp: Viewport) -> HashMap<i64, u32> {
+    fn window(&self, target: u32, vp: Viewport, dir: Direction) -> HashMap<i64, u32> {
         let last = self.src.len().saturating_sub(1);
-        let backward = self
-            .last_request
-            .is_some_and(|last| target.checked_add(1) == Some(last));
-        let (lo, hi) = if backward {
-            (target.saturating_sub(self.cfg.keep_behind), target)
-        } else {
-            (target, target.saturating_add(self.cfg.keep_ahead).min(last))
+        let (lo, hi) = match dir {
+            Direction::Backward => (target.saturating_sub(self.cfg.keep_behind), target),
+            Direction::Forward => (target, target.saturating_add(self.cfg.keep_ahead).min(last)),
         };
         (lo..=hi)
             .filter(|&p| p == target || !self.cache.contains(&(p, vp)))
@@ -335,6 +401,7 @@ impl Navigator {
         &mut self,
         pres_idx: u32,
         vp: Viewport,
+        dir: Direction,
         cancel: &dyn Fn() -> bool,
     ) -> Result<Arc<DecodedFrame>, FrameError> {
         if let Some(frame) = self.cache.get(&(pres_idx, vp)) {
@@ -347,12 +414,14 @@ impl Navigator {
             .ok_or(FrameError::OutOfRange { pres_idx, len })?;
         let start = start_for(&*self.src, target.decode_idx)
             .map_err(|reason| FrameError::NotDecodable { pres_idx, reason })?;
-        let wanted = self.window(pres_idx, vp);
-        for retry in [false, true] {
-            match self.attempt(&target, start, vp, &wanted, retry, cancel)? {
-                Outcome::Found(frame) => return Ok(frame),
-                Outcome::Missing { corrupt: Some(e) } => return Err(FrameError::Decoder(e)),
-                Outcome::Missing { corrupt: None } => {}
+        let wanted = self.window(pres_idx, vp, dir);
+        // Un seul nouvel essai, depuis le RAP, et seulement si le premier poursuivait un décodage.
+        for restart in [false, true] {
+            match self.attempt(&target, start, vp, &wanted, restart, cancel)? {
+                (Outcome::Found(frame), _) => return Ok(frame),
+                (Outcome::Missing { corrupt: Some(e) }, _) => return Err(FrameError::Decoder(e)),
+                (Outcome::Missing { corrupt: None }, true) => {}
+                (Outcome::Missing { corrupt: None }, false) => break,
             }
         }
         Err(FrameError::Decoder(DecodeError {
@@ -362,7 +431,8 @@ impl Navigator {
     }
 
     /// Un essai : poursuit le décodage en cours si possible (jamais si `restart`), sinon repart de
-    /// `start`. Une erreur du décodeur autre que `InvalidData` abandonne le décodage en cours.
+    /// `start`. Rend aussi vrai si le décodage en cours a été poursuivi. Une erreur du décodeur
+    /// autre que `InvalidData` abandonne le décodage en cours.
     fn attempt(
         &mut self,
         target: &FrameEntry,
@@ -371,7 +441,8 @@ impl Navigator {
         wanted: &HashMap<i64, u32>,
         restart: bool,
         cancel: &dyn Fn() -> bool,
-    ) -> Result<Outcome, FrameError> {
+    ) -> Result<(Outcome, bool), FrameError> {
+        let len = self.src.len();
         let limit = target
             .decode_idx
             .saturating_add(self.cfg.reorder_margin)
@@ -380,20 +451,22 @@ impl Navigator {
             s.start <= start
                 && (start..=limit).contains(&s.next)
                 && !s.drained
+                // Après `send_eof`, aucune AU ne peut plus être envoyée.
+                && (!s.eof_sent || s.next >= len)
                 && s.last_out.is_none_or(|pts| pts < target.pts)
         };
-        let mut session = match self.session.take() {
-            Some(s) if !restart && reusable(&s) => s,
+        let (mut session, reused) = match self.session.take() {
+            Some(s) if !restart && reusable(&s) => (s, true),
             _ => {
                 self.decoder.reset();
-                Session::new(start)
+                (Session::new(start), false)
             }
         };
         let r = self.run(&mut session, target, limit, vp, wanted, cancel);
         if !matches!(r, Err(FrameError::Decoder(_))) {
             self.session = Some(session);
         }
-        r
+        r.map(|outcome| (outcome, reused))
     }
 
     fn run(
@@ -453,7 +526,7 @@ impl Navigator {
             if s.drained {
                 return Ok(missing(s));
             }
-            if s.next <= limit && s.next < len {
+            if !s.eof_sent && s.next <= limit && s.next < len {
                 if cancel() {
                     return Err(FrameError::Preempted);
                 }
@@ -495,6 +568,8 @@ mod tests {
     use std::cell::Cell;
     use std::collections::HashSet;
     use std::io;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::Ordering::SeqCst;
 
     use super::*;
     use crate::fake::{FAKE_SIZE, FakeFactory, FakeSource, oracle};
@@ -537,30 +612,57 @@ mod tests {
         }
     }
 
+    /// Demande `pres` ; une fois sur trois, d'abord avec un `cancel` vrai après k AU (k < 5),
+    /// puis à nouveau sans préemption.
+    fn get_maybe_preempted(nav: &mut Navigator, rng: &mut Lcg, pres: u32) -> Arc<DecodedFrame> {
+        if rng.below(3) == 0 {
+            let k = rng.below(5);
+            let calls = Cell::new(0);
+            let cancel = || {
+                calls.set(calls.get() + 1);
+                calls.get() > k
+            };
+            match nav.frame(pres, small(), &cancel) {
+                Ok(f) => {
+                    assert_eq!((f.pres_idx, oracle(&f.image)), (pres, Some(pres)));
+                    return f;
+                }
+                Err(e) => assert_eq!(e, FrameError::Preempted),
+            }
+        }
+        get(nav, pres)
+    }
+
     #[ma_trace::covers("NAV.ORACLE.01")]
     #[test]
     fn every_requested_frame_is_the_one_returned() {
-        for src in [
-            FakeSource::closed_gops(20, 24, 2),
-            FakeSource::open_gops(20, 24, 2),
-        ] {
-            let mut nav = nav(&src);
-            let mut rng = Lcg(0x5eed);
-            // Les deux premières images d'un flux ouvert (RASL du premier CRA) sont indécodables.
-            let first = 2;
-            let mut at = first;
-            for _ in 0..50 {
-                at = first + rng.below(src.len() - first);
-                assert!(!get(&mut nav, at).corrupt);
+        for latency in [0, 1, 4] {
+            for src in [
+                FakeSource::closed_gops(20, 24, 2),
+                FakeSource::open_gops(20, 24, 2),
+            ] {
+                let mut nav = nav_with(FakeFactory {
+                    latency,
+                    ..FakeFactory::new(&src)
+                });
+                let mut rng = Lcg(0x5eed);
+                // Les deux premières images d'un flux ouvert (RASL du premier CRA) sont
+                // indécodables.
+                let first = 2;
+                let mut at = first;
+                for _ in 0..50 {
+                    at = first + rng.below(src.len() - first);
+                    assert!(!get_maybe_preempted(&mut nav, &mut rng, at).corrupt);
+                }
+                let at = at.clamp(first + 20, src.len() - 21);
+                for p in at..=at + 20 {
+                    get_maybe_preempted(&mut nav, &mut rng, p);
+                }
+                for p in (at..at + 20).rev() {
+                    get_maybe_preempted(&mut nav, &mut rng, p);
+                }
+                assert_eq!(nav.take_events(), []);
             }
-            let at = at.clamp(first + 20, src.len() - 21);
-            for p in at..=at + 20 {
-                get(&mut nav, p);
-            }
-            for p in (at..at + 20).rev() {
-                get(&mut nav, p);
-            }
-            assert_eq!(nav.take_events(), []);
         }
     }
 
@@ -854,6 +956,22 @@ mod tests {
     }
 
     #[test]
+    fn empty_viewport_is_rejected_before_size_is_known() {
+        let src = FakeSource::closed_gops(2, 24, 2);
+        let mut nav = nav(&src);
+        let empty_out = Viewport {
+            out: Size { w: 0, h: 2 },
+            ..small()
+        };
+        assert_eq!(
+            nav.frame(10, empty_out, &never),
+            Err(FrameError::Viewport(ViewportError::Empty))
+        );
+        assert_eq!(nav.stats().aus_sent, 0);
+        assert_eq!(nav.frame_size(), None);
+    }
+
+    #[test]
     fn huge_config_values_do_not_panic() {
         let src = FakeSource::closed_gops(2, 24, 2);
         let cfg = NavConfig {
@@ -870,22 +988,209 @@ mod tests {
     }
 
     #[test]
-    fn decoder_error_is_reported_and_navigation_restarts() {
+    fn gpu_error_is_reported() {
         let src = FakeSource::closed_gops(4, 24, 2);
         let mut nav = nav_with(FakeFactory {
             hw_fail_after_receives: Some(5),
             ..FakeFactory::new(&src)
         });
-        let err = nav.frame(50, small(), &never).unwrap_err();
+        for _ in 0..2 {
+            let err = nav.frame(50, small(), &never).unwrap_err();
+            assert!(
+                matches!(&err, FrameError::Decoder(e) if e.kind == DecodeErrorKind::Gpu),
+                "{err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn decoder_error_abandons_session_and_restarts_from_rap() {
+        // AU 30 remplacée une seule fois : le décodeur répond `Internal` pendant la demande 35.
+        let src = FakeSource::closed_gops(2, 24, 0);
+        let mut reference = nav(&src);
+        get(&mut reference, 35);
+        let fresh = reference.stats().aus_sent;
+
+        let mut nav = patched(
+            &src,
+            Patched {
+                wrong_au_once: Some(30),
+                ..Patched::default()
+            },
+        );
+        let err = nav.frame(35, small(), &never).unwrap_err();
         assert!(
-            matches!(&err, FrameError::Decoder(e) if e.kind == DecodeErrorKind::Gpu),
+            matches!(&err, FrameError::Decoder(e) if e.kind == DecodeErrorKind::Internal),
             "{err:?}"
         );
+        assert_eq!(nav.stats().aus_sent, 7, "AU 24 à 30");
+        // Le décodage en cours est abandonné : la demande suivante repart de l'IDR 24 et renvoie
+        // l'AU 30, au lieu de continuer à l'AU 31.
+        let before = nav.stats().aus_sent;
+        get(&mut nav, 35);
+        assert_eq!(nav.stats().aus_sent - before, fresh);
+    }
+
+    #[test]
+    fn probe_and_first_frame_survive_a_corrupt_first_rap() {
+        let src = FakeSource::closed_gops(3, 60, 0).with_corrupt(HashSet::from([0]));
+        let factory = FakeFactory {
+            latency: 0,
+            ..FakeFactory::new(&src)
+        };
+        let cfg = NavConfig {
+            reorder_margin: 2,
+            keep_ahead: 0,
+            ..NavConfig::default()
+        };
+        let open = || {
+            Navigator::new(
+                Arc::new(src.clone()),
+                Arc::new(factory.clone()),
+                ModePref::Auto,
+                cfg,
+            )
+            .unwrap()
+        };
+        // Sans sondage : la taille est apprise sur l'image demandée.
+        let mut nav = open();
+        get(&mut nav, 100);
+        assert_eq!(nav.frame_size(), Some(FAKE_SIZE));
+        assert_eq!(nav.probe_size(&never), Ok(FAKE_SIZE));
+        // Le sondage passe au RAP suivant quand le premier est corrompu.
+        let mut nav = open();
+        assert_eq!(nav.probe_size(&never), Ok(FAKE_SIZE));
         assert!(matches!(
-            nav.frame(50, small(), &never),
-            Err(FrameError::Decoder(_))
+            nav.take_events()[..],
+            [DecodeEvent::CorruptAu { decode_idx: 0, .. }]
         ));
-        assert_eq!(err.to_string(), format!("{err}"));
+        // Préemption : remontée telle quelle, sans essayer d'autre RAP.
+        let mut nav = open();
+        let always = || true;
+        assert_eq!(nav.probe_size(&always), Err(FrameError::Preempted));
+        assert_eq!(nav.stats().aus_sent, 0);
+    }
+
+    #[test]
+    fn probe_gives_up_after_eight_raps() {
+        let corrupt: HashSet<u32> = (0..10).map(|g| g * 4).collect();
+        let src = FakeSource::closed_gops(10, 4, 0).with_corrupt(corrupt);
+        let factory = FakeFactory {
+            latency: 0,
+            ..FakeFactory::new(&src)
+        };
+        // Sans fenêtre avant, les images corrompues qui suivent chaque RAP ne sont pas converties.
+        let cfg = NavConfig {
+            keep_ahead: 0,
+            ..NavConfig::default()
+        };
+        let mut nav = Navigator::new(
+            Arc::new(src.clone()),
+            Arc::new(factory),
+            ModePref::Auto,
+            cfg,
+        )
+        .unwrap();
+        let err = nav.probe_size(&never).unwrap_err();
+        assert!(
+            matches!(&err, FrameError::Decoder(e) if e.kind == DecodeErrorKind::InvalidData),
+            "{err:?}"
+        );
+        assert_eq!(nav.frame_size(), None);
+        let raps: Vec<u32> = nav
+            .take_events()
+            .iter()
+            .filter_map(|e| match e {
+                DecodeEvent::CorruptAu { decode_idx, .. } => Some(*decode_idx),
+                DecodeEvent::FellBackToSoftware { .. } => None,
+            })
+            .collect();
+        assert_eq!(raps, (0..8).map(|g| g * 4).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn prefetch_does_not_change_foreground_direction() {
+        let src = FakeSource::closed_gops(3, 60, 2);
+        let mut nav = nav(&src);
+        get(&mut nav, 100);
+        for p in 101..=108 {
+            let f = nav
+                .prefetch_frame(p, small(), Direction::Forward, &never)
+                .unwrap();
+            assert_eq!(oracle(&f.image), Some(p));
+        }
+        // Pas arrière de premier plan : le GOP 60..119 est décodé une fois, jusqu'à 99.
+        let before = nav.stats().aus_sent;
+        get(&mut nav, 99);
+        let sent = nav.stats().aus_sent - before;
+        assert!(sent <= 40 + 4, "{sent} AU pour décoder 60..=99");
+        let (sent, hits) = (nav.stats().aus_sent, nav.stats().cache_hits);
+        get(&mut nav, 98);
+        assert_eq!(nav.stats().aus_sent, sent);
+        assert_eq!(nav.stats().cache_hits, hits + 1);
+        // Préchargement en arrière : fenêtre arrière, sans dernière demande de premier plan.
+        let mut nav = self::nav(&src);
+        nav.prefetch_frame(150, small(), Direction::Backward, &never)
+            .unwrap();
+        assert!(nav.is_cached(150 - NavConfig::default().keep_behind, &small()));
+        assert_eq!(
+            nav.prefetch_frame(500, small(), Direction::Forward, &never),
+            Err(FrameError::OutOfRange {
+                pres_idx: 500,
+                len: 180
+            })
+        );
+    }
+
+    /// GOP fermés hiérarchiques de 9 images (réordonnancement de profondeur 3), sans fichier
+    /// incrusté : présentation dans l'ordre de décodage I0 P8 B4 B2 B1 B3 B6 B5 B7.
+    fn hierarchical(gops: u32) -> FakeSource {
+        let pattern = [0, 8, 4, 2, 1, 3, 6, 5, 7];
+        let entries = (0..gops)
+            .flat_map(|g| pattern.iter().map(move |&p| (g, g * 9 + p)))
+            .zip(0..)
+            .map(|((g, pres_idx), decode_idx)| FrameEntry {
+                decode_idx,
+                pres_idx,
+                pts: i64::from(pres_idx) * crate::fake::PTS_STEP,
+                picture: crate::PictureType::B,
+                rap: if decode_idx == g * 9 {
+                    crate::RapKind::Idr
+                } else {
+                    crate::RapKind::None
+                },
+                leading: crate::Leading::None,
+            })
+            .collect();
+        FakeSource::from_entries(crate::Codec::H264, entries)
+    }
+
+    #[test]
+    fn no_au_is_sent_after_eof() {
+        // Marge nulle, latence nulle : l'image 7 (AU 8) ne sort qu'au vidage, après `send_eof`,
+        // et l'image 8 reste dans le décodeur. L'image 12 exige l'AU 9, jamais envoyée : la session
+        // vidée n'est pas réutilisable, la demande repart de l'IDR 9.
+        let src = hierarchical(3);
+        let factory = FakeFactory {
+            latency: 0,
+            ..FakeFactory::new(&src)
+        };
+        let cfg = NavConfig {
+            reorder_margin: 0,
+            ..NavConfig::default()
+        };
+        let mut nav = Navigator::new(
+            Arc::new(src.clone()),
+            Arc::new(factory),
+            ModePref::Auto,
+            cfg,
+        )
+        .unwrap();
+        get(&mut nav, 7);
+        get(&mut nav, 12);
+        for p in 13..src.len() {
+            get(&mut nav, p);
+        }
     }
 
     #[test]
@@ -919,44 +1224,55 @@ mod tests {
         assert!(matches!(r, Err(e) if e.kind == DecodeErrorKind::Unsupported));
     }
 
-    /// Source qui ment : une AU illisible, ou une image présentée à tort comme un IDR.
+    /// Source qui ment : une AU illisible, une image présentée à tort comme un IDR, ou une AU
+    /// remplacée une fois par la suivante (le décodeur y voit un pts incohérent : `Internal`).
+    #[derive(Default)]
     struct Patched {
-        inner: FakeSource,
+        inner: Option<FakeSource>,
         fail_read: Option<u32>,
         fake_idr: Option<u32>,
+        wrong_au_once: Option<u32>,
+        wrong_au_done: AtomicBool,
+    }
+
+    impl Patched {
+        fn inner(&self) -> &FakeSource {
+            self.inner.as_ref().unwrap()
+        }
     }
 
     impl AuSource for Patched {
         fn codec(&self) -> crate::Codec {
-            self.inner.codec()
+            self.inner().codec()
         }
         fn len(&self) -> u32 {
-            self.inner.len()
+            self.inner().len()
         }
         fn entry(&self, decode_idx: u32) -> Option<FrameEntry> {
-            let mut e = self.inner.entry(decode_idx)?;
+            let mut e = self.inner().entry(decode_idx)?;
             if self.fake_idr == Some(decode_idx) {
                 e.rap = crate::RapKind::Idr;
             }
             Some(e)
         }
         fn decode_idx_of(&self, pres_idx: u32) -> Option<u32> {
-            self.inner.decode_idx_of(pres_idx)
+            self.inner().decode_idx_of(pres_idx)
         }
         fn read_au(&self, decode_idx: u32, buf: &mut Vec<u8>) -> io::Result<()> {
             if self.fail_read == Some(decode_idx) {
                 return Err(io::Error::other("lecture impossible"));
             }
-            self.inner.read_au(decode_idx, buf)
+            if self.wrong_au_once == Some(decode_idx) && !self.wrong_au_done.swap(true, SeqCst) {
+                return self.inner().read_au(decode_idx + 1, buf);
+            }
+            self.inner().read_au(decode_idx, buf)
         }
     }
 
-    fn patched(src: &FakeSource, fail_read: Option<u32>, fake_idr: Option<u32>) -> Navigator {
-        let inner = src.clone();
+    fn patched(src: &FakeSource, patch: Patched) -> Navigator {
         let patched = Patched {
-            inner,
-            fail_read,
-            fake_idr,
+            inner: Some(src.clone()),
+            ..patch
         };
         Navigator::new(
             Arc::new(patched),
@@ -970,7 +1286,13 @@ mod tests {
     #[test]
     fn io_error_is_reported() {
         let src = FakeSource::closed_gops(2, 24, 0);
-        let mut nav = patched(&src, Some(3), None);
+        let mut nav = patched(
+            &src,
+            Patched {
+                fail_read: Some(3),
+                ..Patched::default()
+            },
+        );
         assert_eq!(
             nav.frame(10, small(), &never),
             Err(FrameError::Io("lecture impossible".into()))
@@ -982,7 +1304,13 @@ mod tests {
     fn missing_target_is_retried_once_then_reported() {
         // L'index annonce un IDR en 5 ; pour le décodeur c'est une P sans référence, jamais émise.
         let src = FakeSource::closed_gops(1, 8, 0);
-        let mut nav = patched(&src, None, Some(5));
+        let mut nav = patched(
+            &src,
+            Patched {
+                fake_idr: Some(5),
+                ..Patched::default()
+            },
+        );
         nav.probe_size(&never).unwrap();
         let sent = nav.stats().aus_sent;
         let err = nav.frame(5, small(), &never).unwrap_err();
@@ -990,8 +1318,8 @@ mod tests {
             matches!(&err, FrameError::Decoder(e) if e.kind == DecodeErrorKind::InvalidData),
             "{err:?}"
         );
-        // Deux essais depuis l'image 5 : AU 5, 6 et 7, deux fois.
-        assert_eq!(nav.stats().aus_sent - sent, 6);
+        // Un seul essai : il partait déjà du RAP (supposé) 5, avec un décodeur remis à zéro.
+        assert_eq!(nav.stats().aus_sent - sent, 3);
         get(&mut nav, 4);
     }
 }

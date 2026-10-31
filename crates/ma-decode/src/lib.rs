@@ -14,7 +14,7 @@ pub use decoder::{
     DecodeError, DecodeErrorKind, DecodeEvent, DecodeMode, Decoder, DecoderFactory, DecoderStats,
     ModePref, Received,
 };
-pub use navigator::{FrameError, NavConfig, NavStats, Navigator};
+pub use navigator::{Direction, FrameError, NavConfig, NavStats, Navigator};
 pub use plan::{NotDecodable, start_for};
 pub use types::{
     AuSource, Codec, DecodedFrame, FrameEntry, Leading, PictureType, PixelLayout, Planes, RapKind,
