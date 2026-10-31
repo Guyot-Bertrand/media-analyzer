@@ -151,8 +151,8 @@ impl Viewport {
         }
         let x0 = x0 & !1;
         let y0 = y0 & !1;
-        let x1 = (x1 + (x1 & 1)).min(frame.w);
-        let y1 = (y1 + (y1 & 1)).min(frame.h);
+        let x1 = x1.saturating_add(x1 & 1).min(frame.w);
+        let y1 = y1.saturating_add(y1 & 1).min(frame.h);
         let region = Rect {
             x: x0,
             y: y0,
@@ -277,6 +277,17 @@ mod tests {
                 h: 20
             }
         );
+        // Taille d'image inconnue (bornes à u32::MAX) : pas de dépassement.
+        let unknown = Size {
+            w: u32::MAX,
+            h: u32::MAX,
+        };
+        let n = vp(u32::MAX - 4, u32::MAX - 4, u32::MAX, u32::MAX, 8, 8)
+            .normalized(unknown)
+            .unwrap();
+        assert_eq!(n.region.x, u32::MAX - 5);
+        assert_eq!(n.region.x + n.region.w, u32::MAX);
+        assert_eq!(n.region.y + n.region.h, u32::MAX);
         // Région vide, ou entièrement hors image, ou sortie vide.
         assert_eq!(
             vp(0, 0, 0, 10, 1, 1).normalized(frame),

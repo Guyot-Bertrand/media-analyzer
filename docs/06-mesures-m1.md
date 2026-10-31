@@ -186,6 +186,8 @@ Sans VA-API :
 - l'image précédente a un p95 de 42–83 ms et un max de 84–135 ms en régime établi, mais son premier pas après un saut sur une IDR coûte 363–574 ms ;
 - la mémoire de l'application atteint **1,1–1,2 Go en PSS** (1,34–1,47 Go en somme des RSS), sous le seuil de 2 Go mais avec moins de marge qu'en VA-API.
 
+En mode Auto, un profil que VA-API refuse (H.264 High10, profils 4:2:2) bascule silencieusement en logiciel, et le décodage reste mono-thread pour toute la session, car `thread_count = 1` est fixé à l'ouverture (`crates/ma-ffmpeg/src/decoder.rs:123`).
+
 ### 4.4 Autres limites connues
 
 - **Drapeau `corrupt`** (R11) : avec FFmpeg 6.1, les images qui dépendent d'une AU corrompue sortent sans drapeau. Seule l'AU rejetée émet `CorruptAu`. Une image faussée peut donc s'afficher sans marque. À revoir en M2 : la tolérance côté analyse viendra de `ma-ts` et `ma-h26x`.
@@ -218,3 +220,4 @@ Quelle que soit l'option, le résultat dépend de la longueur du GOP. Il faut me
 - **VA-API sans VPP de bout en bout**, sur une vraie machine au pilote libre (moteur et interface). Seules des conversions forcées ont été mesurées ici.
 - **PSS en VA-API** sur le parcours d'interface complet.
 - **Options du §5** retenues par le porteur, à mesurer avec le même protocole.
+- **Repli logiciel mono-thread** : en Auto, après le refus d'un profil par VA-API, rouvrir une fois le décodeur en `SoftwareOnly` pour retrouver le multi-thread. Correction prévue en M2.
