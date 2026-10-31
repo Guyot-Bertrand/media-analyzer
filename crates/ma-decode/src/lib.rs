@@ -3,6 +3,9 @@
 
 mod blocks;
 mod decoder;
+#[cfg(test)]
+mod fake;
+mod plan;
 mod types;
 
 pub use blocks::{BlockAttr, BlockKind, BlockNode, BlockTree};
@@ -10,6 +13,7 @@ pub use decoder::{
     DecodeError, DecodeErrorKind, DecodeEvent, DecodeMode, Decoder, DecoderFactory, DecoderStats,
     ModePref, Received,
 };
+pub use plan::{NotDecodable, start_for};
 pub use types::{
     AuSource, Codec, DecodedFrame, FrameEntry, Leading, PictureType, PixelLayout, Planes, RapKind,
     Rect, Size, Viewport, ViewportError,
