@@ -47,7 +47,7 @@ impl CpuScaler {
         }
         let mut src: [*const u8; 4] = [std::ptr::null(); 4];
         let mut src_stride = [0; 4];
-        for i in 0..planes::plane_dims(layout, bps, 2, 2).len() {
+        for i in 0..planes::plane_count(layout) {
             if frame.data[i].is_null() {
                 return Err(internal(format!("plan {i} absent")));
             }

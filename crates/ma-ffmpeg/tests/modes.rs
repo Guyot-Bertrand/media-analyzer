@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
-use common::{band, check, navigator, never, quiet_ffmpeg, source, whole};
+use common::{band, check, navigator, never, quiet_ffmpeg, require_vpp, source, whole};
 use ma_decode::{
     AuSource, Codec, ConvertPath, DecodeErrorKind, DecodeEvent, DecodeMode, Decoder,
     DecoderFactory, FrameError, ModePref, PictureType, PixelLayout, Received, Rect, Size, Viewport,
@@ -108,7 +108,7 @@ fn native_layout_and_byte_strides() {
             PixelLayout::Planar10,
         ),
     ];
-    if require_vaapi() {
+    if require_vpp() {
         cases.push(("h264_720p_closed", ModePref::Auto, PixelLayout::SemiPlanar8));
         cases.push((
             "hevc_720p_main10",
@@ -171,7 +171,7 @@ fn reduced_viewport_is_rendered_and_empty_is_unsupported() {
     let src = source("h264_720p_closed");
     let full = Size { w: 1280, h: 720 };
     let mut prefs = vec![ModePref::SoftwareOnly];
-    if require_vaapi() {
+    if require_vpp() {
         prefs.push(ModePref::Auto);
     }
     let reduced = Viewport::fit(full, Size { w: 640, h: 360 });

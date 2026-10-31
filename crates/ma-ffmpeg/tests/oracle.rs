@@ -3,7 +3,9 @@
 
 mod common;
 
-use common::{band, check, is_not_decodable, navigator, never, oracle_walk, source, whole};
+use common::{
+    band, check, is_not_decodable, navigator, never, oracle_walk, require_vpp, source, whole,
+};
 use ma_decode::{
     AuSource, ConvertPath, DecodeEvent, DecodeMode, Leading, ModePref, NavConfig, NotDecodable,
     RapKind, start_for,
@@ -27,6 +29,9 @@ fn oracle_hevc_vaapi() {
     }
     let name = "hevc_720p_main10";
     oracle_walk(name, ModePref::Auto, 50, whole);
+    if !require_vpp() {
+        return;
+    }
     // Mode réel et transferts : une bande 1:1 passe par la VPP (seule la bande est transférée),
     // l'image entière en 1:1 est un transfert pleine résolution.
     let mut nav = navigator(source(name), ModePref::Auto);

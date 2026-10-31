@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use common::quiet_ffmpeg;
+use common::{gpu_required, quiet_ffmpeg, require_vpp, vpp_gate};
 use ma_decode::{
     AuSource, ConvertPath, DecodeMode, Decoder, ModePref, PixelLayout, Planes, Received, Rect,
     Size, Viewport,
@@ -159,9 +159,12 @@ fn uhd_file() -> (PathBuf, u32) {
     if let Some(p) = corpus_file_if_present("uhd_big") {
         return (p, manifest("uhd_big").code_modulo);
     }
-    let path = std::env::temp_dir().join(format!("ma-ffmpeg-uhd-{}.ts", std::process::id()));
+    // Nom stable : généré une fois, partagé par les tests (un processus par test avec nextest).
+    let path = std::env::temp_dir().join("ma-ffmpeg-uhd-3840x2160-v1.ts");
     if !path.is_file() {
-        generate_uhd(&path);
+        let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
+        generate_uhd(&tmp);
+        std::fs::rename(&tmp, &path).unwrap();
     }
     (path, 1 << 16)
 }
@@ -201,14 +204,14 @@ fn generate_uhd(path: &Path) {
         ])
         .arg(path)
         .status()
-        .expect("CLI ffmpeg introuvable");
+        .expect("corpus absent : lancer cargo xtask corpus gen --big (ou installer la CLI ffmpeg)");
     assert!(status.success(), "génération de l'image 3840×2160");
 }
 
 #[ma_trace::covers("PERF.XFER.01")]
 #[test]
 fn fit_view_has_no_full_res_transfer() {
-    if !require_vaapi() {
+    if !require_vpp() {
         return;
     }
     let (path, name, area) = match corpus_file_if_present("uhd_big") {
@@ -252,7 +255,7 @@ fn fit_1920x1080_under_4_mib() {
     let full = Size { w: 3840, h: 2160 };
     let vp = Viewport::fit(full, Size { w: 1920, h: 1080 });
     let mut prefs = vec![ModePref::SoftwareOnly];
-    if require_vaapi() {
+    if require_vpp() {
         prefs.push(ModePref::Auto);
     }
     for pref in prefs {
@@ -312,7 +315,7 @@ fn region_matches_whole(
 
 #[test]
 fn vpp_region_1to1_is_bit_exact() {
-    if !require_vaapi() {
+    if !require_vpp() {
         return;
     }
     let d = region_matches_whole(ModePref::Auto, None, PixelLayout::SemiPlanar10);
@@ -365,7 +368,7 @@ fn degraded_path_without_vpp_stays_hardware() {
 #[test]
 fn reduced_output_keeps_frame_code() {
     let mut cases = vec![(ModePref::SoftwareOnly, PixelLayout::Planar8)];
-    if require_vaapi() {
+    if require_vpp() {
         cases.push((ModePref::Auto, PixelLayout::SemiPlanar8));
     }
     for name in [MAIN10, "h264_720p_closed"] {
@@ -394,7 +397,7 @@ fn reduced_output_keeps_frame_code() {
 
 #[test]
 fn viewport_change_reuses_or_rebuilds_graph() {
-    if !require_vaapi() {
+    if !require_vpp() {
         return;
     }
     let src = TsAuSource::open(&corpus_file(MAIN10)).unwrap();
@@ -453,4 +456,96 @@ fn viewport_change_reuses_or_rebuilds_graph() {
     check_codes(&frames, whole_of(full), m.code_modulo, "6 viewports");
     assert_eq!(d.gpu_graphs(), 4);
     assert_eq!(d.stats().full_res_transfers, 0);
+}
+
+/// Sur une source NV12 (H.264), une région 1:1 et une réduction de même sortie NV12 (640×180)
+/// ont chacune leur graphe : la région 1:1 (`mode=fast`) reste exacte octet pour octet, la
+/// réduction (`mode=hq`) garde le bon numéro.
+#[test]
+fn one_to_one_and_reduction_of_equal_output_use_distinct_graphs() {
+    if !require_vpp() {
+        return;
+    }
+    let name = "h264_720p_closed";
+    let src = TsAuSource::open(&corpus_file(name)).unwrap();
+    let m = manifest(name);
+    let full = m.dims();
+    let region = Rect {
+        x: 256,
+        y: 128,
+        w: 640,
+        h: 180,
+    };
+    let band = Rect {
+        x: 0,
+        y: 0,
+        w: 1280,
+        h: 360,
+    };
+    let one = Viewport::region_1to1(full, region);
+    let reduced = Viewport {
+        region: band,
+        out: Size { w: 640, h: 180 },
+    };
+    assert!(reduced.is_reduced() && !one.is_reduced());
+    let mut d = open(&src, ModePref::Auto);
+    let frames = decode(&mut d, &src, 6, &|i| if i % 2 == 0 { one } else { reduced });
+    assert_eq!(
+        d.gpu_graphs(),
+        2,
+        "une réduction et une région 1:1 ne partagent pas de graphe"
+    );
+    let mut w = open(&src, ModePref::Auto);
+    let wholes = decode(&mut w, &src, 6, &|_| {
+        Viewport::region_1to1(full, whole_of(full))
+    });
+    for (i, (f, whole)) in frames.iter().zip(&wholes).enumerate() {
+        assert_eq!(f.pres, whole.pres);
+        assert_eq!(f.image.layout, PixelLayout::SemiPlanar8);
+        if i % 2 == 0 {
+            assert!(
+                f.image == crop(&whole.image, region),
+                "image {} : la région 1:1 NV12 diffère du recadrage",
+                f.pres
+            );
+        } else {
+            check_codes(
+                std::slice::from_ref(f),
+                band,
+                m.code_modulo,
+                "réduction NV12",
+            );
+        }
+    }
+    assert_eq!(d.stats().full_res_transfers, 0);
+}
+
+/// R14 : sans VPP, un test qui la demande est sauté, sauf si `MA_REQUIRE_GPU=1`. Le chemin sans
+/// VPP est forcé quand un périphérique existe (la machine de référence a la VPP).
+#[test]
+fn vpp_guard_skips_without_vpp() {
+    let path = if require_vaapi() {
+        let src = TsAuSource::open(&corpus_file(MAIN10)).unwrap();
+        let mut d = open(&src, ModePref::Auto);
+        d.force_vaapi_path(ConvertPath::VaapiMapped);
+        d.vaapi_path()
+    } else {
+        ConvertPath::VaapiMapped
+    };
+    assert!(
+        !vpp_gate(path == ConvertPath::VaapiVpp, false),
+        "test sauté"
+    );
+    assert!(vpp_gate(true, true));
+    let required = std::panic::catch_unwind(|| vpp_gate(false, true));
+    assert!(required.is_err(), "MA_REQUIRE_GPU=1 : le test échoue");
+    // Cohérence avec la détection publique.
+    if require_vaapi() && gpu_required() {
+        let src = TsAuSource::open(&corpus_file(MAIN10)).unwrap();
+        let d = open(&src, ModePref::Auto);
+        assert_eq!(
+            d.vaapi_path() == ConvertPath::VaapiVpp,
+            ma_ffmpeg::vaapi_has_vpp(None)
+        );
+    }
 }

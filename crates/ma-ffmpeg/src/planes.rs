@@ -25,6 +25,14 @@ fn half(v: usize) -> usize {
     v.div_ceil(2)
 }
 
+/// Nombre de plans du layout.
+pub(crate) fn plane_count(layout: PixelLayout) -> usize {
+    match layout {
+        PixelLayout::Planar8 | PixelLayout::Planar10 => 3,
+        PixelLayout::SemiPlanar8 | PixelLayout::SemiPlanar10 => 2,
+    }
+}
+
 /// (octets utiles par ligne, nombre de lignes) de chaque plan d'une image de taille `w` × `h`
 /// (chroma 4:2:0, arrondie vers le haut pour les tailles impaires).
 pub(crate) fn plane_dims(

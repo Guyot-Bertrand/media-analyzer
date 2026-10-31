@@ -163,6 +163,14 @@ impl FfmpegDecoder {
         }
     }
 
+    /// Chemin de conversion des images VA-API : [`ConvertPath::VaapiVpp`] si le périphérique
+    /// offre la VPP (détecté à l'ouverture), sinon [`ConvertPath::VaapiMapped`], ou le chemin
+    /// forcé par [`FfmpegDecoder::force_vaapi_path`].
+    #[must_use]
+    pub fn vaapi_path(&self) -> ConvertPath {
+        self.vaapi_path
+    }
+
     /// Conversion d'une image VA-API sans VPP : projection en lecture (ou, si elle échoue, ou
     /// si [`ConvertPath::VaapiTransfer`] est forcé, transfert complet), puis réduction ou
     /// recadrage par le CPU. La surface entière passe en RAM : compté comme transfert pleine
@@ -173,7 +181,12 @@ impl FfmpegDecoder {
         vp: &Viewport,
     ) -> Result<(Planes, ConvertPath), DecodeError> {
         let mapped = if self.vaapi_path == ConvertPath::VaapiMapped {
-            hw::map_read(frame).ok()
+            let mapped = hw::map_read(frame).ok();
+            if mapped.is_none() {
+                // Projection refusée par le pilote : inutile de la retenter à chaque image.
+                self.vaapi_path = ConvertPath::VaapiTransfer;
+            }
+            mapped
         } else {
             None
         };

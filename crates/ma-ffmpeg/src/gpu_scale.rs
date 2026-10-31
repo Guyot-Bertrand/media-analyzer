@@ -30,6 +30,9 @@ struct GraphKey {
     input: Size,
     out: Size,
     out_format: i32,
+    /// Réduction (`mode=hq`) ou région 1:1 (`mode=fast`, simple copie) : une réduction et une
+    /// région 1:1 de même sortie ne partagent jamais un graphe.
+    reduced: bool,
 }
 
 fn gpu(detail: String) -> DecodeError {
@@ -49,6 +52,12 @@ fn fmt_name(format: i32) -> &'static str {
         ffi::AV_PIX_FMT_P010LE => "p010",
         _ => "?",
     }
+}
+
+/// Mode de `scale_vaapi` : `hq` pour une réduction, `fast` en 1:1 (copie de la région, exacte
+/// octet pour octet).
+fn scaling_mode(reduced: bool) -> &'static str {
+    if reduced { "hq" } else { "fast" }
 }
 
 /// Construit le graphe `buffer` → `scale_vaapi` → `buffersink` pour `key`, sur le contexte de
@@ -93,14 +102,12 @@ fn build(key: GraphKey, frames_ctx: *mut ffi::AVBufferRef) -> Result<AVFilterGra
             return Err(format!("paramètres de buffer : code {status}"));
         }
         src.init_str(None).map_err(|e| format!("buffer : {e}"))?;
-        // `fast` en 1:1 (simple copie de la région) ; `hq` (défaut) pour une réduction.
-        let reduced = key.out.w < key.input.w || key.out.h < key.input.h;
         let args = CString::new(format!(
             "w={}:h={}:format={}:mode={}",
             key.out.w,
             key.out.h,
             fmt_name(key.out_format),
-            if reduced { "hq" } else { "fast" }
+            scaling_mode(key.reduced)
         ))
         .expect("arguments sans NUL");
         let mut vpp = graph
@@ -169,6 +176,7 @@ impl GpuScaler {
             input,
             out: vp.out,
             out_format,
+            reduced: vp.is_reduced(),
         };
         let mut cropped = frame.clone();
         let r = vp.region;
@@ -182,7 +190,14 @@ impl GpuScaler {
             (*f).crop_right = (input.w - r.x - r.w) as usize;
             (*f).crop_bottom = (input.h - r.y - r.h) as usize;
         }
-        let scaled = run(self.graph(key, frame.hw_frames_ctx)?, cropped)?;
+        let scaled = match run(self.graph(key, frame.hw_frames_ctx)?, cropped) {
+            Ok(scaled) => scaled,
+            Err(e) => {
+                // Le graphe peut garder une image en attente : il n'est pas réutilisé.
+                self.graphs.remove(0);
+                return Err(e);
+            }
+        };
         let sw = self.transfer(&scaled, input)?;
         planes::extract(
             &sw,
@@ -297,6 +312,12 @@ mod tests {
         };
         assert_eq!(s.scale(&f, &whole).unwrap_err().kind, DecodeErrorKind::Gpu);
         assert_eq!((s.full_res_transfers, s.graphs()), (0, 0));
+    }
+
+    #[test]
+    fn scaling_mode_follows_the_reduction() {
+        assert_eq!(scaling_mode(true), "hq");
+        assert_eq!(scaling_mode(false), "fast");
     }
 
     #[test]

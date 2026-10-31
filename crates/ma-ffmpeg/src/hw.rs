@@ -121,6 +121,13 @@ pub fn vaapi_available(render_node: Option<&Path>) -> bool {
     vaapi_device(render_node).is_ok()
 }
 
+/// Vrai si un périphérique VA-API peut être ouvert (`render_node`, ou le choix par défaut de
+/// `FFmpeg`) **et** offre le traitement vidéo (VPP), nécessaire à la réduction sur le GPU.
+#[must_use]
+pub fn vaapi_has_vpp(render_node: Option<&Path>) -> bool {
+    vaapi_device(render_node).is_ok_and(|d| has_vpp(&d))
+}
+
 /// Attend la fin du décodage GPU de l'image VA-API `frame`, sans la copier.
 ///
 /// À faire pour **chaque** image sortie, gardée ou jetée : sans cela, la surface d'une image jetée
