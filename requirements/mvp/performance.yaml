@@ -70,7 +70,7 @@
     - Une demande explicite pendant un préchargement est servie en priorité.
   levels: [unit]
   source: 04 §1 (condition 2), §4.2
-  status: validated
+  status: implemented
 
 - id: PERF.MEM.01
   title: Mémoire inférieure à 2 Go
