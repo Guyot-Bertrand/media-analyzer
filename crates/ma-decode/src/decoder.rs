@@ -1,0 +1,125 @@
+//! Traits `Decoder` et `DecoderFactory`, et types associés.
+
+use crate::types::{Codec, Planes, Size, Viewport};
+
+/// Mode de décodage effectif, déduit des images produites.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DecodeMode {
+    Unknown,
+    Hardware,
+    Software,
+}
+
+/// Préférence de mode demandée à l'ouverture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ModePref {
+    Auto,
+    SoftwareOnly,
+}
+
+/// Catégorie d'erreur de décodage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DecodeErrorKind {
+    InvalidData,
+    Gpu,
+    Unsupported,
+    Device,
+    Internal,
+}
+
+/// Erreur de décodage.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("erreur de décodage ({kind:?}) : {detail}")]
+pub struct DecodeError {
+    pub kind: DecodeErrorKind,
+    pub detail: String,
+}
+
+/// Résultat d'un appel à [`Decoder::receive`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Received {
+    /// Le décodeur attend davantage de données.
+    NeedInput,
+    /// Le vidage (après `send_eof`) est terminé.
+    Drained,
+    /// Image décodée puis jetée (`want` a renvoyé `None`) : aucune conversion ni transfert.
+    Discarded { pts: i64 },
+    /// Image décodée et convertie ; `full` est la taille d'affichage réelle de l'image décodée.
+    Frame {
+        pts: i64,
+        image: Planes,
+        corrupt: bool,
+        full: Size,
+    },
+}
+
+/// Compteurs d'un décodeur.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DecoderStats {
+    /// Images converties vers la sortie demandée.
+    pub converted: u64,
+    /// Transferts GPU vers RAM en pleine résolution.
+    pub full_res_transfers: u64,
+}
+
+/// Décodeur d'un flux d'unités d'accès.
+pub trait Decoder: Send {
+    /// Mode effectif, déduit des images produites.
+    fn mode(&self) -> DecodeMode;
+    /// Nombre d'images de retard du pipeline.
+    fn latency(&self) -> u32;
+    /// Soumet une unité d'accès.
+    fn send(&mut self, pts: i64, au: &[u8]) -> Result<(), DecodeError>;
+    /// Signale la fin du flux pour vider le pipeline.
+    fn send_eof(&mut self) -> Result<(), DecodeError>;
+    /// Récupère la prochaine image.
+    ///
+    /// `want(pts)` renvoie `Some(viewport)` pour convertir l'image (réduite ou recadrée) et `None`
+    /// pour la jeter sans conversion ni transfert.
+    ///
+    /// Les implémentations appellent [`Viewport::normalized`] avec la taille réelle de l'image
+    /// décodée, avant la conversion ; le viewport normalisé est celui qui est appliqué.
+    fn receive(&mut self, want: &dyn Fn(i64) -> Option<Viewport>) -> Result<Received, DecodeError>;
+    /// Vide l'état du décodeur (saut, changement de position).
+    fn reset(&mut self);
+    /// Compteurs courants.
+    fn stats(&self) -> DecoderStats;
+}
+
+/// Fabrique de décodeurs.
+pub trait DecoderFactory: Send + Sync {
+    fn open(&self, codec: Codec, pref: ModePref) -> Result<Box<dyn Decoder>, DecodeError>;
+}
+
+/// Événement notable émis pendant le décodage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecodeEvent {
+    FellBackToSoftware {
+        reason: String,
+        at_pres: Option<u32>,
+    },
+    CorruptAu {
+        decode_idx: u32,
+        detail: String,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_error_displays_kind_and_detail() {
+        let e = DecodeError {
+            kind: DecodeErrorKind::Gpu,
+            detail: "échec".into(),
+        };
+        assert_eq!(e.to_string(), "erreur de décodage (Gpu) : échec");
+    }
+
+    #[test]
+    fn stats_default_is_zero() {
+        assert_eq!(DecoderStats::default().converted, 0);
+        assert_eq!(DecoderStats::default().full_res_transfers, 0);
+    }
+}

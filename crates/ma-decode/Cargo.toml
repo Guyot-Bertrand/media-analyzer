@@ -1,0 +1,13 @@
+[package]
+name = "ma-decode"
+description = "Contrat de décodage (Decoder, AuSource), viewport et modèle de blocs, sans dépendance FFmpeg"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = "2"
