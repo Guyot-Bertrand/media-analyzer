@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
-use common::{band, check, code_of, navigator, never, source, whole};
+use common::{band, check, navigator, never, quiet_ffmpeg, source, whole};
 use ma_decode::{
     AuSource, Codec, DecodeErrorKind, DecodeEvent, DecodeMode, Decoder, DecoderFactory, FrameError,
     ModePref, PictureType, PixelLayout, Received, Rect, Size, Viewport,
@@ -15,6 +15,7 @@ use ma_ffmpeg::{FfmpegFactory, MAX_AU_BYTES, vaapi_available};
 use ma_testkit::{CorruptingSource, TsAuSource, corpus_file, manifest, require_vaapi};
 
 fn factory() -> FfmpegFactory {
+    quiet_ffmpeg();
     FfmpegFactory { render_node: None }
 }
 
@@ -234,6 +235,7 @@ fn every_codec_opens_in_software() {
 
 #[test]
 fn vaapi_detection() {
+    quiet_ffmpeg();
     assert!(!vaapi_available(Some(Path::new("/nonexistent/renderD999"))));
     assert!(!vaapi_available(Some(Path::new("bad\0path"))));
     // Une fabrique dont le périphérique est absent décode en logiciel.
@@ -241,12 +243,24 @@ fn vaapi_detection() {
         render_node: Some("/nonexistent/renderD999".into()),
     };
     let src = source("h264_720p_closed");
-    let mut d = f.open(Codec::H264, ModePref::Auto).unwrap();
-    first_output(&mut *d, &src, &|_| None);
+    let mut d = f.open_decoder(Codec::H264, ModePref::Auto).unwrap();
+    let cause = d.hw_unavailable().unwrap();
+    assert!(cause.contains("/nonexistent/renderD999"), "{cause}");
+    first_output(&mut d, &src, &|_| None);
     assert_eq!(d.mode(), DecodeMode::Software);
+    let bad_path = FfmpegFactory {
+        render_node: Some("bad\0path".into()),
+    };
+    let d = bad_path.open_decoder(Codec::H264, ModePref::Auto).unwrap();
+    assert!(d.hw_unavailable().unwrap().contains("invalide"));
+    // Logiciel demandé : aucun diagnostic.
+    let d = f.open_decoder(Codec::H264, ModePref::SoftwareOnly).unwrap();
+    assert_eq!(d.hw_unavailable(), None);
     if require_vaapi() {
         assert!(vaapi_available(None));
         assert!(vaapi_available(Some(Path::new("/dev/dri/renderD128"))));
+        let d = factory().open_decoder(Codec::H264, ModePref::Auto).unwrap();
+        assert_eq!(d.hw_unavailable(), None);
     }
 }
 
@@ -260,6 +274,18 @@ fn oversized_au_rejected() {
     assert!(err.detail.contains("trop grande"), "{err}");
     // Le décodeur reste utilisable.
     assert_eq!(d.receive(&|_| None).unwrap(), Received::NeedInput);
+}
+
+#[test]
+fn empty_au_rejected() {
+    let src = source("h264_720p_closed");
+    let mut d = open(Codec::H264, ModePref::SoftwareOnly);
+    let err = d.send(0, &[]).unwrap_err();
+    assert_eq!(err.kind, DecodeErrorKind::InvalidData);
+    assert!(err.detail.contains("AU vide"), "{err}");
+    // Le décodeur reste utilisable : une image valide décode normalement.
+    let r = first_output(&mut *d, &src, &|_| None);
+    assert!(matches!(r, Received::Discarded { .. }), "{r:?}");
 }
 
 /// P au milieu d'un GOP (au moins 10 images de décodage après le RAP précédent).
@@ -298,11 +324,6 @@ fn corrupted_au_real_decoder() {
             match nav.frame(p, vp, &never) {
                 Ok(f) => {
                     assert_eq!(f.pres_idx, p);
-                    eprintln!(
-                        "  image {p} : numéro {:?}, corrompue : {}",
-                        code_of(&f, vp),
-                        f.corrupt
-                    );
                     delivered += 1;
                 }
                 Err(FrameError::NotDecodable { .. } | FrameError::Decoder(_)) => refused += 1,
@@ -310,7 +331,7 @@ fn corrupted_au_real_decoder() {
             }
         }
         let events = nav.take_events();
-        eprintln!("{name} : AU {bad} corrompue, {delivered} livrées, {refused} refusées");
+        assert!(delivered + refused > 0, "{name} : AU {bad}");
         assert!(
             events
                 .iter()

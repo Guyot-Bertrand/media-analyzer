@@ -66,5 +66,5 @@ exécuté`, et la couverture de `ma-ffmpeg` est affichée sans être bloquante (
 
 - **TSDuck** (oracle TS) : paquet `.deb` / `.rpm` des releases https://github.com/tsduck/tsduck/releases
 - **Tests d'interface de bout en bout** : `webkit2gtk-driver` (Ubuntu) / `webkit2gtk4.1` fournit `WebKitWebDriver` (Fedora), `xvfb` / `xorg-x11-server-Xvfb`, `cargo install tauri-driver --locked`
-- **Corpus généré** (`cargo xtask corpus gen`, `--big` pour `uhd_big`, ≥ 4 Go) : `ffmpeg` et `ffprobe` avec `libx264` et `libx265` (`sudo apt install ffmpeg` ; RPM Fusion sous Fedora). Les fichiers vont dans `$MA_CORPUS_DIR` (défaut `~/media-analyzer-corpus/generated`), hors Git.
+- **Corpus généré** (`cargo xtask corpus gen`, `--big` pour `uhd_big`, ≥ 4 Go) : `ffmpeg` et `ffprobe` avec `libx264` et `libx265` (`sudo apt install ffmpeg` ; sous Fedora, `sudo dnf install -y ffmpeg` depuis RPM Fusion, le paquet `ffmpeg-free` n'ayant pas ces encodeurs). Les fichiers vont dans `$MA_CORPUS_DIR` (défaut `~/media-analyzer-corpus/generated`), hors Git.
 - **Décodage matériel** : `vainfo` pour vérifier VA-API

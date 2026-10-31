@@ -14,7 +14,16 @@ pub fn never() -> bool {
     false
 }
 
+/// Coupe le journal de libavcodec : les tests d'AU corrompues le rempliraient d'erreurs
+/// attendues (« no frame! », « Missing reference picture »).
+pub fn quiet_ffmpeg() {
+    // SAFETY: `av_log_set_level` écrit un entier global de libavutil, sans autre effet ; aucune
+    // contrainte d'appel.
+    unsafe { rsmpeg::ffi::av_log_set_level(rsmpeg::ffi::AV_LOG_QUIET) };
+}
+
 pub fn source(name: &str) -> Arc<TsAuSource> {
+    quiet_ffmpeg();
     Arc::new(TsAuSource::open(&corpus_file(name)).unwrap())
 }
 

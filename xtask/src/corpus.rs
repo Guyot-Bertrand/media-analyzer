@@ -343,17 +343,34 @@ fn cut(ts: &[u8], mid_first: usize, mid_second: usize) -> anyhow::Result<Vec<u8>
         .collect())
 }
 
+/// Fenêtre de découpe (octets) d'un fichier dérivé, selon ses caractéristiques, à partir des
+/// positions des images clés de la source :
+/// - `starts_mid_gop` : du milieu du 1er GOP au milieu du 2e ;
+/// - `starts_at_cra` : du 2e point d'accès (1er CRA après l'IDR initiale) à la fin.
+fn cut_window(e: &Entry, keys: &[usize], len: usize) -> anyhow::Result<(usize, usize)> {
+    if e.has("starts_mid_gop") {
+        Ok((
+            usize::midpoint(keys[0], keys[1]),
+            usize::midpoint(keys[1], keys[2]),
+        ))
+    } else if e.has("starts_at_cra") {
+        Ok((keys[1], len))
+    } else {
+        bail!(
+            "{} : découpe inconnue (starts_mid_gop ou starts_at_cra attendu)",
+            e.name
+        )
+    }
+}
+
 fn make_cut(e: &Entry, source: &Path, dest: &Path) -> anyhow::Result<()> {
     let keys = keyframe_positions(source)?;
     if keys.len() < 3 {
         bail!("{} : moins de 3 images clés dans la source", e.name);
     }
     let data = std::fs::read(source)?;
-    let bytes = cut(
-        &data,
-        usize::midpoint(keys[0], keys[1]),
-        usize::midpoint(keys[1], keys[2]),
-    )?;
+    let (from, to) = cut_window(e, &keys, data.len())?;
+    let bytes = cut(&data, from, to)?;
     std::fs::write(tmp_path(dest), bytes)?;
     Ok(())
 }
@@ -458,7 +475,7 @@ mod tests {
     fn manifest_in_repo_is_complete() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let entries = load_manifest(root).unwrap();
-        assert_eq!(entries.len(), 8);
+        assert_eq!(entries.len(), 9);
         assert_eq!(entries.iter().filter(|e| e.big).count(), 1);
         for e in &entries {
             assert_eq!(e.code_bits, 16, "{}", e.name);
@@ -514,6 +531,23 @@ mod tests {
         let out = cut(&ts, 4 * TS_PACKET + 10, 7 * TS_PACKET).unwrap();
         let tags: Vec<u8> = out.chunks(TS_PACKET).map(|p| p[3]).collect();
         assert_eq!(tags, vec![0, 1, 5, 6]);
+    }
+
+    #[test]
+    fn cut_window_follows_features() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let entries = load_manifest(root).unwrap();
+        let get = |n: &str| entries.iter().find(|e| e.name == n).unwrap();
+        let keys = [0, 1000, 3000];
+        assert_eq!(
+            cut_window(get("hevc_720p_cut"), &keys, 5000).unwrap(),
+            (500, 2000)
+        );
+        assert_eq!(
+            cut_window(get("hevc_720p_open_gop_from_cra"), &keys, 5000).unwrap(),
+            (1000, 5000)
+        );
+        assert!(cut_window(get("hevc_720p_main10"), &keys, 5000).is_err());
     }
 
     #[test]

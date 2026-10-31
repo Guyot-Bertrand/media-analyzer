@@ -8,7 +8,16 @@ use rsmpeg::ffi;
 pub const MAX_AU_BYTES: usize = 32 * 1024 * 1024;
 
 /// Paquet portant une copie de `au` et le `pts` donné (pas de `dts` : ordre de décodage implicite).
+///
+/// Une AU vide est refusée en `InvalidData` : libavcodec rejette un paquet vide (non nul) avec
+/// `EINVAL`, qui serait sinon imputé au GPU (repli injustifié) ou classé interne.
 pub(crate) fn packet(pts: i64, au: &[u8]) -> Result<AVPacket, DecodeError> {
+    if au.is_empty() {
+        return Err(DecodeError {
+            kind: DecodeErrorKind::InvalidData,
+            detail: "AU vide".into(),
+        });
+    }
     let len = i32::try_from(au.len())
         .ok()
         .filter(|_| au.len() <= MAX_AU_BYTES)
@@ -53,8 +62,12 @@ mod tests {
     }
 
     #[test]
-    fn empty_au_is_an_empty_packet() {
-        assert_eq!(packet(0, &[]).unwrap().size, 0);
+    fn empty_au_is_invalid_data() {
+        let err = packet(0, &[]).unwrap_err();
+        assert_eq!(
+            (err.kind, err.detail.as_str()),
+            (DecodeErrorKind::InvalidData, "AU vide")
+        );
     }
 
     #[test]

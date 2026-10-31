@@ -21,10 +21,12 @@ pub struct FfmpegFactory {
     pub render_node: Option<PathBuf>,
 }
 
-impl DecoderFactory for FfmpegFactory {
-    /// Ouvre un décodeur. En [`ModePref::Auto`], essaie VA-API (un seul thread de décodage) ; si
-    /// le périphérique ou le décodeur matériel ne s'ouvre pas, décode en logiciel.
-    fn open(&self, codec: Codec, pref: ModePref) -> Result<Box<dyn Decoder>, DecodeError> {
+impl FfmpegFactory {
+    /// Ouvre un décodeur, sous son type concret (pour lire [`FfmpegDecoder::hw_unavailable`]).
+    ///
+    /// En [`ModePref::Auto`], essaie VA-API (un seul thread de décodage) ; si le périphérique ou
+    /// le décodeur matériel ne s'ouvre pas, décode en logiciel et garde la cause de l'échec.
+    pub fn open_decoder(&self, codec: Codec, pref: ModePref) -> Result<FfmpegDecoder, DecodeError> {
         let id = match codec {
             Codec::H264 => ffi::AV_CODEC_ID_H264,
             Codec::Hevc => ffi::AV_CODEC_ID_HEVC,
@@ -34,17 +36,26 @@ impl DecoderFactory for FfmpegFactory {
             kind: DecodeErrorKind::Unsupported,
             detail: format!("décodeur {codec:?} absent de libavcodec"),
         })?;
-        let device = match pref {
-            ModePref::Auto => hw::vaapi_device(self.render_node.as_deref()),
-            ModePref::SoftwareOnly => None,
+        if pref == ModePref::SoftwareOnly {
+            return FfmpegDecoder::open(&dec, None);
+        }
+        let cause = match hw::vaapi_device(self.render_node.as_deref()) {
+            Ok(dev) => match FfmpegDecoder::open(&dec, Some(dev)) {
+                Ok(decoder) => return Ok(decoder),
+                Err(e) => e.detail,
+            },
+            Err(cause) => cause,
         };
-        let decoder = match device {
-            Some(dev) => {
-                FfmpegDecoder::open(&dec, Some(dev)).or_else(|_| FfmpegDecoder::open(&dec, None))?
-            }
-            None => FfmpegDecoder::open(&dec, None)?,
-        };
-        Ok(Box::new(decoder))
+        let mut decoder = FfmpegDecoder::open(&dec, None)?;
+        decoder.hw_unavailable = Some(cause);
+        Ok(decoder)
+    }
+}
+
+impl DecoderFactory for FfmpegFactory {
+    /// Voir [`FfmpegFactory::open_decoder`].
+    fn open(&self, codec: Codec, pref: ModePref) -> Result<Box<dyn Decoder>, DecodeError> {
+        Ok(Box::new(self.open_decoder(codec, pref)?))
     }
 }
 
@@ -73,6 +84,8 @@ pub struct FfmpegDecoder {
     mode: DecodeMode,
     threads: u32,
     stats: DecoderStats,
+    /// Cause de l'échec d'ouverture VA-API en [`ModePref::Auto`].
+    hw_unavailable: Option<String>,
 }
 
 impl FfmpegDecoder {
@@ -105,7 +118,17 @@ impl FfmpegDecoder {
             mode: DecodeMode::Unknown,
             threads,
             stats: DecoderStats::default(),
+            hw_unavailable: None,
         })
+    }
+
+    /// Diagnostic : pourquoi VA-API n'a pas pu être ouvert alors que [`ModePref::Auto`] était
+    /// demandé (périphérique absent, décodeur matériel refusé). `None` si VA-API est ouvert ou
+    /// n'a pas été demandé. Un profil non pris en charge n'apparaît pas ici : il se lit sur
+    /// [`Decoder::mode`].
+    #[must_use]
+    pub fn hw_unavailable(&self) -> Option<&str> {
+        self.hw_unavailable.as_deref()
     }
 
     /// Le décodage est matériel, ou peut l'être (aucune image encore vue).

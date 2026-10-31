@@ -87,6 +87,7 @@ fn codecs_sizes_and_counts_follow_the_manifest() {
         ("h264_720p_recovery", Codec::H264),
         ("hevc_720p_main10", Codec::Hevc),
         ("hevc_720p_open_gop", Codec::Hevc),
+        ("hevc_720p_open_gop_from_cra", Codec::Hevc),
         ("mpeg2_576i_closed", Codec::Mpeg2),
     ] {
         let src = open(name);
@@ -266,6 +267,23 @@ fn open_gop_has_cra_and_rasl() {
         "départ {start} avant le premier CRA {}",
         cras[0]
     );
+}
+
+#[test]
+fn open_gop_from_cra_starts_on_a_cra_with_undecodable_rasl() {
+    let src = open("hevc_720p_open_gop_from_cra");
+    let first = src.entry(0).unwrap();
+    assert_eq!(first.rap, RapKind::Cra, "le fichier commence sur un CRA");
+    let next_rap = (1..src.len())
+        .find(|&d| src.entry(d).unwrap().rap != RapKind::None)
+        .unwrap();
+    let rasl: Vec<u32> = (1..next_rap)
+        .filter(|&d| src.entry(d).unwrap().leading == Leading::Skippable)
+        .collect();
+    assert!(!rasl.is_empty(), "RASL du premier CRA attendues");
+    for d in rasl {
+        assert_eq!(start_for(&src, d), Err(NotDecodable::LeadingOfFirstRap));
+    }
 }
 
 #[test]

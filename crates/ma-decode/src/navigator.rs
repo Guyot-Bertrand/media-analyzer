@@ -85,6 +85,10 @@ pub enum Direction {
 /// Plus grand nombre de RAP essayés par [`Navigator::probe_size`].
 const PROBE_ATTEMPTS: usize = 8;
 
+/// Erreurs `InvalidData` consécutives tolérées de `receive` : au-delà, le décodeur est jugé
+/// bloqué et l'erreur remonte (garde contre une boucle sans fin).
+const MAX_RECEIVE_ERRORS: u32 = 64;
+
 /// Compteurs du navigateur.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct NavStats {
@@ -525,6 +529,21 @@ impl Navigator {
         r.map(|outcome| (outcome, reused))
     }
 
+    /// AU `decode_idx` corrompue : événement [`DecodeEvent::CorruptAu`], puis le décodage
+    /// continue.
+    ///
+    /// Une erreur rendue par `receive` est différée : elle porte sur une AU déjà envoyée, au plus
+    /// `latency` AU plus tôt avec les threads d'images, sans que le décodeur dise laquelle. On
+    /// l'impute à la dernière AU envoyée (la plus plausible : c'est celle dont l'envoi a déclenché
+    /// le décodage en échec quand la latence est nulle), ou au RAP de départ si rien n'a été envoyé.
+    fn record_corrupt(&mut self, s: &mut Session, decode_idx: u32, e: DecodeError) {
+        self.events.push(DecodeEvent::CorruptAu {
+            decode_idx,
+            detail: e.detail.clone(),
+        });
+        s.corrupt.insert(decode_idx, e);
+    }
+
     fn run(
         &mut self,
         s: &mut Session,
@@ -539,9 +558,26 @@ impl Navigator {
         let missing = |s: &Session| Outcome::Missing {
             corrupt: s.corrupt.get(&target.decode_idx).cloned(),
         };
+        let mut receive_errors = 0;
         loop {
             loop {
-                let pts = match self.decoder.receive(&want).map_err(FrameError::Decoder)? {
+                let received = match self.decoder.receive(&want) {
+                    Ok(r) => {
+                        receive_errors = 0;
+                        r
+                    }
+                    // Erreur différée (threads d'images) : tolérée comme celle de `send`.
+                    Err(e)
+                        if e.kind == DecodeErrorKind::InvalidData
+                            && receive_errors < MAX_RECEIVE_ERRORS =>
+                    {
+                        receive_errors += 1;
+                        self.record_corrupt(s, s.next.saturating_sub(1).max(s.start), e);
+                        continue;
+                    }
+                    Err(e) => return Err(FrameError::Decoder(e)),
+                };
+                let pts = match received {
                     Received::NeedInput => break,
                     Received::Drained => {
                         s.drained = true;
@@ -599,11 +635,7 @@ impl Navigator {
                 match self.decoder.send(entry.pts, &self.buf) {
                     Ok(()) => {}
                     Err(e) if e.kind == DecodeErrorKind::InvalidData => {
-                        self.events.push(DecodeEvent::CorruptAu {
-                            decode_idx: d,
-                            detail: e.detail.clone(),
-                        });
-                        s.corrupt.insert(d, e);
+                        self.record_corrupt(s, d, e);
                     }
                     Err(e) => return Err(FrameError::Decoder(e)),
                 }
@@ -864,6 +896,60 @@ mod tests {
             DecodeEvent::CorruptAu { decode_idx: 30, .. }
         ));
         assert_eq!(nav.take_events(), []);
+    }
+
+    #[test]
+    fn deferred_invalid_data_from_receive_is_tolerated() {
+        // Même scénario, mais l'erreur de l'AU 30 remonte au `receive` qui suit son envoi
+        // (threads d'images de libavcodec) : la session continue comme pour `send`.
+        let src = FakeSource::closed_gops(3, 24, 0).with_corrupt(HashSet::from([30]));
+        let mut nav = nav_with(FakeFactory {
+            deferred_corruption: true,
+            ..FakeFactory::new(&src)
+        });
+        for p in 24..30 {
+            assert!(!get(&mut nav, p).corrupt, "image {p}");
+        }
+        let sent = nav.stats().aus_sent;
+        let err = nav.frame(30, small(), &never).unwrap_err();
+        assert!(
+            matches!(&err, FrameError::Decoder(e) if e.kind == DecodeErrorKind::InvalidData),
+            "{err:?}"
+        );
+        for p in 31..48 {
+            assert!(get(&mut nav, p).corrupt, "image {p}");
+        }
+        assert!(!get(&mut nav, 48).corrupt);
+        // Décodage poursuivi sans repartir du RAP : une AU par image, plus la latence.
+        assert!(nav.stats().aus_sent - sent <= 19 + 2, "{:?}", nav.stats());
+        let events = nav.take_events();
+        assert!(
+            matches!(events[..], [DecodeEvent::CorruptAu { decode_idx: 30, .. }]),
+            "{events:?}"
+        );
+    }
+
+    #[test]
+    fn every_au_corrupt_with_deferred_errors() {
+        // Toutes les AU corrompues, erreurs différées : rien ne sort, la cible est signalée
+        // corrompue, une fois chaque AU envoyée.
+        let src = FakeSource::closed_gops(1, 24, 0).with_corrupt((0..24).collect());
+        let mut nav = nav_with(FakeFactory {
+            deferred_corruption: true,
+            ..FakeFactory::new(&src)
+        });
+        let err = nav.frame(5, small(), &never).unwrap_err();
+        assert!(
+            matches!(&err, FrameError::Decoder(e) if e.kind == DecodeErrorKind::InvalidData),
+            "{err:?}"
+        );
+        let events = nav.take_events();
+        assert!(events.len() >= 6, "{events:?}");
+        assert!(
+            events
+                .iter()
+                .all(|e| matches!(e, DecodeEvent::CorruptAu { .. }))
+        );
     }
 
     #[test]

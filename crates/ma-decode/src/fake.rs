@@ -249,6 +249,9 @@ pub struct FakeFactory {
     pub latency: u32,
     /// Délai simulé par AU envoyée.
     pub au_delay: Duration,
+    /// L'erreur `InvalidData` d'une AU corrompue est renvoyée par le `receive` suivant au lieu de
+    /// `send` (erreur différée, comme avec les threads d'images de libavcodec).
+    pub deferred_corruption: bool,
 }
 
 impl FakeFactory {
@@ -262,6 +265,7 @@ impl FakeFactory {
             size: FAKE_SIZE,
             latency: 1,
             au_delay: Duration::ZERO,
+            deferred_corruption: false,
         }
     }
 }
@@ -319,8 +323,10 @@ struct Pending {
 /// Il sort les images par `pts` croissant, avec un retard de `reorder + latency` images. Une image
 /// sans référence décodée depuis le dernier `reset` n'est pas émise : image qui précède le premier
 /// RAP reçu, `Skippable` (ou image de l'intervalle de reprise d'un recovery point) dont le RAP
-/// précédent n'a pas été reçu. Une AU corrompue renvoie `InvalidData` ; les images suivantes du
-/// même GOP (et les `Skippable` du GOP suivant) sortent `corrupt`.
+/// précédent n'a pas été reçu. Une AU corrompue renvoie `InvalidData` (depuis `send`, ou depuis le
+/// `receive` suivant avec `deferred_corruption`) ; les images suivantes du même GOP (et les
+/// `Skippable` du GOP suivant) sortent `corrupt`.
+#[allow(clippy::struct_excessive_bools)] // simulateur : un drapeau par comportement injecté
 pub struct FakeDecoder {
     src: FakeSource,
     hw: bool,
@@ -331,6 +337,9 @@ pub struct FakeDecoder {
     reorder: u32,
     receives: u32,
     failed: bool,
+    deferred: bool,
+    /// Erreur différée, rendue par le prochain `receive`.
+    pending_error: Option<DecodeError>,
     /// Mode effectif, connu à la première image sortie.
     mode: DecodeMode,
     eof: bool,
@@ -352,6 +361,8 @@ impl FakeDecoder {
             reorder: reorder_depth(&f.source),
             receives: 0,
             failed: false,
+            deferred: f.deferred_corruption,
+            pending_error: None,
             mode: DecodeMode::Unknown,
             eof: false,
             buffer: BTreeMap::new(),
@@ -463,7 +474,12 @@ impl Decoder for FakeDecoder {
                     corrupt: true,
                 });
             }
-            return Err(error(DecodeErrorKind::InvalidData, "AU corrompue"));
+            let e = error(DecodeErrorKind::InvalidData, "AU corrompue");
+            if self.deferred {
+                self.pending_error = Some(e);
+                return Ok(());
+            }
+            return Err(e);
         }
         self.accept(entry);
         Ok(())
@@ -481,6 +497,9 @@ impl Decoder for FakeDecoder {
         if self.hw && self.fail_after.is_some_and(|n| self.receives > n) {
             self.failed = true;
             self.check_failed()?;
+        }
+        if let Some(e) = self.pending_error.take() {
+            return Err(e);
         }
         let delay = (self.reorder + self.latency) as usize;
         let ready = self.buffer.len() > delay || (self.eof && !self.buffer.is_empty());
@@ -528,6 +547,7 @@ impl Decoder for FakeDecoder {
         self.buffer.clear();
         self.gop = None;
         self.prev_gop = None;
+        self.pending_error = None;
     }
 
     fn stats(&self) -> DecoderStats {

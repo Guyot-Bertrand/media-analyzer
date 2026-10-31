@@ -1,6 +1,9 @@
 //! Copie d'une région d'une image libavcodec (en RAM) vers des [`Planes`] compactés, au format
-//! natif : yuv420p ⇒ `Planar8`, yuv420p10le ⇒ `Planar10`, nv12 ⇒ `SemiPlanar8`,
-//! p010le ⇒ `SemiPlanar10`. Les `strides` sont en octets.
+//! natif : yuv420p et yuvj420p (plage complète) ⇒ `Planar8`, yuv420p10le ⇒ `Planar10`,
+//! nv12 ⇒ `SemiPlanar8`, p010le ⇒ `SemiPlanar10`. Les `strides` sont en octets.
+//!
+//! Les formats 4:2:2 et 4:4:4 (et tout autre format) ne sont pas pris en charge en M1 : la copie
+//! rend `Unsupported`.
 
 use ma_decode::{DecodeError, DecodeErrorKind, PixelLayout, Planes, Rect, Size};
 use rsmpeg::avutil::AVFrame;
@@ -9,7 +12,8 @@ use rsmpeg::ffi;
 /// Layout et octets par échantillon d'un format de pixel `FFmpeg` pris en charge.
 pub(crate) fn layout_of(format: i32) -> Option<(PixelLayout, usize)> {
     match format {
-        ffi::AV_PIX_FMT_YUV420P => Some((PixelLayout::Planar8, 1)),
+        // yuvj420p : même disposition, seule la plage (complète) diffère.
+        ffi::AV_PIX_FMT_YUV420P | ffi::AV_PIX_FMT_YUVJ420P => Some((PixelLayout::Planar8, 1)),
         ffi::AV_PIX_FMT_YUV420P10LE => Some((PixelLayout::Planar10, 2)),
         ffi::AV_PIX_FMT_NV12 => Some((PixelLayout::SemiPlanar8, 1)),
         ffi::AV_PIX_FMT_P010LE => Some((PixelLayout::SemiPlanar10, 2)),
@@ -196,7 +200,13 @@ mod tests {
             layout_of(ffi::AV_PIX_FMT_P010LE),
             Some((PixelLayout::SemiPlanar10, 2))
         );
+        assert_eq!(
+            layout_of(ffi::AV_PIX_FMT_YUVJ420P),
+            Some((PixelLayout::Planar8, 1))
+        );
         assert_eq!(layout_of(ffi::AV_PIX_FMT_RGB24), None);
+        assert_eq!(layout_of(ffi::AV_PIX_FMT_YUV422P), None);
+        assert_eq!(layout_of(ffi::AV_PIX_FMT_YUV444P10LE), None);
     }
 
     #[test]

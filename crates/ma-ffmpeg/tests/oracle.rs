@@ -57,10 +57,10 @@ fn h264_and_mpeg2_vaapi() {
     }
 }
 
-/// Toutes les images RASL, demandées une à une de la dernière à la première (chaque demande
-/// repart d'un RAP) : correctes sauf celles du premier CRA, signalées non décodables.
-fn rasl_frames(pref: ModePref) {
-    let name = "hevc_720p_open_gop";
+/// Toutes les images RASL de `name`, demandées une à une de la dernière à la première (chaque
+/// demande repart d'un RAP) : bon numéro (décalé de `offset`), sauf celles du premier CRA,
+/// signalées non décodables. Rend (RASL correctes, RASL refusées).
+fn rasl_frames(name: &str, pref: ModePref, offset: u32) -> (u32, u32) {
     let src = source(name);
     let vp = band(manifest(name).dims());
     let mut nav = navigator(src.clone(), pref);
@@ -74,7 +74,7 @@ fn rasl_frames(pref: ModePref) {
         match start_for(&*src, e.decode_idx) {
             Ok(start) => {
                 assert!(start < e.decode_idx);
-                check(&mut nav, name, e.pres_idx, vp, 0);
+                check(&mut nav, name, e.pres_idx, vp, offset);
                 ok += 1;
             }
             Err(reason) => {
@@ -85,17 +85,44 @@ fn rasl_frames(pref: ModePref) {
             }
         }
     }
-    assert!(ok >= 3, "{ok} RASL décodées");
     assert_eq!(nav.take_events(), []);
-    eprintln!("{pref:?} : {ok} RASL correctes, {refused} non décodables (1er CRA)");
+    (ok, refused)
+}
+
+fn prefs() -> Vec<ModePref> {
+    let mut prefs = vec![ModePref::SoftwareOnly];
+    if require_vaapi() {
+        prefs.push(ModePref::Auto);
+    }
+    prefs
 }
 
 #[ma_trace::covers("NAV.ORACLE.02")]
 #[test]
 fn open_gop_rasl_frames_correct() {
-    rasl_frames(ModePref::SoftwareOnly);
-    if require_vaapi() {
-        rasl_frames(ModePref::Auto);
+    for pref in prefs() {
+        let (ok, refused) = rasl_frames("hevc_720p_open_gop", pref, 0);
+        assert!(ok >= 3, "{pref:?} : {ok} RASL décodées");
+        assert_eq!(refused, 0, "le fichier commence par une IDR");
+    }
+}
+
+#[ma_trace::covers("NAV.ORACLE.02")]
+#[test]
+fn rasl_of_the_first_cra_are_not_decodable() {
+    let name = "hevc_720p_open_gop_from_cra";
+    // Numérotation du fichier d'origine : décalage lu sur le CRA de tête.
+    let src = source(name);
+    let vp = band(manifest(name).dims());
+    let cra = src.entry(0).unwrap();
+    assert_eq!(cra.rap, RapKind::Cra);
+    let mut nav = navigator(src, ModePref::SoftwareOnly);
+    let f = nav.frame(cra.pres_idx, vp, &never).unwrap();
+    let offset = common::code_of(&f, vp).unwrap() - cra.pres_idx;
+    for pref in prefs() {
+        let (ok, refused) = rasl_frames(name, pref, offset);
+        assert!(refused >= 1, "{pref:?} : RASL du premier CRA attendues");
+        assert!(ok >= 2, "{pref:?} : {ok} RASL décodées");
     }
 }
 

@@ -43,9 +43,11 @@ jobs:
       - name: Dépendances système (BUILD.md)
         run: |
           dnf install -y https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm
-          dnf install -y gcc gcc-c++ curl wget file pkgconf-pkg-config clang clang-devel mold git tar \
+          # --allowerasing : les paquets RPM Fusion remplacent ffmpeg-free s'il est présent.
+          dnf install -y --allowerasing gcc gcc-c++ curl wget file pkgconf-pkg-config clang clang-devel mold git tar \
             webkit2gtk4.1-devel gtk3-devel libsoup3-devel javascriptcoregtk4.1-devel \
-            libxdo-devel openssl-devel libappindicator-gtk3-devel librsvg2-devel ffmpeg-devel libva-devel
+            libxdo-devel openssl-devel libappindicator-gtk3-devel librsvg2-devel ffmpeg-devel libva-devel \
+            ffmpeg
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -64,4 +66,6 @@ jobs:
           echo "libavcodec $(pkg-config --modversion libavcodec) => $f"
           echo "FFMPEG_FEATURE=ma-ffmpeg/$f" >> "$GITHUB_ENV"
       - run: cargo build --workspace --features "$FFMPEG_FEATURE"
+      - name: Corpus de test (ffmpeg de RPM Fusion, avec libx264 et libx265)
+        run: cargo xtask corpus gen
       - run: cargo nextest run --workspace --features "$FFMPEG_FEATURE"

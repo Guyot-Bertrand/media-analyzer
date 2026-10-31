@@ -122,6 +122,26 @@ features = ["closed_gop", "truncated", "starts_mid_gop"]
 big = false
 derived_from = "hevc_720p_main10"
 
+# Dérivé de hevc_720p_open_gop : commence au 2e point d'accès (1er CRA, après l'IDR initiale), tables
+# PAT/PMT conservées en tête, jusqu'à la fin. Les RASL de ce premier CRA dépendent d'images absentes :
+# elles sont non décodables (NAV.ORACLE.02). `frames` est le nombre maximal ; la vérification accepte
+# 1..=frames.
+[[file]]
+name = "hevc_720p_open_gop_from_cra"
+file = "hevc_720p_open_gop_from_cra.ts"
+codec = "hevc"
+profile = "Main 10"
+size = "1280x720"
+fps = 50
+frames = 201
+gop = 50
+bframes = 3
+code_bits = 16
+code_modulo = 65536
+features = ["open_gop", "cra", "rasl", "starts_at_cra"]
+big = false
+derived_from = "hevc_720p_open_gop"
+
 # Recette du spike : segment de 20 s (1000 images) bouclé jusqu'à ≥ 4 Go. Généré avec `--big` seulement.
 [[file]]
 name = "uhd_big"
