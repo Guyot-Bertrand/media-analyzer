@@ -31,7 +31,7 @@
 | # | État |
 |---|---|
 | **M0** | Terminé, fusionné ; référentiel d'exigences MVP validé (point de passage n° 1). |
-| **M1** | Implémenté (branche `mvp/m1-transport-image`) ; mesures dans `06-mesures-m1.md`. **En attente de la décision du point de passage n° 2.** |
+| **M1** | Implémenté (branche `mvp/m1-transport-image`) ; mesures dans `06-mesures-m1.md`. Point de passage n° 2 franchi le 2026-10-31 : *go*, avec PERF.STEP.02 précisée (options 1 et 2 de `06` §5). |
 | M2 à M7 | À faire. M3 à M7 ne démarrent pas avant la décision du point de passage n° 2. |
 
 ## Points de passage avec le porteur du projet

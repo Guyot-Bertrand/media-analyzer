@@ -8,7 +8,7 @@
 
 ## 1. Verdict
 
-**Condition 1 du *go* tenue ; condition 2 tenue en régime établi à intervalle 200 ms seulement. La décision revient au porteur (§5).**
+**Condition 1 du *go* tenue ; condition 2 tenue en régime établi à intervalle 200 ms seulement. Décision du porteur le 2026-10-31 : *go*, avec PERF.STEP.02 précisée (§5).**
 
 L'image suivante côté interface est à 19–33 ms au p95 au zoom Ajusté et à 34–44 ms en 1:1 (seuil 100 ms ; spike : 106 ms). La réduction sur GPU (VPP) supprime tout transfert pleine résolution au zoom Ajusté. Le saut reste sous 500 ms au p95 (258–273 ms côté interface). Pour l'image précédente, le p95 est sous 100 ms partout. Le maximum passe de 1 357 ms (spike) à 95–114 ms avec un intervalle de 200 ms entre les pas. Le seuil « max < 250 ms » n'est **pas** tenu dans deux cas : à intervalle nul, au franchissement d'un GOP qui n'a pas été préchargé (270 et 278 ms dans 2 exécutions Xvfb sur 3, 336–426 ms au banc moteur), et au premier pas arrière juste après un saut sur une IDR (219–382 ms côté interface), publié à part (R18). Cause estimée (§4.1) : reculer d'une image depuis une IDR oblige à décoder le GOP précédent entier, 50 images 4K Main 10. Au coût mesuré du décodage seul (5,2 à 7,7 ms par image), cela donne environ 250 à 385 ms sur ce GPU, conversion non comptée. Le coût d'un GOP n'a pas été mesuré directement. Le seuil n'est tenu qu'avec la VPP, donc avec le pilote Intel non libre. Le pilote libre installé par défaut sur Ubuntu n'a pas de VPP : il impose un chemin dégradé (§4.2), ce qui concerne les portables des collègues.
 
@@ -200,7 +200,9 @@ En mode Auto, un profil que VA-API refuse (H.264 High10, profils 4:2:2) bascule 
 - **Source d'AU de test** : les bancs lisent le TS avec la source de `ma-testkit` (« 1 PES = 1 AU »). Elle est valable pour ce corpus généré par FFmpeg et sera remplacée par `ma-ts` en M2.
 - **Corpus synthétique** : mire, x265 `ultrafast`, GOP fermé. Les temps de décodage sont probablement optimistes face à un vrai flux broadcast.
 
-## 5. Options mesurées pour l'image précédente (à décider par le porteur)
+## 5. Options mesurées pour l'image précédente
+
+> **Décision du porteur (2026-10-31)** : *go*. Les options 1 et 2 sont retenues, et l'acceptation de PERF.STEP.02 est précisée en conséquence : un pas toutes les 200 ms au plus vite, et le premier pas arrière après un saut relève du seuil du saut, avec indicateur d'attente. L'option 4 reste à essayer en M7 sur de vrais flux broadcast si l'à-coup en appui maintenu gêne.
 
 Aucune option n'est retenue ici. Les chiffres viennent des mesures ci-dessus. Ce qui n'a pas été mesuré est signalé.
 
