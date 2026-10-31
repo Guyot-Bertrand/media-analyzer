@@ -54,7 +54,8 @@ code_modulo = 65536
 features = ["open_gop", "cra", "rasl"]
 big = false
 
-# x264 : `open-gop=1` + keyint fixe + scenecut=0 produit des I non IDR (une seule IDR, la première)
+# x264 : `open-gop=1` + keyint fixe + scenecut=0 (+ `b-adapt=2`, `b-pyramid=none`, 3 B : des B précèdent
+# l'I de reprise en présentation et le suivent en décodage) produit des I non IDR (une seule IDR, la première)
 # accompagnées d'un SEI recovery point.
 [[file]]
 name = "h264_720p_recovery"
@@ -65,7 +66,7 @@ size = "1280x720"
 fps = 25
 frames = 250
 gop = 25
-bframes = 2
+bframes = 3
 code_bits = 16
 code_modulo = 65536
 features = ["open_gop", "recovery_point", "single_idr"]
@@ -79,7 +80,7 @@ profile = "Main"
 size = "720x576"
 fps = 25
 frames = 125
-gop = 12
+gop = 13
 bframes = 2
 code_bits = 16
 code_modulo = 65536

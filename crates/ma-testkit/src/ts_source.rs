@@ -24,6 +24,10 @@ const READ_CHUNK: usize = TS_PACKET * 1024;
 /// Marge au-delà de `MAX_AU_BYTES` pour l'en-tête PES, retiré avant le contrôle final.
 const PES_SLACK: usize = 64;
 
+thread_local! {
+    static SCRATCH: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 fn invalid(msg: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, msg.into())
 }
@@ -98,6 +102,9 @@ fn codec_of(stream_type: u8) -> Option<Codec> {
 fn parse_pmt(payload: &[u8]) -> io::Result<(u16, Codec)> {
     let short = || invalid("PMT tronquée");
     let sec = psi_section(payload, 2)?;
+    if sec.len() < 12 {
+        return Err(short());
+    }
     let program_info = (usize::from(sec[10] & 0x0F) << 8) | usize::from(sec[11]);
     let mut rest = sec.get(12 + program_info..).ok_or_else(short)?;
     while rest.len() >= 5 {
@@ -333,22 +340,29 @@ impl AuSource for TsAuSource {
         })?;
         let too_big = || invalid(format!("AU {decode_idx} : plus de {MAX_AU_BYTES} octets"));
         buf.clear();
-        let mut chunk = vec![0u8; READ_CHUNK];
         let mut pos = loc.offset;
-        while pos < loc.end {
-            let n = usize::try_from(loc.end - pos).map_or(READ_CHUNK, |r| r.min(READ_CHUNK));
-            self.file.read_exact_at(&mut chunk[..n], pos)?;
-            for raw in chunk[..n].as_chunks::<TS_PACKET>().0 {
-                let p = parse_packet(raw)?;
-                if p.pid == self.pid {
-                    buf.extend_from_slice(p.payload);
+        // Tampon de lecture réutilisé d'un appel à l'autre (les bancs de latence appellent
+        // `read_au` en boucle), dimensionné à l'AU et borné à `READ_CHUNK`.
+        SCRATCH.with_borrow_mut(|chunk| {
+            while pos < loc.end {
+                let n = usize::try_from(loc.end - pos).map_or(READ_CHUNK, |r| r.min(READ_CHUNK));
+                if chunk.len() < n {
+                    chunk.resize(n, 0);
                 }
+                self.file.read_exact_at(&mut chunk[..n], pos)?;
+                for raw in chunk[..n].as_chunks::<TS_PACKET>().0 {
+                    let p = parse_packet(raw)?;
+                    if p.pid == self.pid {
+                        buf.extend_from_slice(p.payload);
+                    }
+                }
+                if buf.len() > MAX_AU_BYTES + PES_SLACK {
+                    return Err(too_big());
+                }
+                pos += n as u64;
             }
-            if buf.len() > MAX_AU_BYTES + PES_SLACK {
-                return Err(too_big());
-            }
-            pos += n as u64;
-        }
+            Ok(())
+        })?;
         let (es, _) = pes_header(buf)?;
         buf.drain(..es);
         if buf.len() > MAX_AU_BYTES {
@@ -704,6 +718,18 @@ mod tests {
         assert!(open_err(&ptr).to_string().contains("PSI"));
         ptr[3] = 0x20; // adaptation seule, aucune charge utile
         assert!(open_err(&ptr).to_string().contains("PSI"));
+        // PMT dont la section est trop courte pour contenir program_info_length.
+        for len in [9u8, 10] {
+            let mut m = vec![0x02, 0xB0, len, 0, 1, 0xC1, 0, 0, 0xE1, 0, 0xF0];
+            m.truncate(3 + usize::from(len) - 4);
+            m.extend_from_slice(&[0; 4]);
+            let mut bytes = pat(0x20);
+            bytes.extend(psi(0x20, &m));
+            assert!(
+                open_err(&bytes).to_string().contains("PMT"),
+                "section_length {len}"
+            );
+        }
         // PMT dont une description de flux dépasse la section.
         let mut m = vec![0x02, 0xB0, 18, 0, 1, 0xC1, 0, 0, 0xE1, 0, 0xF0, 0];
         m.extend_from_slice(&[0x0F, 0xE1, 1, 0xF0, 0x40]);

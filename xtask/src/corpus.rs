@@ -140,6 +140,8 @@ fn encoder_args(entry: &Entry) -> anyhow::Result<Vec<String>> {
                 "yuv420p",
             ]);
             args.extend(strs(&[
+                // GOP fermé : l'encodeur MPEG-2 produit des GOP de (bframes + 1) × k + 1 images
+                // (le manifeste doit donner une telle valeur, 13 avec 2 B ; 12 donnerait 10).
                 "-g",
                 &gop.to_string(),
                 "-bf",
@@ -158,9 +160,17 @@ fn encoder_args(entry: &Entry) -> anyhow::Result<Vec<String>> {
         }
         (codec, profile) => bail!("recette inconnue pour {codec} / {profile}"),
     };
+    // x264 en GOP ouvert : avec `b-adapt=0` l'I de reprise tombe toujours après une P, sans B de
+    // tête. `b-adapt=2` sans pyramide de B place des B qui précèdent l'I en présentation et le
+    // suivent en décodage (images `Skippable`).
+    let b_adapt = if entry.has("open_gop") && entry.codec == "h264" {
+        "b-adapt=2:b-pyramid=none"
+    } else {
+        "b-adapt=0"
+    };
     let params = if entry.codec == "h264" {
         format!(
-            "keyint={gop}:min-keyint={gop}:scenecut=0:bframes={bframes}:b-adapt=0:open-gop={open}"
+            "keyint={gop}:min-keyint={gop}:scenecut=0:bframes={bframes}:{b_adapt}:open-gop={open}"
         )
     } else {
         format!(

@@ -1,7 +1,7 @@
 //! Tests sur le corpus généré (`cargo xtask corpus gen`) : la source TS est comparée à `ffprobe`
 //! (oracle de test) et le numéro incrusté à des images décodées par `ffmpeg`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::Command;
 
@@ -95,8 +95,10 @@ fn codecs_sizes_and_counts_follow_the_manifest() {
     }
 }
 
+/// Lecture non vide, bornée, et débutant par un code de début ; la classification de la première
+/// tranche relue est celle de l'index (relecture de `read_au`, pas seulement de l'index).
 #[test]
-fn au_bytes_are_consistent_with_the_index() {
+fn read_au_returns_start_coded_units() {
     for name in [
         "h264_720p_closed",
         "hevc_720p_open_gop",
@@ -115,6 +117,120 @@ fn au_bytes_are_consistent_with_the_index() {
             let (picture, rap, _) = classify(src.codec(), &buf);
             assert_eq!((picture, rap), (e.picture, e.rap), "{name} AU {d}");
         }
+    }
+}
+
+/// Oracle ffprobe, par PTS : type d'image (`-show_frames`, `pict_type`) et drapeau de point
+/// d'accès `K` des paquets (`-show_packets` : renseigné par le démultiplexeur et l'analyseur du
+/// flux, donc indépendant du décodage ; il coïncide avec `key_frame` sur les 6 fichiers).
+fn ffprobe_oracle(path: &Path) -> (HashMap<i64, char>, HashSet<i64>) {
+    let probe = |entries: &str| {
+        let out = run(Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                entries,
+            ])
+            .args(["-of", "compact=p=0"])
+            .arg(path));
+        String::from_utf8(out).unwrap()
+    };
+    let field = |line: &str, key: &str| {
+        line.split('|')
+            .find_map(|f| f.strip_prefix(key).and_then(|v| v.strip_prefix('=')))
+            .unwrap_or_else(|| panic!("champ {key} absent : {line}"))
+            .to_owned()
+    };
+    let types = probe("frame=pts,pict_type")
+        .lines()
+        .map(|l| {
+            let t = field(l, "pict_type");
+            (field(l, "pts").parse().unwrap(), t.chars().next().unwrap())
+        })
+        .collect();
+    let keys = probe("packet=pts,flags")
+        .lines()
+        .filter(|l| field(l, "flags").contains('K'))
+        .map(|l| field(l, "pts").parse().unwrap())
+        .collect();
+    (types, keys)
+}
+
+#[test]
+fn classification_matches_ffprobe_frame_by_frame() {
+    for name in [
+        "h264_720p_closed",
+        "h264_720p_high10",
+        "h264_720p_recovery",
+        "hevc_720p_main10",
+        "hevc_720p_open_gop",
+        "mpeg2_576i_closed",
+    ] {
+        let path = corpus_file(name);
+        let src = TsAuSource::open(&path).unwrap();
+        let (types, keys) = ffprobe_oracle(&path);
+        assert_eq!(types.len(), src.len() as usize, "{name}");
+        let gop = manifest(name).gop;
+        let mut ours = HashSet::new();
+        for d in 0..src.len() {
+            let e = src.entry(d).unwrap();
+            let expected = match types[&e.pts] {
+                'I' => PictureType::I,
+                'P' => PictureType::P,
+                'B' => PictureType::B,
+                other => panic!("{name} : pict_type {other}"),
+            };
+            assert_eq!(e.picture, expected, "{name} AU {d} (PTS {})", e.pts);
+            if e.rap != RapKind::None {
+                ours.insert(e.pts);
+                // Un RAP est une image I, et tombe sur un multiple du GOP réel.
+                assert_eq!(e.picture, PictureType::I, "{name} AU {d}");
+                assert_eq!(
+                    e.pres_idx % gop,
+                    0,
+                    "{name} : RAP en présentation {}",
+                    e.pres_idx
+                );
+            }
+        }
+        assert_eq!(ours, keys, "{name} : ensemble des RAP");
+        // Tous les multiples du GOP sont des RAP.
+        let expected = (0..src.len()).step_by(gop as usize).count();
+        assert_eq!(ours.len(), expected, "{name} : nombre de RAP");
+    }
+}
+
+#[test]
+fn h264_open_gop_has_skippable_leading_pictures() {
+    let src = open("h264_720p_recovery");
+    let skippable: Vec<u32> = (0..src.len())
+        .filter(|&d| src.entry(d).unwrap().leading == Leading::Skippable)
+        .collect();
+    assert!(
+        !skippable.is_empty(),
+        "des B doivent précéder l'I de reprise"
+    );
+    for d in skippable {
+        let e = src.entry(d).unwrap();
+        // Suit son RAP en décodage, le précède en présentation.
+        let rap = (0..d)
+            .rev()
+            .filter_map(|i| src.entry(i))
+            .find(|r| r.rap != RapKind::None)
+            .unwrap();
+        assert!(matches!(rap.rap, RapKind::Recovery { .. }));
+        assert!(e.pres_idx < rap.pres_idx, "AU {d}");
+        // Pour l'afficher, on repart du RAP précédent.
+        let start = start_for(&src, d).unwrap();
+        assert!(
+            start < rap.decode_idx,
+            "AU {d} : départ {start}, RAP {}",
+            rap.decode_idx
+        );
+        assert_ne!(src.entry(start).unwrap().rap, RapKind::None);
     }
 }
 

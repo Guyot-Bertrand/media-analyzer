@@ -8,8 +8,9 @@ use ma_decode::{AuSource, Codec, FrameEntry};
 use crate::nal::first_slice_payload_offset;
 
 /// Enveloppe une source et met à zéro, pour les AU de `corrupt` (index de décodage), tous les octets
-/// qui suivent l'en-tête de la première tranche. Les ensembles de paramètres et l'en-tête de tranche
-/// restent intacts : le flux reste analysable, mais les données de l'image sont inutilisables.
+/// qui suivent l'en-tête NAL de la première tranche (1 octet en H.264, 2 en HEVC, le code de
+/// tranche en MPEG-2), **en-tête de tranche compris**. Les ensembles de paramètres qui précèdent
+/// et l'en-tête NAL restent intacts : le flux reste analysable, mais l'image est inutilisable.
 pub struct CorruptingSource<S> {
     pub inner: S,
     pub corrupt: HashSet<u32>,
@@ -90,7 +91,7 @@ mod tests {
     }
 
     #[test]
-    fn zeroes_everything_after_the_slice_header() {
+    fn zeroes_everything_after_the_nal_header() {
         let au = [0, 0, 0, 1, 0x67, 7, 0, 0, 0, 1, 0x65, 0x88, 9, 9, 9];
         let s = src(&au);
         let mut buf = Vec::new();

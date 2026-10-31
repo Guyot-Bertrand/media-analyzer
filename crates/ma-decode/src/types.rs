@@ -184,7 +184,8 @@ pub enum PixelLayout {
     SemiPlanar10,
 }
 
-/// Image en plans compactés.
+/// Image en plans compactés. `strides` est en **octets** pour tous les layouts, 16 bits compris
+/// (au moins `2 × largeur` pour `Planar10` et `SemiPlanar10`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Planes {
     pub layout: PixelLayout,
