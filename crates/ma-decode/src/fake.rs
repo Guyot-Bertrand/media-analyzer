@@ -1,4 +1,6 @@
-//! Source d'unités d'accès synthétique pour les tests (et, en Tâche 4, pour `FakeDecoder`).
+//! Simulateur pour les tests : source d'unités d'accès (`FakeSource`), décodeur (`FakeDecoder`) et
+//! fabrique (`FakeFactory`). Compilé pour les tests de la crate, ou avec la feature `fake` pour les
+//! tests des autres crates.
 //!
 //! Les entrées sont en ordre de décodage. Les images B sont réordonnées : `pres_idx` suit l'ordre de
 //! présentation, `pts = pres_idx × PTS_STEP`. Le contenu d'une AU est `decode_idx` sur 4 octets
@@ -9,10 +11,15 @@
 //! décodeur factice clone le jeu au moment de sa création et le consulte avec le `decode_idx` lu dans
 //! l'AU.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io;
+use std::time::Duration;
 
-use crate::{AuSource, Codec, FrameEntry, Leading, PictureType, RapKind};
+use crate::{
+    AuSource, Codec, DecodeError, DecodeErrorKind, DecodeMode, Decoder, DecoderFactory,
+    DecoderStats, FrameEntry, Leading, ModePref, PictureType, PixelLayout, Planes, RapKind,
+    Received, Rect, Size, Viewport,
+};
 
 /// Durée d'une image en unités de `pts`.
 pub const PTS_STEP: i64 = 3600;
@@ -214,6 +221,320 @@ impl AuSource for FakeSource {
     }
 }
 
+/// Taille d'image par défaut du décodeur factice.
+pub const FAKE_SIZE: Size = Size { w: 1280, h: 720 };
+
+/// Oracle du simulateur : `pres_idx` lu dans les 4 premiers octets du plan de luminance, si l'image
+/// est assez grande pour le porter.
+#[must_use]
+pub fn oracle(image: &Planes) -> Option<u32> {
+    let head = image.planes.first()?.get(..4)?;
+    Some(u32::from_le_bytes(head.try_into().ok()?))
+}
+
+/// Fabrique de [`FakeDecoder`] sur une [`FakeSource`].
+///
+/// Le jeu d'AU corrompues est celui de la source au moment de la création de la fabrique.
+#[derive(Debug, Clone)]
+pub struct FakeFactory {
+    pub source: FakeSource,
+    /// Décodage matériel disponible : `ModePref::Auto` ouvre alors un décodeur `Hardware`.
+    pub hw_available: bool,
+    /// Un décodeur matériel échoue (erreur `Gpu`, définitivement) au-delà de ce nombre d'appels à
+    /// `receive`.
+    pub hw_fail_after_receives: Option<u32>,
+    /// Taille d'affichage des images décodées.
+    pub size: Size,
+    /// Retard du pipeline, en images, au-delà du réordonnancement.
+    pub latency: u32,
+    /// Délai simulé par AU envoyée.
+    pub au_delay: Duration,
+}
+
+impl FakeFactory {
+    /// Matériel disponible, sans échec, 1280×720, une image de latence, sans délai.
+    #[must_use]
+    pub fn new(source: &FakeSource) -> FakeFactory {
+        FakeFactory {
+            source: source.clone(),
+            hw_available: true,
+            hw_fail_after_receives: None,
+            size: FAKE_SIZE,
+            latency: 1,
+            au_delay: Duration::ZERO,
+        }
+    }
+}
+
+impl DecoderFactory for FakeFactory {
+    fn open(&self, codec: Codec, pref: ModePref) -> Result<Box<dyn Decoder>, DecodeError> {
+        if codec != self.source.codec {
+            return Err(DecodeError {
+                kind: DecodeErrorKind::Unsupported,
+                detail: format!("codec {codec:?} différent de celui de la source"),
+            });
+        }
+        let hw = pref == ModePref::Auto && self.hw_available;
+        Ok(Box::new(FakeDecoder::new(self, hw)))
+    }
+}
+
+/// Nombre minimal d'images à garder en tampon pour sortir la source par `pts` croissant.
+fn reorder_depth(src: &FakeSource) -> u32 {
+    let in_order = |depth: usize| {
+        let mut buf = BTreeSet::new();
+        let mut last = i64::MIN;
+        for e in &src.entries {
+            buf.insert(e.pts);
+            if buf.len() > depth {
+                let pts = buf.pop_first().unwrap_or(i64::MAX);
+                if pts < last {
+                    return false;
+                }
+                last = pts;
+            }
+        }
+        buf.first().is_none_or(|&pts| pts > last)
+    };
+    let depth = (0..src.entries.len()).find(|&d| in_order(d)).unwrap_or(0);
+    u32::try_from(depth).unwrap_or(u32::MAX)
+}
+
+/// GOP en cours de décodage : son RAP et l'état de corruption de ses références.
+#[derive(Debug, Clone, Copy)]
+struct Gop {
+    rap: FrameEntry,
+    corrupt: bool,
+}
+
+/// Image décodée en attente de sortie.
+#[derive(Debug, Clone, Copy)]
+struct Pending {
+    pres_idx: u32,
+    corrupt: bool,
+}
+
+/// Décodeur simulé.
+///
+/// Il sort les images par `pts` croissant, avec un retard de `reorder + latency` images. Une image
+/// sans référence décodée depuis le dernier `reset` n'est pas émise : image qui précède le premier
+/// RAP reçu, `Skippable` (ou image de l'intervalle de reprise d'un recovery point) dont le RAP
+/// précédent n'a pas été reçu. Une AU corrompue renvoie `InvalidData` ; les images suivantes du
+/// même GOP (et les `Skippable` du GOP suivant) sortent `corrupt`.
+pub struct FakeDecoder {
+    src: FakeSource,
+    hw: bool,
+    fail_after: Option<u32>,
+    size: Size,
+    latency: u32,
+    delay: Duration,
+    reorder: u32,
+    receives: u32,
+    failed: bool,
+    /// Mode effectif, connu à la première image sortie.
+    mode: DecodeMode,
+    eof: bool,
+    buffer: BTreeMap<i64, Pending>,
+    gop: Option<Gop>,
+    prev_gop: Option<Gop>,
+    stats: DecoderStats,
+}
+
+impl FakeDecoder {
+    fn new(f: &FakeFactory, hw: bool) -> FakeDecoder {
+        FakeDecoder {
+            src: f.source.clone(),
+            hw,
+            fail_after: f.hw_fail_after_receives,
+            size: f.size,
+            latency: f.latency,
+            delay: f.au_delay,
+            reorder: reorder_depth(&f.source),
+            receives: 0,
+            failed: false,
+            mode: DecodeMode::Unknown,
+            eof: false,
+            buffer: BTreeMap::new(),
+            gop: None,
+            prev_gop: None,
+            stats: DecoderStats::default(),
+        }
+    }
+
+    fn check_failed(&self) -> Result<(), DecodeError> {
+        if self.failed {
+            return Err(error(DecodeErrorKind::Gpu, "périphérique perdu"));
+        }
+        Ok(())
+    }
+
+    /// Image `e` reçue intacte : la garde en tampon si ses références sont décodées.
+    fn accept(&mut self, e: FrameEntry) {
+        if e.rap != RapKind::None {
+            self.prev_gop = self.gop.take();
+            self.gop = Some(Gop {
+                rap: e,
+                corrupt: false,
+            });
+        }
+        let Some(gop) = self.gop else { return };
+        let needs_prev = e.leading == Leading::Skippable
+            || matches!(gop.rap.rap, RapKind::Recovery { frame_cnt }
+                if e.rap == RapKind::None
+                    && e.pres_idx < gop.rap.pres_idx.saturating_add(frame_cnt));
+        let corrupt = match (needs_prev, self.prev_gop) {
+            (false, _) => gop.corrupt,
+            (true, Some(prev)) => gop.corrupt || prev.corrupt,
+            (true, None) => return,
+        };
+        self.buffer.insert(
+            e.pts,
+            Pending {
+                pres_idx: e.pres_idx,
+                corrupt,
+            },
+        );
+    }
+
+    /// Image NV12 à la taille de sortie, `pres_idx` dans les 4 premiers octets.
+    fn render(pres_idx: u32, out: Size) -> Planes {
+        let (w, h) = (out.w as usize, out.h as usize);
+        let uv_stride = w.div_ceil(2) * 2;
+        let mut y = vec![0x80; w * h];
+        for (dst, src) in y.iter_mut().zip(pres_idx.to_le_bytes()) {
+            *dst = src;
+        }
+        Planes {
+            layout: PixelLayout::SemiPlanar8,
+            size: out,
+            planes: vec![y, vec![0x80; uv_stride * h.div_ceil(2)]],
+            strides: vec![out.w, u32::try_from(uv_stride).unwrap_or(u32::MAX)],
+        }
+    }
+}
+
+fn error(kind: DecodeErrorKind, detail: &str) -> DecodeError {
+    DecodeError {
+        kind,
+        detail: detail.to_owned(),
+    }
+}
+
+impl Decoder for FakeDecoder {
+    fn mode(&self) -> DecodeMode {
+        self.mode
+    }
+
+    fn latency(&self) -> u32 {
+        self.latency
+    }
+
+    fn send(&mut self, pts: i64, au: &[u8]) -> Result<(), DecodeError> {
+        if !self.delay.is_zero() {
+            std::thread::sleep(self.delay);
+        }
+        self.check_failed()?;
+        if self.eof {
+            return Err(error(
+                DecodeErrorKind::Internal,
+                "envoi après send_eof sans reset",
+            ));
+        }
+        let entry = <[u8; 4]>::try_from(au)
+            .ok()
+            .map(u32::from_le_bytes)
+            .and_then(|d| self.src.entry(d))
+            .ok_or_else(|| error(DecodeErrorKind::InvalidData, "AU illisible"))?;
+        if entry.pts != pts {
+            return Err(error(
+                DecodeErrorKind::Internal,
+                "pts différent de celui de l'AU",
+            ));
+        }
+        if self.src.is_corrupt(entry.decode_idx) {
+            if entry.rap == RapKind::None {
+                if let Some(gop) = &mut self.gop {
+                    gop.corrupt = true;
+                }
+            } else {
+                self.prev_gop = self.gop.take();
+                self.gop = Some(Gop {
+                    rap: entry,
+                    corrupt: true,
+                });
+            }
+            return Err(error(DecodeErrorKind::InvalidData, "AU corrompue"));
+        }
+        self.accept(entry);
+        Ok(())
+    }
+
+    fn send_eof(&mut self) -> Result<(), DecodeError> {
+        self.check_failed()?;
+        self.eof = true;
+        Ok(())
+    }
+
+    fn receive(&mut self, want: &dyn Fn(i64) -> Option<Viewport>) -> Result<Received, DecodeError> {
+        self.check_failed()?;
+        self.receives = self.receives.saturating_add(1);
+        if self.hw && self.fail_after.is_some_and(|n| self.receives > n) {
+            self.failed = true;
+            self.check_failed()?;
+        }
+        let delay = (self.reorder + self.latency) as usize;
+        let ready = self.buffer.len() > delay || (self.eof && !self.buffer.is_empty());
+        if !ready {
+            return Ok(if self.eof {
+                Received::Drained
+            } else {
+                Received::NeedInput
+            });
+        }
+        let Some((pts, p)) = self.buffer.pop_first() else {
+            return Ok(Received::Drained);
+        };
+        self.mode = if self.hw {
+            DecodeMode::Hardware
+        } else {
+            DecodeMode::Software
+        };
+        let Some(vp) = want(pts) else {
+            return Ok(Received::Discarded { pts });
+        };
+        let vp = vp
+            .normalized(self.size)
+            .map_err(|e| error(DecodeErrorKind::Internal, &e.to_string()))?;
+        self.stats.converted += 1;
+        let full = Rect {
+            x: 0,
+            y: 0,
+            w: self.size.w,
+            h: self.size.h,
+        };
+        if self.hw && vp.region == full && !vp.is_reduced() {
+            self.stats.full_res_transfers += 1;
+        }
+        Ok(Received::Frame {
+            pts,
+            image: FakeDecoder::render(p.pres_idx, vp.out),
+            corrupt: p.corrupt,
+            full: self.size,
+        })
+    }
+
+    fn reset(&mut self) {
+        self.eof = false;
+        self.buffer.clear();
+        self.gop = None;
+        self.prev_gop = None;
+    }
+
+    fn stats(&self) -> DecoderStats {
+        self.stats
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,5 +597,239 @@ mod tests {
         assert_eq!(m.entry(2).unwrap().rap, RapKind::None);
         assert_eq!(m.entry(3).unwrap().rap, RapKind::Idr);
         assert_eq!(m.len(), 11);
+    }
+
+    /// Décode `from..to` (ordre de décodage) après un `reset`, vide, et rend les images sorties :
+    /// (`pres_idx` lu par l'oracle, `corrupt`).
+    fn decode_range(
+        dec: &mut dyn Decoder,
+        src: &FakeSource,
+        from: u32,
+        to: u32,
+    ) -> Vec<(u32, bool)> {
+        let vp = Viewport::fit(FAKE_SIZE, Size { w: 32, h: 18 });
+        let mut out = Vec::new();
+        let mut collect = |dec: &mut dyn Decoder| loop {
+            match dec.receive(&|_| Some(vp)).unwrap() {
+                Received::Frame {
+                    image,
+                    corrupt,
+                    full,
+                    ..
+                } => {
+                    assert_eq!(full, FAKE_SIZE);
+                    out.push((oracle(&image).unwrap(), corrupt));
+                }
+                Received::NeedInput | Received::Drained => break,
+                Received::Discarded { .. } => unreachable!(),
+            }
+        };
+        dec.reset();
+        let mut buf = Vec::new();
+        for d in from..to {
+            src.read_au(d, &mut buf).unwrap();
+            let r = dec.send(src.entry(d).unwrap().pts, &buf);
+            assert_eq!(r.is_err(), src.is_corrupt(d));
+            collect(dec);
+        }
+        dec.send_eof().unwrap();
+        collect(dec);
+        out
+    }
+
+    fn open(src: &FakeSource, pref: ModePref) -> Box<dyn Decoder> {
+        FakeFactory::new(src).open(src.codec(), pref).unwrap()
+    }
+
+    fn pres(out: &[(u32, bool)]) -> Vec<u32> {
+        out.iter().map(|(p, _)| *p).collect()
+    }
+
+    #[test]
+    fn decoder_outputs_in_pts_order() {
+        let s = FakeSource::closed_gops(2, 8, 2);
+        let mut dec = open(&s, ModePref::Auto);
+        assert_eq!(dec.mode(), DecodeMode::Unknown);
+        assert_eq!(dec.latency(), 1);
+        let out = decode_range(&mut *dec, &s, 0, 16);
+        assert_eq!(pres(&out), (0..16).collect::<Vec<_>>());
+        assert_eq!(dec.mode(), DecodeMode::Hardware);
+        assert_eq!(dec.stats().converted, 16);
+        assert_eq!(dec.stats().full_res_transfers, 0);
+        assert_eq!(reorder_depth(&s), 1);
+        assert_eq!(reorder_depth(&FakeSource::recovery(2, 4, 1)), 0);
+    }
+
+    #[test]
+    fn decoder_drops_pictures_without_references() {
+        // RASL du CRA 8 (images 8 et 9) : émises seulement si le CRA 0 a été reçu.
+        let s = FakeSource::open_gops(3, 8, 2);
+        let mut dec = open(&s, ModePref::SoftwareOnly);
+        assert_eq!(
+            pres(&decode_range(&mut *dec, &s, 8, 16)),
+            (10..16).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            pres(&decode_range(&mut *dec, &s, 0, 16)),
+            (2..16).collect::<Vec<_>>()
+        );
+        assert_eq!(dec.mode(), DecodeMode::Software);
+        // Images avant le premier RAP reçu.
+        let m = FakeSource::starting_mid_gop(1, 4, 0, 3);
+        let mut dec = open(&m, ModePref::Auto);
+        assert_eq!(pres(&decode_range(&mut *dec, &m, 0, 7)), [3, 4, 5, 6]);
+        // Intervalle de reprise d'un recovery point sans RAP précédent.
+        let r = FakeSource::recovery(3, 10, 3);
+        let mut dec = open(&r, ModePref::Auto);
+        let out = pres(&decode_range(&mut *dec, &r, 10, 20));
+        assert_eq!(out, [10, 13, 14, 15, 16, 17, 18, 19]);
+        assert_eq!(
+            pres(&decode_range(&mut *dec, &r, 0, 14)),
+            (0..14).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn corruption_propagates_within_gop_and_to_leading_pictures() {
+        // AU 5 corrompue dans le GOP 0 ; le RAP du GOP 2 (décodage 16) aussi.
+        let s = FakeSource::open_gops(3, 8, 2).with_corrupt(HashSet::from([5, 16]));
+        let mut dec = open(&s, ModePref::Auto);
+        let out = decode_range(&mut *dec, &s, 0, 24);
+        let corrupt: Vec<u32> = out.iter().filter(|(_, c)| *c).map(|(p, _)| *p).collect();
+        let pres_of = |d: u32| s.entry(d).unwrap().pres_idx;
+        let gop0_after: Vec<u32> = (6..8).map(pres_of).collect();
+        // Images du GOP 0 après l'AU 5, RASL du GOP 1 (8 et 9), images du GOP 2 après son RAP.
+        let mut expected: Vec<u32> = gop0_after;
+        expected.extend([8, 9]);
+        expected.extend((17..24).map(pres_of));
+        expected.sort_unstable();
+        assert_eq!(corrupt, expected);
+        assert!(!pres(&out).contains(&pres_of(5)));
+        assert!(!pres(&out).contains(&pres_of(16)));
+    }
+
+    #[test]
+    fn decoder_rejects_misuse() {
+        let s = FakeSource::closed_gops(1, 4, 0);
+        let mut dec = open(&s, ModePref::Auto);
+        let err = dec.send(0, &[0, 0, 0]).unwrap_err();
+        assert_eq!(err.kind, DecodeErrorKind::InvalidData);
+        assert_eq!(
+            dec.send(0, &9u32.to_le_bytes()).unwrap_err().kind,
+            DecodeErrorKind::InvalidData
+        );
+        assert_eq!(
+            dec.send(1, &0u32.to_le_bytes()).unwrap_err().kind,
+            DecodeErrorKind::Internal
+        );
+        dec.send(0, &0u32.to_le_bytes()).unwrap();
+        dec.send_eof().unwrap();
+        assert_eq!(
+            dec.send(PTS_STEP, &1u32.to_le_bytes()).unwrap_err().kind,
+            DecodeErrorKind::Internal
+        );
+        // Viewport impossible à normaliser : bogue de l'appelant.
+        let empty = Viewport {
+            region: Rect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+            },
+            out: Size { w: 2, h: 2 },
+        };
+        assert_eq!(
+            dec.receive(&|_| Some(empty)).unwrap_err().kind,
+            DecodeErrorKind::Internal
+        );
+        assert_eq!(dec.receive(&|_| None).unwrap(), Received::Drained);
+        dec.reset();
+        dec.send(0, &0u32.to_le_bytes()).unwrap();
+        assert_eq!(dec.receive(&|_| None).unwrap(), Received::NeedInput);
+    }
+
+    #[test]
+    fn hardware_failure_is_injected_after_receives() {
+        let s = FakeSource::closed_gops(1, 8, 0);
+        let f = FakeFactory {
+            hw_fail_after_receives: Some(2),
+            ..FakeFactory::new(&s)
+        };
+        let mut dec = f.open(Codec::H264, ModePref::Auto).unwrap();
+        assert!(dec.receive(&|_| None).is_ok());
+        assert!(dec.receive(&|_| None).is_ok());
+        assert_eq!(
+            dec.receive(&|_| None).unwrap_err().kind,
+            DecodeErrorKind::Gpu
+        );
+        assert_eq!(
+            dec.send(0, &0u32.to_le_bytes()).unwrap_err().kind,
+            DecodeErrorKind::Gpu
+        );
+        assert_eq!(dec.send_eof().unwrap_err().kind, DecodeErrorKind::Gpu);
+        dec.reset();
+        assert_eq!(
+            dec.receive(&|_| None).unwrap_err().kind,
+            DecodeErrorKind::Gpu
+        );
+        // Le décodeur logiciel n'est pas concerné.
+        let mut sw = f.open(Codec::H264, ModePref::SoftwareOnly).unwrap();
+        for _ in 0..5 {
+            assert!(sw.receive(&|_| None).is_ok());
+        }
+        // Sans matériel, `Auto` ouvre un décodeur logiciel.
+        let no_hw = FakeFactory {
+            hw_available: false,
+            ..f
+        };
+        let mut dec = no_hw.open(Codec::H264, ModePref::Auto).unwrap();
+        assert_eq!(decode_range(&mut *dec, &s, 0, 8).len(), 8);
+        assert_eq!(dec.mode(), DecodeMode::Software);
+    }
+
+    #[test]
+    fn full_resolution_transfers_are_counted_in_hardware() {
+        let s = FakeSource::closed_gops(1, 2, 0);
+        let f = FakeFactory {
+            size: Size { w: 64, h: 32 },
+            latency: 0,
+            ..FakeFactory::new(&s)
+        };
+        let full = Viewport::fit(f.size, f.size);
+        for (pref, transfers) in [(ModePref::Auto, 1), (ModePref::SoftwareOnly, 0)] {
+            let mut dec = f.open(Codec::H264, pref).unwrap();
+            dec.send(0, &0u32.to_le_bytes()).unwrap();
+            let Received::Frame { image, .. } = dec.receive(&|_| Some(full)).unwrap() else {
+                panic!("image attendue");
+            };
+            assert_eq!(image.size, f.size);
+            assert_eq!(image.byte_len(), 64 * 32 * 3 / 2);
+            assert_eq!(dec.stats().full_res_transfers, transfers);
+        }
+    }
+
+    #[test]
+    fn au_delay_is_simulated() {
+        let s = FakeSource::closed_gops(1, 2, 0);
+        let f = FakeFactory {
+            au_delay: Duration::from_millis(5),
+            ..FakeFactory::new(&s)
+        };
+        let mut dec = f.open(Codec::H264, ModePref::Auto).unwrap();
+        let t = std::time::Instant::now();
+        dec.send(0, &0u32.to_le_bytes()).unwrap();
+        assert!(t.elapsed() >= Duration::from_millis(5));
+    }
+
+    #[test]
+    fn oracle_needs_four_bytes() {
+        let tiny = FakeDecoder::render(7, Size { w: 1, h: 1 });
+        assert_eq!(tiny.planes[0].len(), 1);
+        assert_eq!(tiny.planes[1].len(), 2);
+        assert_eq!(oracle(&tiny), None);
+        let odd = FakeDecoder::render(7, Size { w: 3, h: 3 });
+        assert_eq!(oracle(&odd), Some(7));
+        assert_eq!(odd.strides, [3, 4]);
+        assert_eq!(odd.planes[1].len(), 8);
     }
 }

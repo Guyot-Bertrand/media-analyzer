@@ -3,8 +3,9 @@
 
 mod blocks;
 mod decoder;
-#[cfg(test)]
-mod fake;
+#[cfg(any(test, feature = "fake"))]
+pub mod fake;
+mod navigator;
 mod plan;
 mod types;
 
@@ -13,6 +14,7 @@ pub use decoder::{
     DecodeError, DecodeErrorKind, DecodeEvent, DecodeMode, Decoder, DecoderFactory, DecoderStats,
     ModePref, Received,
 };
+pub use navigator::{FrameError, NavConfig, NavStats, Navigator};
 pub use plan::{NotDecodable, start_for};
 pub use types::{
     AuSource, Codec, DecodedFrame, FrameEntry, Leading, PictureType, PixelLayout, Planes, RapKind,
