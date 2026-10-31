@@ -8,9 +8,9 @@
 
 ## 1. Verdict
 
-**Condition 1 du *go* tenue ; condition 2 tenue en régime établi seulement. La décision revient au porteur (§5).**
+**Condition 1 du *go* tenue ; condition 2 tenue en régime établi à intervalle 200 ms seulement. La décision revient au porteur (§5).**
 
-L'image suivante côté interface est à 19–33 ms au p95 au zoom Ajusté et à 34–44 ms en 1:1 (seuil 100 ms ; spike : 106 ms). La réduction sur GPU (VPP) supprime tout transfert pleine résolution au zoom Ajusté. Le saut reste sous 500 ms au p95 (258–273 ms côté interface). Pour l'image précédente, le p95 est sous 100 ms partout. Le maximum passe de 1 357 ms (spike) à 95–114 ms avec un intervalle de 200 ms entre les pas. Le seuil « max < 250 ms » n'est **pas** tenu dans deux cas : à intervalle nul, au franchissement d'un GOP qui n'a pas été préchargé (270 et 278 ms dans 2 exécutions Xvfb sur 3, 336–426 ms au banc moteur), et au premier pas arrière juste après un saut sur une IDR (219–382 ms côté interface), publié à part (R18). La cause est physique : reculer d'une image depuis une IDR oblige à décoder le GOP précédent entier, 50 images 4K Main 10, soit environ 250 à 400 ms sur ce GPU. Le seuil n'est tenu qu'avec la VPP, donc avec le pilote Intel non libre. Le pilote libre installé par défaut sur Ubuntu n'a pas de VPP : il impose un chemin dégradé (§4.2), ce qui concerne les portables des collègues.
+L'image suivante côté interface est à 19–33 ms au p95 au zoom Ajusté et à 34–44 ms en 1:1 (seuil 100 ms ; spike : 106 ms). La réduction sur GPU (VPP) supprime tout transfert pleine résolution au zoom Ajusté. Le saut reste sous 500 ms au p95 (258–273 ms côté interface). Pour l'image précédente, le p95 est sous 100 ms partout. Le maximum passe de 1 357 ms (spike) à 95–114 ms avec un intervalle de 200 ms entre les pas. Le seuil « max < 250 ms » n'est **pas** tenu dans deux cas : à intervalle nul, au franchissement d'un GOP qui n'a pas été préchargé (270 et 278 ms dans 2 exécutions Xvfb sur 3, 336–426 ms au banc moteur), et au premier pas arrière juste après un saut sur une IDR (219–382 ms côté interface), publié à part (R18). Cause estimée (§4.1) : reculer d'une image depuis une IDR oblige à décoder le GOP précédent entier, 50 images 4K Main 10. Au coût mesuré du décodage seul (5,2 à 7,7 ms par image), cela donne environ 250 à 385 ms sur ce GPU, conversion non comptée. Le coût d'un GOP n'a pas été mesuré directement. Le seuil n'est tenu qu'avec la VPP, donc avec le pilote Intel non libre. Le pilote libre installé par défaut sur Ubuntu n'a pas de VPP : il impose un chemin dégradé (§4.2), ce qui concerne les portables des collègues.
 
 ## 2. Mesures
 
@@ -38,7 +38,7 @@ Comparaison au spike (moteur, VA-API) :
 | Saut p95 | 321 ms | 239–247 ms ✓ | < 500 ms |
 | Image suivante p50 / p95 | 46 / 54 ms | 9,3 / 10,2 ms (intervalle 0) ✓ | < 100 ms |
 | Image précédente max | 1 357 ms | 56–84 ms (intervalle 200, régime établi) ✓ ; 336–426 ms (intervalle 0) ✗ ; 1er pas 224–301 ms (intervalle 200) ✗ | < 250 ms |
-| Mémoire résidente max | 0,96 Go | 0,30 Go (Ajusté), 0,45 Go (1:1) ✓ | < 2 Go |
+| Mémoire résidente max | 0,96 Go | 0,30 Go (Ajusté), 0,45 Go (1:1) ✓ (processus du banc moteur, hors WebKit ; dans l'application réelle, le processus moteur pèse 490–651 Mo et l'application entière 0,77–0,92 Go, §2.4) | < 2 Go |
 | Saut p95 en logiciel | 625 ms | 473–504 ms (pas de seuil) | — |
 
 ### 2.2 Interface (banc `tools/transport-bench`, Tauri + WebGL2, piloté par WebdriverIO)
@@ -122,6 +122,9 @@ L'intervalle est le temps entre la réception d'une image et la demande suivante
 | Octets par image (moteur) | 3 110 400 (NV12 ou Planar8, 8 bits) ✓ | 6 220 800 (P010 ou Planar10, natif) | < 4 Mo en Ajusté |
 | Octets par réponse `frame://` (avec en-tête de 32 octets) | 3 110 432 | 6 220 832 | — |
 | `full_res_transfers`, VA-API / VPP, uhd_big | **0** (toutes les séries, moteur et interface) ✓ | 0 | 0 en Ajusté |
+| `full_res_transfers`, logiciel, uhd_big | 0 (moteur et interface, valeur globale et par série dans chaque JSON) | 0 | — |
+
+En logiciel, le compteur reste à 0 : il ne compte que les copies GPU → RAM d'une image pleine résolution, et ce mode n'en fait aucune. Seule la fumée VA-API sur `hevc_720p_main10` affiche un compteur non nul (451 au total ; 64, 16, 28, 255 et 10 selon les séries). C'est attendu : à 720p, la vue de 1280×720 est la taille native, donc chaque conversion est un transfert de l'image entière, sans réduction.
 
 Mémoire de l'application entière, en fin de parcours d'interface (somme des processus Tauri/moteur, WebKitWebProcess et WebKitNetworkProcess) :
 
@@ -186,7 +189,7 @@ Sans VA-API :
 ### 4.4 Autres limites connues
 
 - **Drapeau `corrupt`** (R11) : avec FFmpeg 6.1, les images qui dépendent d'une AU corrompue sortent sans drapeau. Seule l'AU rejetée émet `CorruptAu`. Une image faussée peut donc s'afficher sans marque. À revoir en M2 : la tolérance côté analyse viendra de `ma-ts` et `ma-h26x`.
-- **Moteur WebGL non identifié** : WebKitGTK masque le nom (`WebKit WebGL`, « Apple GPU » une fois démasqué). WebKitWebProcess a un nœud `/dev/dri/renderD*` ouvert, même sous Xvfb. Le dessin 1080p prend 2–5 ms. Ce sont des indices de rendu GPU, pas une preuve : llvmpipe n'est pas exclu.
+- **Moteur WebGL non identifié** : WebKitGTK masque le nom (`WebKit WebGL`, « Apple GPU » une fois démasqué). Ce nom n'a été relevé que dans les exécutions Xvfb (passe logicielle et fumées) ; les exécutions VA-API, Wayland comme Xvfb, ne l'enregistraient pas encore. WebKitWebProcess a un nœud `/dev/dri/renderD*` ouvert, même sous Xvfb. Le dessin 1080p prend 2–5 ms. Ce sont des indices de rendu GPU, pas une preuve : llvmpipe n'est pas exclu.
 - **Résolution de 1 ms** de `performance.now()` dans WebKitGTK : les petites durées (dessin de 2–5 ms) sont grossières.
 - **Captures WebDriver sur Wayland** : `saveScreenshot` ne répond jamais quand la fenêtre est en plein écran. Les exécutions Wayland ont donc été faites sans capture. Sur l'écran réel, la mesure s'arrête à `gl.finish`, pas à la composition à l'écran : le canvas 1920×1080 est agrandi par CSS en 2560×1440.
 - **PSS absent des exécutions VA-API** : le PSS a été ajouté au banc après ces exécutions. Seule la somme des RSS (766–919 Mo) est relevée en VA-API.
