@@ -3,17 +3,19 @@
 //!
 //! ```text
 //! cargo run --release -p ma-ffmpeg --example engine_bench -- \
-//!     --file <ts> --mode auto|sw --view fit:1920x1080|1to1:1920x1080 --dwell-ms <n> [--json <out>] [--modulo <n>]
+//!     --file <ts> --mode auto|sw --view fit:1920x1080|1to1:1920x1080 --dwell-ms <n> [--json <out>]
 //! ```
+//!
+//! Les scénarios de pas publient à part le premier pas (`first_ms`, juste après le placement,
+//! démarrage à froid) ; les percentiles portent sur les pas suivants. Le point de départ arrière
+//! (`total / 2`) est volontairement le pire cas si c'est une IDR : le premier pas recule alors
+//! d'un GOP entier. Le `dwell` s'applique aussi après chaque placement.
 //!
 //! Scénarios, à graine fixe : 100 sauts aléatoires, 200 pas avant, 200 pas arrière, puis attente de
 //! 1 s et lecture de `readiness`. `--dwell-ms` est le temps entre la réception d'une image et la
 //! demande suivante. Chaque numéro incrusté est lu dans l'image reçue et comparé à l'attendu : le
 //! banc s'arrête (code 1) au premier écart. En `1to1`, si la région ne couvre pas toute la bande
 //! du numéro (image plus large que la zone), seuls les bits couverts sont comparés.
-//!
-//! `--modulo` remplace la période du numéro lue dans le manifeste : `uhd_big`, bouclé par
-//! `ffmpeg -stream_loop`, compte 998 images par boucle (et non 1000), donc `--modulo 998`.
 //!
 //! Source TS de `ma-testkit` : réservée aux tests et aux bancs (hypothèse « 1 PES = 1 AU »).
 
@@ -47,8 +49,6 @@ struct Args {
     view: View,
     dwell: Duration,
     json: Option<PathBuf>,
-    /// Période du numéro incrusté, si elle diffère du manifeste.
-    modulo: Option<u32>,
 }
 
 fn parse_size(s: &str) -> Result<Size, String> {
@@ -63,7 +63,6 @@ fn parse_size(s: &str) -> Result<Size, String> {
 fn parse_args() -> Result<Args, String> {
     let mut it = std::env::args().skip(1);
     let (mut file, mut pref, mut view, mut dwell, mut json) = (None, None, None, None, None);
-    let mut modulo = None;
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or(format!("{flag} attend une valeur"));
         match flag.as_str() {
@@ -87,9 +86,6 @@ fn parse_args() -> Result<Args, String> {
                 let ms = value()?.parse().map_err(|_| "--dwell-ms invalide")?;
                 dwell = Some(Duration::from_millis(ms));
             }
-            "--modulo" => {
-                modulo = Some(value()?.parse().map_err(|_| "--modulo invalide")?);
-            }
             "--json" => json = Some(PathBuf::from(value()?)),
             other => return Err(format!("option inconnue : {other}")),
         }
@@ -100,7 +96,6 @@ fn parse_args() -> Result<Args, String> {
         view: view.ok_or("--view requis")?,
         dwell: dwell.ok_or("--dwell-ms requis")?,
         json,
-        modulo,
     })
 }
 
@@ -120,8 +115,12 @@ impl Rng {
 /// Résultat d'un scénario.
 struct Scenario {
     name: &'static str,
-    /// Latences des demandes, en millisecondes.
+    /// Latences des demandes en régime établi, en millisecondes (hors premier pas des scénarios
+    /// de pas).
     ms: Vec<f64>,
+    /// Latence du premier pas, juste après le placement (démarrage à froid), pour les scénarios
+    /// de pas.
+    first_ms: Option<f64>,
     /// Octets d'image en moyenne.
     bytes_per_frame: u64,
     /// Transferts GPU → RAM pleine résolution survenus pendant le scénario.
@@ -172,7 +171,14 @@ impl Bench<'_> {
         Ok((dt, frame.image.byte_len()))
     }
 
-    fn run(&self, name: &'static str, positions: &[u32]) -> Result<Scenario, String> {
+    /// Mesure les demandes `positions`, dans l'ordre. Si `split_first`, la première est publiée à
+    /// part (`first_ms`) et exclue des percentiles.
+    fn run(
+        &self,
+        name: &'static str,
+        positions: &[u32],
+        split_first: bool,
+    ) -> Result<Scenario, String> {
         let before = self.service.stats().decoder.full_res_transfers;
         let (mut ms, mut bytes) = (Vec::with_capacity(positions.len()), 0u64);
         for &pres in positions {
@@ -182,17 +188,21 @@ impl Bench<'_> {
             std::thread::sleep(self.dwell);
         }
         let count = positions.len().max(1) as u64;
+        let first_ms = split_first.then(|| ms.remove(0));
         Ok(Scenario {
             name,
             ms,
+            first_ms,
             bytes_per_frame: bytes / count,
             full_res_transfers: self.service.stats().decoder.full_res_transfers - before,
         })
     }
 
-    /// Place le décodeur à `pres` sans mesure.
+    /// Place le décodeur à `pres` sans mesure, puis attend `dwell` comme après toute image.
     fn seek(&self, pres: u32) -> Result<(), String> {
-        self.fetch(pres).map(|_| ())
+        self.fetch(pres)?;
+        std::thread::sleep(self.dwell);
+        Ok(())
     }
 }
 
@@ -240,8 +250,11 @@ fn real_main() -> Result<(), String> {
     let args = parse_args()?;
     let src = Arc::new(TsAuSource::open(&args.file).map_err(|e| format!("ouverture : {e}"))?);
     let total = src.len();
+    if total < 5 {
+        return Err(format!("{total} image(s) : le banc en demande au moins 5"));
+    }
     let name = stem_of(&args.file);
-    let modulo = args.modulo.unwrap_or_else(|| manifest(&name).code_modulo);
+    let modulo = manifest(&name).code_modulo;
     let mut nav_cfg = NavConfig::default();
     nav_cfg.cache_frames = nav_cfg.cache_frames.max(48);
     let nav = Navigator::new(
@@ -293,13 +306,13 @@ fn real_main() -> Result<(), String> {
     let fwd_from = fwd_from.min(total - 1 - steps);
     let back_from = (total / 2).max(steps).min(total - 1);
 
-    let mut scenarios = vec![bench.run("jump", &jumps)?];
+    let mut scenarios = vec![bench.run("jump", &jumps, false)?];
     bench.seek(fwd_from)?;
     let fwd: Vec<u32> = (1..=steps).map(|i| fwd_from + i).collect();
-    scenarios.push(bench.run("step_forward", &fwd)?);
+    scenarios.push(bench.run("step_forward", &fwd, true)?);
     bench.seek(back_from)?;
     let bwd: Vec<u32> = (1..=steps).map(|i| back_from - i).collect();
-    scenarios.push(bench.run("step_backward", &bwd)?);
+    scenarios.push(bench.run("step_backward", &bwd, true)?);
 
     std::thread::sleep(Duration::from_secs(1));
     let ready = service.readiness();
@@ -368,17 +381,25 @@ impl Report<'_> {
             vaapi_has_vpp(None)
         );
         println!(
-            "{:<14} {:>5} {:>9} {:>9} {:>9} {:>10} {:>12}",
-            "scénario", "n", "p50 ms", "p95 ms", "max ms", "transferts", "octets/image"
+            "{:<14} {:>5} {:>9} {:>9} {:>9} {:>10} {:>10} {:>12}",
+            "scénario",
+            "n",
+            "p50 ms",
+            "p95 ms",
+            "max ms",
+            "1er pas ms",
+            "transferts",
+            "octets/image"
         );
         for s in &self.scenarios {
             println!(
-                "{:<14} {:>5} {:>9.1} {:>9.1} {:>9.1} {:>10} {:>12}",
+                "{:<14} {:>5} {:>9.1} {:>9.1} {:>9.1} {:>10} {:>10} {:>12}",
                 s.name,
                 s.ms.len(),
                 s.percentile(500),
                 s.percentile(950),
                 s.percentile(1000),
+                s.first_ms.map_or("-".into(), |v| format!("{v:.1}")),
                 s.full_res_transfers,
                 s.bytes_per_frame
             );
@@ -419,13 +440,14 @@ impl Report<'_> {
         for (i, s) in self.scenarios.iter().enumerate() {
             let _ = write!(
                 j,
-                "{}\n    {{\"name\": \"{}\", \"n\": {}, \"p50_ms\": {:.3}, \"p95_ms\": {:.3}, \"max_ms\": {:.3}, \"full_res_transfers\": {}, \"bytes_per_frame\": {}}}",
+                "{}\n    {{\"name\": \"{}\", \"n\": {}, \"p50_ms\": {:.3}, \"p95_ms\": {:.3}, \"max_ms\": {:.3}, \"first_ms\": {}, \"full_res_transfers\": {}, \"bytes_per_frame\": {}}}",
                 if i == 0 { "" } else { "," },
                 s.name,
                 s.ms.len(),
                 s.percentile(500),
                 s.percentile(950),
                 s.percentile(1000),
+                s.first_ms.map_or("null".into(), |v| format!("{v:.3}")),
                 s.full_res_transfers,
                 s.bytes_per_frame
             );

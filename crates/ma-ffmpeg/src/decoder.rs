@@ -23,6 +23,11 @@ pub struct FfmpegFactory {
     pub render_node: Option<PathBuf>,
 }
 
+/// Côté minimal (sortie ou région) accepté par la VPP VA-API (16 à 16384 pixels sur iHD).
+const VPP_MIN_SIDE: u32 = 16;
+/// Nombre de viewports refusés par la VPP que l'on retient.
+const MAX_REFUSED: usize = 16;
+
 impl FfmpegFactory {
     /// Ouvre un décodeur, sous son type concret (pour lire [`FfmpegDecoder::hw_unavailable`]).
     ///
@@ -93,6 +98,8 @@ pub struct FfmpegDecoder {
     vaapi_path: ConvertPath,
     /// Réduction et recadrage des images VA-API (VPP).
     gpu: GpuScaler,
+    /// Viewports (normalisés) que la VPP a refusés : convertis sans VPP, sans réessayer le graphe.
+    vpp_refused: Vec<Viewport>,
     /// Réduction et recadrage des images logicielles (libswscale).
     cpu: CpuScaler,
 }
@@ -134,6 +141,7 @@ impl FfmpegDecoder {
             hw_unavailable: None,
             vaapi_path,
             gpu: GpuScaler::default(),
+            vpp_refused: Vec::new(),
             cpu: CpuScaler::default(),
         })
     }
@@ -180,15 +188,16 @@ impl FfmpegDecoder {
         frame: &AVFrame,
         vp: &Viewport,
     ) -> Result<(Planes, ConvertPath), DecodeError> {
-        let mapped = if self.vaapi_path == ConvertPath::VaapiMapped {
+        let mapped = if self.vaapi_path == ConvertPath::VaapiTransfer {
+            None
+        } else {
             let mapped = hw::map_read(frame).ok();
-            if mapped.is_none() {
-                // Projection refusée par le pilote : inutile de la retenter à chaque image.
+            if mapped.is_none() && self.vaapi_path == ConvertPath::VaapiMapped {
+                // Projection refusée par le pilote : inutile de la retenter à chaque image. (En
+                // mode VPP, la projection n'est qu'un repli par viewport : le chemin reste VPP.)
                 self.vaapi_path = ConvertPath::VaapiTransfer;
             }
             mapped
-        } else {
-            None
         };
         let (ram, path) = if let Some(m) = mapped {
             (m, ConvertPath::VaapiMapped)
@@ -200,6 +209,38 @@ impl FfmpegDecoder {
         };
         self.stats.full_res_transfers += 1;
         Ok((self.cpu.scale(&ram, vp)?, path))
+    }
+
+    /// Conversion d'une image VA-API : VPP si elle est offerte et accepte `vp`, sinon projection
+    /// et conversion CPU (`convert_without_vpp`).
+    fn convert_vaapi(
+        &mut self,
+        frame: &AVFrame,
+        vp: &Viewport,
+    ) -> Result<(Planes, ConvertPath), DecodeError> {
+        if self.vaapi_path != ConvertPath::VaapiVpp || self.vpp_refuses(vp) {
+            return self.convert_without_vpp(frame, vp);
+        }
+        let image = self.gpu.scale(frame, vp);
+        self.stats.full_res_transfers += std::mem::take(&mut self.gpu.full_res_transfers);
+        if let Ok(image) = image {
+            return Ok((image, ConvertPath::VaapiVpp));
+        }
+        // Viewport valide que la VPP ne sait pas produire : projection et conversion CPU pour lui,
+        // sans repli logiciel ni nouvel essai du graphe. Une vraie panne du GPU échoue aussi dans
+        // la conversion CPU et remonte alors en `Gpu`.
+        self.vpp_refused.truncate(MAX_REFUSED - 1);
+        self.vpp_refused.insert(0, *vp);
+        self.convert_without_vpp(frame, vp)
+    }
+
+    /// La VPP ne peut pas produire `vp` : sortie ou région sous sa taille minimale, ou viewport
+    /// déjà refusé.
+    fn vpp_refuses(&self, vp: &Viewport) -> bool {
+        [vp.out.w, vp.out.h, vp.region.w, vp.region.h]
+            .iter()
+            .any(|&side| side < VPP_MIN_SIDE)
+            || self.vpp_refused.contains(vp)
     }
 
     /// Le décodage est matériel, ou peut l'être (aucune image encore vue).
@@ -254,14 +295,10 @@ impl FfmpegDecoder {
         })?;
         // Réduction (8 bits) ou région 1:1 (profondeur native) : seule l'image affichée est
         // transférée en RAM.
-        let (image, path) = if !vaapi {
-            (self.cpu.scale(frame, &vp)?, ConvertPath::Software)
-        } else if self.vaapi_path == ConvertPath::VaapiVpp {
-            let image = self.gpu.scale(frame, &vp);
-            self.stats.full_res_transfers += std::mem::take(&mut self.gpu.full_res_transfers);
-            (image?, ConvertPath::VaapiVpp)
+        let (image, path) = if vaapi {
+            self.convert_vaapi(frame, &vp)?
         } else {
-            self.convert_without_vpp(frame, &vp)?
+            (self.cpu.scale(frame, &vp)?, ConvertPath::Software)
         };
         self.stats.converted += 1;
         self.stats.path = path;

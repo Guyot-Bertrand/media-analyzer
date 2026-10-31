@@ -280,6 +280,14 @@ fn verify(e: &Entry, path: &Path) -> anyhow::Result<()> {
         if size < BIG_TARGET_BYTES {
             bail!("{} : {size} octets < {BIG_TARGET_BYTES}", e.name);
         }
+        let n: u64 = probe(path, "stream=nb_read_packets", &["-count_packets"])?.parse()?;
+        if !whole_loops(n, e.frames) {
+            bail!(
+                "{} : {n} images, pas un multiple de {} (raccords de boucle défectueux)",
+                e.name,
+                e.frames
+            );
+        }
         return Ok(());
     }
     let n: u32 = probe(path, "stream=nb_read_packets", &["-count_packets"])?.parse()?;
@@ -401,6 +409,12 @@ fn make_big(e: &Entry, dest: &Path, dir: &Path) -> anyhow::Result<()> {
     result
 }
 
+/// Vrai si `n` images forment des boucles entières de `frames` images. Les fichiers générés avec
+/// l'ancien `-stream_loop` en copie (998 images par boucle, raccords indécodables) échouent ici.
+fn whole_loops(n: u64, frames: u32) -> bool {
+    frames > 0 && n > 0 && n.is_multiple_of(u64::from(frames))
+}
+
 /// Liste du démultiplexeur `concat` de `FFmpeg` : `seg` répété `times` fois.
 fn concat_list(seg: &Path, times: u64) -> String {
     let quoted = seg.display().to_string().replace('\'', "'\\''");
@@ -443,8 +457,14 @@ pub fn generate(root: &Path, big: bool, out: Option<PathBuf>) -> anyhow::Result<
     for e in entries.iter().filter(|e| big || !e.big) {
         let dest = dir.join(&e.file);
         if non_empty(&dest) {
-            println!("    {} : déjà présent", e.name);
-            continue;
+            if !e.big || verify(e, &dest).is_ok() {
+                println!("    {} : déjà présent", e.name);
+                continue;
+            }
+            println!(
+                "    {} : présent mais invalide (ancienne génération ?)",
+                e.name
+            );
         }
         println!("    {} : génération", e.name);
         match &e.derived_from {
@@ -478,6 +498,14 @@ mod tests {
         p[2] = (pid & 0xff) as u8;
         p[3] = tag;
         p
+    }
+
+    #[test]
+    fn whole_loops_rejects_stream_loop_files() {
+        assert!(whole_loops(62_000, 1000));
+        assert!(!whole_loops(61_878, 1000));
+        assert!(!whole_loops(0, 1000));
+        assert!(!whole_loops(1000, 0));
     }
 
     #[test]

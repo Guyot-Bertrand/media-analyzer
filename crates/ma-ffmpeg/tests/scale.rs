@@ -331,6 +331,79 @@ fn cpu_region_1to1_is_bit_exact() {
     assert_eq!(d.stats().full_res_transfers, 0);
 }
 
+/// R17 : un viewport que la VPP refuse (sortie ou région sous 16 pixels) se convertit par
+/// projection et conversion CPU, sans erreur `Gpu`, sans repli logiciel, et le décodage reste
+/// matériel. Région 1:1 de 8×8 exacte (P010), réduction en 8×8 proche de la référence logicielle ;
+/// le chemin annoncé est celui de la dernière image, puis la VPP reprend sur un viewport valide.
+#[test]
+fn vpp_refused_viewports_degrade_without_fallback() {
+    if !require_vpp() {
+        return;
+    }
+    quiet_ffmpeg();
+    let src = TsAuSource::open(&corpus_file(MAIN10)).unwrap();
+    let m = manifest(MAIN10);
+    let full = m.dims();
+    let tiny = Rect {
+        x: 256,
+        y: 128,
+        w: 8,
+        h: 8,
+    };
+    // 1:1 : identique au recadrage de l'image entière.
+    let mut d = open(&src, ModePref::Auto);
+    let parts = decode(&mut d, &src, 5, &|_| Viewport::region_1to1(full, tiny));
+    let mut w = open(&src, ModePref::Auto);
+    let wholes = decode(&mut w, &src, 5, &|_| {
+        Viewport::region_1to1(full, whole_of(full))
+    });
+    for (p, f) in parts.iter().zip(&wholes) {
+        assert_eq!(p.image.layout, PixelLayout::SemiPlanar10);
+        assert!(p.image == crop(&f.image, tiny), "image {}", p.pres);
+    }
+    check_codes(&wholes, whole_of(full), m.code_modulo, "entière");
+    assert_eq!(d.mode(), DecodeMode::Hardware);
+    assert!(matches!(
+        d.stats().path,
+        ConvertPath::VaapiMapped | ConvertPath::VaapiTransfer
+    ));
+    assert_eq!(d.gpu_graphs(), 0, "aucun graphe VPP pour 8×8");
+    // Réduction à 8×8 : proche de libswscale.
+    let small = Viewport {
+        region: whole_of(full),
+        out: Size { w: 8, h: 8 },
+    };
+    let mut d = open(&src, ModePref::Auto);
+    let hw = decode(&mut d, &src, 3, &|_| small);
+    let mut sw = open(&src, ModePref::SoftwareOnly);
+    let soft = decode(&mut sw, &src, 3, &|_| small);
+    for (a, b) in hw.iter().zip(&soft) {
+        assert_eq!(a.image.size, small.out);
+        assert_eq!(a.image.layout, PixelLayout::Planar8);
+        let row = |p: &Planes, y: usize| p.planes[0][y * p.strides[0] as usize..][..8].to_vec();
+        let diff: usize = (0..8)
+            .flat_map(|y| row(&a.image, y).into_iter().zip(row(&b.image, y)))
+            .map(|(x, y)| usize::from(x.abs_diff(y)))
+            .sum();
+        assert!(diff / 64 <= 12, "écart moyen de luma {}", diff / 64);
+    }
+    assert_eq!(d.mode(), DecodeMode::Hardware);
+    // Par le navigateur : aucun repli, et la VPP reprend sur un viewport valide.
+    let mut nav = common::navigator(
+        std::sync::Arc::new(TsAuSource::open(&corpus_file(MAIN10)).unwrap()),
+        ModePref::Auto,
+    );
+    for vp in [Viewport::region_1to1(full, tiny), small] {
+        nav.frame(30, vp, &common::never).unwrap();
+        assert_eq!(nav.take_events(), vec![]);
+        assert_eq!(nav.mode(), DecodeMode::Hardware);
+    }
+    common::check(&mut nav, MAIN10, 31, common::band(full), 0);
+    assert_eq!(nav.stats().decoder.path, ConvertPath::VaapiVpp);
+    assert_eq!(nav.take_events(), vec![]);
+    assert_eq!(nav.mode(), DecodeMode::Hardware);
+}
+
 /// Sans VPP (forcé : la machine de référence l'a), le décodage reste matériel : projection (ou
 /// transfert) de la surface, puis conversion CPU. Région 1:1 exacte au format natif (P010),
 /// réduction en `Planar8` avec le bon numéro ; chaque conversion lit la surface entière.
