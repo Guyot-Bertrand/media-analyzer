@@ -101,6 +101,7 @@ pub fn run(root: &Path, release: bool) -> anyhow::Result<bool> {
             ],
         ),
         ("licences et avis (cargo deny)", vec!["deny", "check"]),
+        ("corpus gen", vec!["xtask", "corpus", "gen"]),
         (
             "tests + couverture",
             vec![

@@ -1,0 +1,139 @@
+# Manifeste du corpus généré par `cargo xtask corpus gen`.
+# Les fichiers vont dans $MA_CORPUS_DIR (défaut ~/media-analyzer-corpus/generated), hors Git.
+#
+# Numéro incrusté : 16 bits sur toute la largeur de l'image, bloc i de W/16 de large, bande de H/24
+# de haut en haut de l'image, bit 0 à gauche, blanc = 1, chroma neutre dans la bande.
+# Valeur incrustée = n mod code_modulo (n = index de présentation).
+#
+# Champs : name, file, codec (nom ffprobe), profile (profil ffprobe), size (WxH), fps, frames,
+# gop, bframes, code_bits, code_modulo, features, big.
+# Champs optionnels : bitrate (débit cible), derived_from (fichier source d'un fichier dérivé).
+
+[[file]]
+name = "h264_720p_closed"
+file = "h264_720p_closed.ts"
+codec = "h264"
+profile = "High"
+size = "1280x720"
+fps = 25
+frames = 250
+gop = 25
+bframes = 2
+code_bits = 16
+code_modulo = 65536
+features = ["closed_gop"]
+big = false
+
+[[file]]
+name = "hevc_720p_main10"
+file = "hevc_720p_main10.ts"
+codec = "hevc"
+profile = "Main 10"
+size = "1280x720"
+fps = 50
+frames = 250
+gop = 50
+bframes = 3
+code_bits = 16
+code_modulo = 65536
+features = ["closed_gop"]
+big = false
+
+[[file]]
+name = "hevc_720p_open_gop"
+file = "hevc_720p_open_gop.ts"
+codec = "hevc"
+profile = "Main 10"
+size = "1280x720"
+fps = 50
+frames = 250
+gop = 50
+bframes = 3
+code_bits = 16
+code_modulo = 65536
+features = ["open_gop", "cra", "rasl"]
+big = false
+
+# x264 : `open-gop=1` + keyint fixe + scenecut=0 produit des I non IDR (une seule IDR, la première)
+# accompagnées d'un SEI recovery point.
+[[file]]
+name = "h264_720p_recovery"
+file = "h264_720p_recovery.ts"
+codec = "h264"
+profile = "High"
+size = "1280x720"
+fps = 25
+frames = 250
+gop = 25
+bframes = 2
+code_bits = 16
+code_modulo = 65536
+features = ["open_gop", "recovery_point", "single_idr"]
+big = false
+
+[[file]]
+name = "mpeg2_576i_closed"
+file = "mpeg2_576i_closed.ts"
+codec = "mpeg2video"
+profile = "Main"
+size = "720x576"
+fps = 25
+frames = 125
+gop = 12
+bframes = 2
+code_bits = 16
+code_modulo = 65536
+features = ["closed_gop", "interlaced"]
+big = false
+
+# Profil non supporté en VA-API sur Comet Lake : sert aux tests de repli logiciel.
+[[file]]
+name = "h264_720p_high10"
+file = "h264_720p_high10.ts"
+codec = "h264"
+profile = "High 10"
+size = "1280x720"
+fps = 25
+frames = 50
+gop = 25
+bframes = 2
+code_bits = 16
+code_modulo = 65536
+features = ["closed_gop", "unsupported_vaapi"]
+big = false
+
+# Dérivé de hevc_720p_main10 : tronqué au paquet de 188 octets près au milieu du 2e GOP, début coupé
+# au milieu du 1er GOP (premier PES vidéo complet après le milieu), tables PAT/PMT ré-injectées en
+# tête. `frames` est le nombre mesuré à la génération ; la vérification accepte 1..=frames.
+[[file]]
+name = "hevc_720p_cut"
+file = "hevc_720p_cut.ts"
+codec = "hevc"
+profile = "Main 10"
+size = "1280x720"
+fps = 50
+frames = 49
+gop = 50
+bframes = 3
+code_bits = 16
+code_modulo = 65536
+features = ["closed_gop", "truncated", "starts_mid_gop"]
+big = false
+derived_from = "hevc_720p_main10"
+
+# Recette du spike : segment de 20 s (1000 images) bouclé jusqu'à ≥ 4 Go. Généré avec `--big` seulement.
+[[file]]
+name = "uhd_big"
+file = "uhd_big.ts"
+codec = "hevc"
+profile = "Main 10"
+size = "3840x2160"
+fps = 50
+frames = 1000
+gop = 50
+bframes = 3
+code_bits = 16
+code_modulo = 1000
+features = ["closed_gop", "looped"]
+big = true
+bitrate = "25M"

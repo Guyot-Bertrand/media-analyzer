@@ -563,6 +563,7 @@ dependencies = [
  "serde-saphyr",
  "serde_json",
  "syn 2.0.119",
+ "toml",
  "walkdir",
 ]
 

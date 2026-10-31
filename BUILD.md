@@ -10,7 +10,8 @@ Plateformes : exécution sur **Ubuntu 24.04+** ; construction vérifiée aussi s
 sudo apt install -y build-essential curl wget file pkg-config clang libclang-dev mold \
   libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
   libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
-  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libva-dev
+  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev libavdevice-dev \
+  libswresample-dev libva-dev
 ```
 
 ### Fedora
@@ -43,4 +44,5 @@ cargo xtask ci          # formatage, clippy, licences, tests + couverture, traç
 
 - **TSDuck** (oracle TS) : paquet `.deb` / `.rpm` des releases https://github.com/tsduck/tsduck/releases
 - **Tests d'interface de bout en bout** : `webkit2gtk-driver` (Ubuntu) / `webkit2gtk4.1` fournit `WebKitWebDriver` (Fedora), `xvfb` / `xorg-x11-server-Xvfb`, `cargo install tauri-driver --locked`
+- **Corpus généré** (`cargo xtask corpus gen`, `--big` pour `uhd_big`, ≥ 4 Go) : `ffmpeg` et `ffprobe` avec `libx264` et `libx265` (`sudo apt install ffmpeg` ; RPM Fusion sous Fedora). Les fichiers vont dans `$MA_CORPUS_DIR` (défaut `~/media-analyzer-corpus/generated`), hors Git.
 - **Décodage matériel** : `vainfo` pour vérifier VA-API
