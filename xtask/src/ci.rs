@@ -56,6 +56,61 @@ pub fn crates_below(
         .collect()
 }
 
+/// Crate dont la couverture n'est garantie qu'avec un périphérique VA-API (chemin matériel).
+const GPU_CRATE: &str = "ma-ffmpeg";
+
+/// Feature de `ma-ffmpeg` pour la version de libavcodec `modversion` (`pkg-config --modversion
+/// libavcodec`) : 60 ⇒ `ffmpeg6`, 61 ⇒ `ffmpeg7`, 62 ⇒ `ffmpeg8` ; `None` pour une autre version.
+pub fn ffmpeg_feature(modversion: &str) -> Option<&'static str> {
+    match modversion.trim().split('.').next()? {
+        "60" => Some("ffmpeg6"),
+        "61" => Some("ffmpeg7"),
+        "62" => Some("ffmpeg8"),
+        _ => None,
+    }
+}
+
+/// Vrai si l'un des noms d'entrée de `/dev/dri` est un nœud de rendu (`renderD*`).
+pub fn has_render_node<I: IntoIterator<Item = String>>(names: I) -> bool {
+    names.into_iter().any(|n| n.starts_with("renderD"))
+}
+
+/// Sépare les crates sous le seuil en échecs et en avertissements : sans GPU, la couverture de
+/// `ma-ffmpeg` n'est pas bloquante.
+pub fn split_gpu_exempt(
+    below: Vec<(String, Option<f64>)>,
+    gpu: bool,
+) -> (Vec<(String, Option<f64>)>, bool) {
+    let (warned, failing): (Vec<_>, Vec<_>) =
+        below.into_iter().partition(|(n, _)| !gpu && n == GPU_CRATE);
+    (failing, !warned.is_empty())
+}
+
+fn libavcodec_feature() -> anyhow::Result<(String, &'static str)> {
+    let out = Command::new("pkg-config")
+        .args(["--modversion", "libavcodec"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("pkg-config introuvable ({e}) : voir BUILD.md"))?;
+    anyhow::ensure!(
+        out.status.success(),
+        "pkg-config ne trouve pas libavcodec : installer les paquets de développement FFmpeg (BUILD.md)"
+    );
+    let version = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    let feature = ffmpeg_feature(&version).ok_or_else(|| {
+        anyhow::anyhow!("libavcodec {version} non prise en charge (60, 61 ou 62 attendue)")
+    })?;
+    Ok((version, feature))
+}
+
+fn render_node_present() -> bool {
+    std::fs::read_dir("/dev/dri").is_ok_and(|d| {
+        has_render_node(
+            d.filter_map(Result::ok)
+                .map(|e| e.file_name().to_string_lossy().into_owned()),
+        )
+    })
+}
+
 /// Noms des crates du moteur présentes sous `crates/` (dossiers `ma-*`).
 pub fn engine_crates(root: &Path) -> Vec<String> {
     let mut v: Vec<String> = std::fs::read_dir(root.join("crates"))
@@ -70,10 +125,17 @@ pub fn engine_crates(root: &Path) -> Vec<String> {
     v
 }
 
-fn step(name: &str, program: &str, args: &[&str], root: &Path) -> anyhow::Result<bool> {
+fn step(
+    name: &str,
+    program: &str,
+    args: &[&str],
+    root: &Path,
+    env: &[(&str, &str)],
+) -> anyhow::Result<bool> {
     println!("==> {name}");
     let status = Command::new(program)
         .args(args)
+        .envs(env.iter().copied())
         .current_dir(root)
         .status()?;
     if !status.success() {
@@ -87,6 +149,17 @@ pub fn run(root: &Path, release: bool) -> anyhow::Result<bool> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let lcov = root.join("target/lcov.info");
     let lcov_arg = lcov.to_string_lossy().into_owned();
+    let (version, feature) = libavcodec_feature()?;
+    let features = format!("ma-ffmpeg/{feature}");
+    println!("==> FFmpeg : libavcodec {version} ⇒ feature {feature}");
+    let gpu = render_node_present();
+    let env: &[(&str, &str)] = if gpu {
+        println!("==> VA-API : périphérique présent ⇒ MA_REQUIRE_GPU=1");
+        &[("MA_REQUIRE_GPU", "1")]
+    } else {
+        println!("==> VA-API : aucun périphérique /dev/dri/renderD*");
+        &[]
+    };
     let steps: Vec<(&str, Vec<&str>)> = vec![
         ("formatage", vec!["fmt", "--check"]),
         (
@@ -95,6 +168,8 @@ pub fn run(root: &Path, release: bool) -> anyhow::Result<bool> {
                 "clippy",
                 "--workspace",
                 "--all-targets",
+                "--features",
+                &features,
                 "--",
                 "-D",
                 "warnings",
@@ -108,6 +183,8 @@ pub fn run(root: &Path, release: bool) -> anyhow::Result<bool> {
                 "llvm-cov",
                 "nextest",
                 "--workspace",
+                "--features",
+                &features,
                 "--profile",
                 "ci",
                 "--lcov",
@@ -117,7 +194,7 @@ pub fn run(root: &Path, release: bool) -> anyhow::Result<bool> {
         ),
     ];
     for (name, args) in &steps {
-        if !step(name, &cargo, args, root)? {
+        if !step(name, &cargo, args, root, env)? {
             return Ok(false);
         }
     }
@@ -128,6 +205,10 @@ pub fn run(root: &Path, release: bool) -> anyhow::Result<bool> {
         println!("    {name} : {pct:.1} %");
     }
     let below = crates_below(&cov, COVERAGE_THRESHOLD, &engine_crates(root));
+    let (below, warned) = split_gpu_exempt(below, gpu);
+    if warned {
+        eprintln!("avertissement : couverture de ma-ffmpeg non garantie : pas de VA-API");
+    }
     if !below.is_empty() {
         for (name, pct) in below {
             match pct {
@@ -148,7 +229,7 @@ pub fn run(root: &Path, release: bool) -> anyhow::Result<bool> {
     if release {
         trace.push("--release");
     }
-    step("traçabilité", &cargo, &trace, root)
+    step("traçabilité", &cargo, &trace, root, &[])
 }
 
 #[cfg(test)]
@@ -179,6 +260,41 @@ SF:/repo/xtask/src/main.rs\nLF:10\nLH:0\nend_of_record\n";
         let cov = coverage_by_crate(LCOV, Path::new("/repo"));
         let below = crates_below(&cov, 90.0, &engine(&["ma-good", "ma-bad", "ma-trace"]));
         assert_eq!(below, vec![("ma-bad".to_owned(), Some(80.0))]);
+    }
+
+    #[test]
+    fn ffmpeg_feature_follows_the_libavcodec_major() {
+        assert_eq!(ffmpeg_feature("60.31.102"), Some("ffmpeg6"));
+        assert_eq!(ffmpeg_feature("61.19.100\n"), Some("ffmpeg7"));
+        assert_eq!(ffmpeg_feature("62.11.100"), Some("ffmpeg8"));
+        assert_eq!(ffmpeg_feature("59.37.100"), None);
+        assert_eq!(ffmpeg_feature("600.1"), None);
+        assert_eq!(ffmpeg_feature(""), None);
+    }
+
+    #[test]
+    fn render_nodes_are_detected() {
+        let names = |v: &[&str]| v.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+        assert!(has_render_node(names(&["by-path", "card0", "renderD128"])));
+        assert!(!has_render_node(names(&["by-path", "card0"])));
+        assert!(!has_render_node(Vec::new()));
+    }
+
+    #[test]
+    fn ffmpeg_coverage_is_not_blocking_without_gpu() {
+        let below = vec![
+            ("ma-ffmpeg".to_owned(), Some(70.0)),
+            ("ma-bad".to_owned(), Some(80.0)),
+        ];
+        let (failing, warned) = split_gpu_exempt(below.clone(), false);
+        assert_eq!(failing, vec![("ma-bad".to_owned(), Some(80.0))]);
+        assert!(warned);
+        let (failing, warned) = split_gpu_exempt(below, true);
+        assert_eq!(failing.len(), 2);
+        assert!(!warned);
+        let (failing, warned) = split_gpu_exempt(vec![("ma-bad".to_owned(), None)], false);
+        assert_eq!(failing.len(), 1);
+        assert!(!warned);
     }
 
     #[test]

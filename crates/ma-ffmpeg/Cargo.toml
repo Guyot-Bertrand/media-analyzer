@@ -1,0 +1,39 @@
+[package]
+name = "ma-ffmpeg"
+description = "Liaison FFmpeg (libavcodec via rsmpeg) : décodeur logiciel et VA-API ; seule crate où `unsafe` est permis"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+publish.workspace = true
+
+# Le workspace interdit `unsafe` (`forbid`), et un `forbid` ne peut pas être levé dans la crate
+# (`#![allow(unsafe_code)]` est refusé par le compilateur). Cargo ne permet pas non plus de combiner
+# `workspace = true` avec des surcharges. Cette crate déclare donc ses propres tables de lints :
+# celles du workspace, à l'identique, sauf `unsafe_code`, plus deux garde-fous sur le code `unsafe`.
+# Toute modification de `[workspace.lints]` doit être reportée ici.
+[lints.rust]
+unsafe_code = "allow"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+undocumented_unsafe_blocks = "deny"
+
+[dependencies]
+ma-decode = { path = "../ma-decode" }
+rsmpeg = { version = "0.18", default-features = false, features = ["link_system_ffmpeg"] }
+
+[dev-dependencies]
+ma-testkit = { path = "../ma-testkit" }
+ma-trace = { path = "../ma-trace" }
+
+[features]
+# Version de FFmpeg du système (libavcodec 60 ⇒ ffmpeg6, 61 ⇒ ffmpeg7, 62 ⇒ ffmpeg8). Les features
+# de rsmpeg sont cumulatives (ffmpeg7 inclut ffmpeg6) : `cargo xtask ci` ajoute celle qui
+# correspond à `pkg-config --modversion libavcodec`.
+default = ["ffmpeg6"]
+ffmpeg6 = ["rsmpeg/ffmpeg6"]
+ffmpeg7 = ["rsmpeg/ffmpeg7"]
+ffmpeg8 = ["rsmpeg/ffmpeg8"]

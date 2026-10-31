@@ -52,5 +52,16 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      - run: cargo build --workspace
-      - run: cargo nextest run --workspace
+      - name: Feature FFmpeg selon libavcodec (comme cargo xtask ci)
+        run: |
+          major=$(pkg-config --modversion libavcodec | cut -d. -f1)
+          case "$major" in
+            60) f=ffmpeg6 ;;
+            61) f=ffmpeg7 ;;
+            62) f=ffmpeg8 ;;
+            *) echo "libavcodec $major non prise en charge (60, 61 ou 62 attendue)"; exit 1 ;;
+          esac
+          echo "libavcodec $(pkg-config --modversion libavcodec) => $f"
+          echo "FFMPEG_FEATURE=ma-ffmpeg/$f" >> "$GITHUB_ENV"
+      - run: cargo build --workspace --features "$FFMPEG_FEATURE"
+      - run: cargo nextest run --workspace --features "$FFMPEG_FEATURE"

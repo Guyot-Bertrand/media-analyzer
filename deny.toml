@@ -4,6 +4,12 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+  # `paste` (macros, à la compilation seulement) est archivé ; il n'est tiré que par rsmpeg, la
+  # liaison FFmpeg retenue (docs/04-resultats-spike.md §3.1). Avis « non maintenu », pas une faille.
+  # À retirer quand rsmpeg passera à un remplaçant (pastey…).
+  { id = "RUSTSEC-2024-0436", reason = "paste, macro de compilation tirée par rsmpeg ; non maintenu, sans faille connue" },
+]
 
 [licenses]
 version = 2
