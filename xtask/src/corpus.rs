@@ -384,19 +384,28 @@ fn make_big(e: &Entry, dest: &Path, dir: &Path) -> anyhow::Result<()> {
         std::fs::rename(tmp_path(&seg), &seg)?;
     }
     let seg_size = std::fs::metadata(&seg)?.len();
-    let loops = BIG_TARGET_BYTES.div_ceil(seg_size) - 1;
-    run(Command::new("ffmpeg")
-        .args([
-            "-v",
-            "error",
-            "-y",
-            "-stream_loop",
-            &loops.to_string(),
-            "-i",
-        ])
-        .arg(&seg)
+    // Le démultiplexeur `concat` (et non `-stream_loop`) : en copie, `-stream_loop` laisse à
+    // chaque raccord une cinquantaine d'images P/B sans leur image IDR, que FFmpeg ne sait pas
+    // décoder, et ses boucles comptent 998 images au lieu de 1000.
+    let list = tmp_path(&dir.join("uhd_big.concat.txt"));
+    std::fs::write(
+        &list,
+        concat_list(&seg, BIG_TARGET_BYTES.div_ceil(seg_size)),
+    )?;
+    let result = run(Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "concat", "-safe", "0", "-i"])
+        .arg(&list)
         .args(["-map", "0", "-c", "copy", "-f", "mpegts"])
-        .arg(tmp_path(dest)))
+        .arg(tmp_path(dest)));
+    let _ = std::fs::remove_file(&list);
+    result
+}
+
+/// Liste du démultiplexeur `concat` de `FFmpeg` : `seg` répété `times` fois.
+fn concat_list(seg: &Path, times: u64) -> String {
+    let quoted = seg.display().to_string().replace('\'', "'\\''");
+    let line = format!("file '{quoted}'\n");
+    line.repeat(usize::try_from(times).unwrap_or(0))
 }
 
 fn non_empty(p: &Path) -> bool {
@@ -469,6 +478,15 @@ mod tests {
         p[2] = (pid & 0xff) as u8;
         p[3] = tag;
         p
+    }
+
+    #[test]
+    fn concat_list_repeats_the_segment_and_quotes_the_path() {
+        assert_eq!(
+            concat_list(Path::new("/c/it's.ts"), 2),
+            "file '/c/it'\\''s.ts'\nfile '/c/it'\\''s.ts'\n"
+        );
+        assert_eq!(concat_list(Path::new("/c/a.ts"), 0), "");
     }
 
     #[test]

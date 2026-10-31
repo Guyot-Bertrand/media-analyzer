@@ -18,6 +18,6 @@ pub use corpus::{
     CorpusEntry, corpus_dir, corpus_file, corpus_file_if_present, manifest, require_vaapi,
 };
 pub use corrupt::CorruptingSource;
-pub use frame_code::read_frame_code;
+pub use frame_code::{read_frame_code, read_frame_code_bits};
 pub use nal::{NalLeading, classify, first_slice_payload_offset};
 pub use ts_source::{MAX_AU_BYTES, TsAuSource};

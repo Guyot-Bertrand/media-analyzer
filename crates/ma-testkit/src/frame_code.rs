@@ -39,6 +39,23 @@ fn luma(img: &Planes, x: u32, y: u32) -> Option<(u32, u32)> {
 /// trop petit. La valeur est `n mod code_modulo` (voir le manifeste).
 #[must_use]
 pub fn read_frame_code(img: &Planes, region_of_full: Rect, full: Size) -> Option<u32> {
+    match read_frame_code_bits(img, region_of_full, full)? {
+        (code, ALL_BITS) => Some(code),
+        _ => None,
+    }
+}
+
+/// Masque des 16 bits du numéro.
+const ALL_BITS: u32 = (1 << BITS) - 1;
+
+/// Comme [`read_frame_code`], mais tolère une région qui ne couvre qu'une partie de la bande
+/// (zoom 1:1 sur une image plus large que la zone) : renvoie `(code, masque)`, où `masque` marque
+/// les bits lus (les autres sont à 0 dans `code`).
+///
+/// Renvoie `None` si la ligne d'échantillonnage est hors de la région, si aucun bit n'est lisible
+/// ou si le tampon est trop petit.
+#[must_use]
+pub fn read_frame_code_bits(img: &Planes, region_of_full: Rect, full: Size) -> Option<(u32, u32)> {
     let (bw, bh) = (full.w / BITS, full.h / 24);
     let r = region_of_full;
     if bw == 0 || bh == 0 || r.w == 0 || r.h == 0 || img.size.w == 0 || img.size.h == 0 {
@@ -56,16 +73,17 @@ pub fn read_frame_code(img: &Planes, region_of_full: Rect, full: Size) -> Option
         u32::try_from(v).unwrap_or(u32::MAX).min(size - 1)
     };
     let iy = map(cy, y0, r.h, img.size.h);
-    let mut code = 0;
+    let (mut code, mut mask) = (0, 0);
     for i in 0..BITS {
         let cx = u64::from(i * bw + bw / 2);
         if cx < x0 || cx >= x1 {
-            return None;
+            continue;
         }
         let (v, mid) = luma(img, map(cx, x0, r.w, img.size.w), iy)?;
         code |= u32::from(v >= mid) << i;
+        mask |= 1 << i;
     }
-    Some(code)
+    (mask != 0).then_some((code, mask))
 }
 
 #[cfg(test)]
@@ -180,6 +198,39 @@ mod tests {
             h: 720,
         };
         assert_eq!(read_frame_code(&img, right, FULL), None);
+    }
+
+    #[test]
+    fn partial_band_reads_only_the_covered_bits() {
+        // Moitié gauche de l'image : les 8 premiers blocs seulement.
+        let left = Rect {
+            x: 0,
+            y: 0,
+            w: 640,
+            h: 720,
+        };
+        for layout in LAYOUTS {
+            let img = synth(layout, Size { w: 640, h: 720 }, left, FULL, 0xA5C3);
+            assert_eq!(
+                read_frame_code_bits(&img, left, FULL),
+                Some((0xC3, 0x00FF)),
+                "{layout:?}"
+            );
+            assert_eq!(read_frame_code(&img, left, FULL), None);
+        }
+        let whole = synth(PixelLayout::Planar8, FULL, WHOLE, FULL, 0xA5C3);
+        assert_eq!(
+            read_frame_code_bits(&whole, WHOLE, FULL),
+            Some((0xA5C3, 0xFFFF))
+        );
+        // Aucun bloc dans la région : rien à lire.
+        let below = Rect {
+            x: 0,
+            y: 100,
+            w: 1280,
+            h: 200,
+        };
+        assert_eq!(read_frame_code_bits(&whole, below, FULL), None);
     }
 
     #[test]

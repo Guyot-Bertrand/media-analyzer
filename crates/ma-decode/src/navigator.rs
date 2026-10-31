@@ -15,15 +15,24 @@ use crate::{
     Size, Viewport, ViewportError, start_for,
 };
 
+/// Côté minimal de la sortie du viewport de sondage : le traitement vidéo VA-API (VPP) refuse les
+/// sorties de moins de 16 pixels (« Hardware does not support scaling to size 2x2 »), ce qui,
+/// avec 2×2, faisait repasser en logiciel dès le sondage. Le décodeur borne le viewport à la
+/// taille de l'image si elle est plus petite.
+const PROBE_SIDE: u32 = 16;
+
 /// Viewport minimal utilisé pour apprendre la taille de l'image.
 const PROBE_VIEWPORT: Viewport = Viewport {
     region: Rect {
         x: 0,
         y: 0,
-        w: 2,
-        h: 2,
+        w: PROBE_SIDE,
+        h: PROBE_SIDE,
     },
-    out: Size { w: 2, h: 2 },
+    out: Size {
+        w: PROBE_SIDE,
+        h: PROBE_SIDE,
+    },
 };
 
 /// Réglages du navigateur.
@@ -975,6 +984,14 @@ mod tests {
         assert_eq!(nav.stats().aus_sent, before + 3);
         get(&mut nav, 60);
         assert_eq!(nav.stats().aus_sent, expected);
+    }
+
+    #[test]
+    fn probe_viewport_is_accepted_by_hardware_scalers() {
+        // Le VPP VA-API refuse les sorties de moins de 16 pixels.
+        const { assert!(PROBE_SIDE >= 16) };
+        assert_eq!(PROBE_VIEWPORT.out.w, PROBE_VIEWPORT.region.w);
+        assert_eq!(PROBE_VIEWPORT.out.h, PROBE_VIEWPORT.region.h);
     }
 
     #[test]
