@@ -504,7 +504,7 @@ impl Decoder for FakeDecoder {
         };
         let vp = vp
             .normalized(self.size)
-            .map_err(|e| error(DecodeErrorKind::Internal, &e.to_string()))?;
+            .map_err(|e| error(DecodeErrorKind::Unsupported, &format!("viewport : {e}")))?;
         self.stats.converted += 1;
         let full = Rect {
             x: 0,
@@ -728,7 +728,7 @@ mod tests {
             dec.send(PTS_STEP, &1u32.to_le_bytes()).unwrap_err().kind,
             DecodeErrorKind::Internal
         );
-        // Viewport impossible à normaliser : bogue de l'appelant.
+        // Viewport impossible à normaliser : `Unsupported`, qui ne déclenche jamais le repli.
         let empty = Viewport {
             region: Rect {
                 x: 0,
@@ -740,7 +740,7 @@ mod tests {
         };
         assert_eq!(
             dec.receive(&|_| Some(empty)).unwrap_err().kind,
-            DecodeErrorKind::Internal
+            DecodeErrorKind::Unsupported
         );
         assert_eq!(dec.receive(&|_| None).unwrap(), Received::Drained);
         dec.reset();

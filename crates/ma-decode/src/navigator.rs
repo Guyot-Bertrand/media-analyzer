@@ -173,18 +173,12 @@ enum Outcome {
 /// Navigateur d'images sur une source d'AU.
 pub struct Navigator {
     src: Arc<dyn AuSource>,
-    #[expect(
-        dead_code,
-        reason = "réouverture du décodeur lors du repli logiciel (Tâche 5)"
-    )]
     factory: Arc<dyn DecoderFactory>,
-    #[expect(
-        dead_code,
-        reason = "réouverture du décodeur lors du repli logiciel (Tâche 5)"
-    )]
     pref: ModePref,
     cfg: NavConfig,
     decoder: Box<dyn Decoder>,
+    /// Vrai une fois le repli logiciel effectué : il n'a lieu qu'une fois par session.
+    fell_back: bool,
     session: Option<Session>,
     cache: Cache,
     /// Dernière demande de premier plan ([`Navigator::frame`]).
@@ -211,6 +205,7 @@ impl Navigator {
             pref,
             cfg,
             decoder,
+            fell_back: false,
             session: None,
             cache: Cache {
                 cap: cfg.cache_frames,
@@ -397,7 +392,68 @@ impl Navigator {
     }
 
     /// Image demandée, depuis le cache ou le décodeur, sans validation du viewport.
+    ///
+    /// Repli logiciel : une erreur `Gpu`, `Device` ou `Internal` d'un décodeur matériel déclenche,
+    /// une seule fois par navigateur, la réouverture d'un décodeur logiciel puis un nouvel essai
+    /// de la demande depuis son point d'accès aléatoire. `InvalidData` et `Unsupported` ne
+    /// déclenchent jamais le repli. Une erreur du décodeur logiciel remonte telle quelle.
     fn fetch(
+        &mut self,
+        pres_idx: u32,
+        vp: Viewport,
+        dir: Direction,
+        cancel: &dyn Fn() -> bool,
+    ) -> Result<Arc<DecodedFrame>, FrameError> {
+        match self.fetch_once(pres_idx, vp, dir, cancel) {
+            Err(FrameError::Decoder(e)) if self.falls_back_on(&e) => {
+                if !self.fall_back(pres_idx, &e) {
+                    return Err(FrameError::Decoder(e));
+                }
+                self.fetch_once(pres_idx, vp, dir, cancel)
+            }
+            r => r,
+        }
+    }
+
+    /// Vrai si `e` doit faire basculer en logiciel.
+    ///
+    /// Le décodeur est considéré matériel s'il l'est (`Hardware`) ou si son mode n'est pas encore
+    /// connu (`Unknown`, aucune image sortie) alors que le matériel a été demandé
+    /// ([`ModePref::Auto`]). Dans ce dernier cas, un décodeur en réalité logiciel (matériel
+    /// indisponible) est rouvert en logiciel pour rien : le repli est alors sans effet et l'erreur
+    /// du second décodeur remonte.
+    fn falls_back_on(&self, e: &DecodeError) -> bool {
+        let hardware = match self.decoder.mode() {
+            DecodeMode::Hardware => true,
+            DecodeMode::Unknown => self.pref == ModePref::Auto,
+            DecodeMode::Software => false,
+        };
+        !self.fell_back
+            && hardware
+            && matches!(
+                e.kind,
+                DecodeErrorKind::Gpu | DecodeErrorKind::Device | DecodeErrorKind::Internal
+            )
+    }
+
+    /// Remplace le décodeur par un décodeur logiciel ; vide le cache et la session. Rend faux si
+    /// le décodeur logiciel ne peut pas être ouvert (le décodeur courant est alors conservé).
+    fn fall_back(&mut self, pres_idx: u32, cause: &DecodeError) -> bool {
+        let Ok(decoder) = self.factory.open(self.src.codec(), ModePref::SoftwareOnly) else {
+            return false;
+        };
+        self.fell_back = true;
+        self.decoder = decoder;
+        self.session = None;
+        self.cache.map.clear();
+        self.events.push(DecodeEvent::FellBackToSoftware {
+            reason: cause.to_string(),
+            at_pres: Some(pres_idx),
+        });
+        true
+    }
+
+    fn fetch_once(
         &mut self,
         pres_idx: u32,
         vp: Viewport,
@@ -987,36 +1043,215 @@ mod tests {
         assert!(!nav.is_cached(39, &small()));
     }
 
+    /// Navigation continue de 60 images ; le matériel tombe après 30 appels à `receive`.
+    #[ma_trace::covers("PERF.HW.01")]
     #[test]
-    fn gpu_error_is_reported() {
+    fn gpu_error_mid_navigation_falls_back_without_losing_frame() {
         let src = FakeSource::closed_gops(4, 24, 2);
         let mut nav = nav_with(FakeFactory {
-            hw_fail_after_receives: Some(5),
+            hw_fail_after_receives: Some(30),
             ..FakeFactory::new(&src)
         });
-        for _ in 0..2 {
-            let err = nav.frame(50, small(), &never).unwrap_err();
-            assert!(
-                matches!(&err, FrameError::Decoder(e) if e.kind == DecodeErrorKind::Gpu),
-                "{err:?}"
-            );
+        for p in 2..62 {
+            get(&mut nav, p);
         }
+        assert_eq!(nav.mode(), DecodeMode::Software);
+        let falls: Vec<_> = nav
+            .take_events()
+            .into_iter()
+            .filter(|e| matches!(e, DecodeEvent::FellBackToSoftware { .. }))
+            .collect();
+        assert_eq!(falls.len(), 1, "{falls:?}");
+        assert!(matches!(
+            &falls[0],
+            DecodeEvent::FellBackToSoftware { reason, at_pres: Some(_) } if reason.contains("Gpu")
+        ));
+        // Le repli ne se reproduit pas.
+        get(&mut nav, 5);
+        assert_eq!(nav.take_events(), []);
     }
 
     #[test]
-    fn decoder_error_abandons_session_and_restarts_from_rap() {
-        // AU 30 remplacée une seule fois : le décodeur répond `Internal` pendant la demande 35.
-        let src = FakeSource::closed_gops(2, 24, 0);
-        let mut reference = nav(&src);
-        get(&mut reference, 35);
-        let fresh = reference.stats().aus_sent;
+    fn fallback_clears_cache_and_restarts_from_rap() {
+        let src = FakeSource::closed_gops(4, 24, 0);
+        let mut nav = nav_with(FakeFactory {
+            hw_fail_after_receives: Some(14),
+            ..FakeFactory::new(&src)
+        });
+        get(&mut nav, 3);
+        assert!(nav.is_cached(3, &small()));
+        // Le matériel tombe pendant cette demande ; l'image 3 était en cache avant le repli.
+        get(&mut nav, 50);
+        assert_eq!(nav.mode(), DecodeMode::Software);
+        assert!(!nav.is_cached(3, &small()), "cache vidé par le repli");
+        assert_eq!(nav.take_events().len(), 1);
+    }
 
+    #[ma_trace::covers("PERF.HW.01")]
+    #[test]
+    fn unavailable_hw_opens_software() {
+        let src = FakeSource::closed_gops(2, 24, 2);
+        let mut nav = nav_with(FakeFactory {
+            hw_available: false,
+            ..FakeFactory::new(&src)
+        });
+        get(&mut nav, 2);
+        assert_eq!(nav.mode(), DecodeMode::Software);
+        assert_eq!(nav.take_events(), []);
+    }
+
+    #[test]
+    fn invalid_data_never_triggers_fallback() {
+        // Viewport hors image (taille inconnue du navigateur) : `Unsupported` du décodeur matériel.
+        let src = FakeSource::closed_gops(2, 24, 0);
+        let mut nav = nav(&src);
+        get(&mut nav, 2);
+        let mut nav = Navigator::new(
+            Arc::new(src.clone()),
+            Arc::new(FakeFactory::new(&src)),
+            ModePref::Auto,
+            NavConfig::default(),
+        )
+        .unwrap();
+        let outside = Viewport {
+            region: Rect {
+                x: 5000,
+                y: 0,
+                w: 10,
+                h: 10,
+            },
+            out: Size { w: 10, h: 10 },
+        };
+        let err = nav.frame(2, outside, &never).unwrap_err();
+        assert!(
+            matches!(&err, FrameError::Decoder(e) if e.kind == DecodeErrorKind::Unsupported),
+            "{err:?}"
+        );
+        assert_eq!(nav.take_events(), []);
+        // AU corrompue : `InvalidData`, toléré sans repli.
+        let src = FakeSource::closed_gops(2, 24, 0).with_corrupt(HashSet::from([5]));
+        let mut nav = nav_with(FakeFactory::new(&src));
+        let _ = nav.frame(5, small(), &never);
+        let _ = nav.frame(10, small(), &never);
+        assert_eq!(nav.mode(), DecodeMode::Hardware);
+        assert!(
+            nav.take_events()
+                .iter()
+                .all(|e| !matches!(e, DecodeEvent::FellBackToSoftware { .. }))
+        );
+    }
+
+    #[test]
+    fn software_error_is_reported() {
+        // Un décodeur logiciel qui échoue (`Internal`) n'a nulle part où se replier.
+        let src = FakeSource::closed_gops(2, 24, 0);
+        let mut nav = patched_with(
+            &src,
+            Patched {
+                wrong_au_once: Some(30),
+                ..Patched::default()
+            },
+            ModePref::SoftwareOnly,
+        );
+        let err = nav.frame(35, small(), &never).unwrap_err();
+        assert!(
+            matches!(&err, FrameError::Decoder(e) if e.kind == DecodeErrorKind::Internal),
+            "{err:?}"
+        );
+        assert_eq!(nav.take_events(), []);
+        assert_eq!(nav.mode(), DecodeMode::Software);
+    }
+
+    #[test]
+    fn fallback_happens_once_and_second_error_is_reported() {
+        // Matériel qui tombe dès le départ : le repli a lieu ; l'erreur du logiciel remonte.
+        let src = FakeSource::closed_gops(2, 24, 0);
         let mut nav = patched(
             &src,
             Patched {
                 wrong_au_once: Some(30),
                 ..Patched::default()
             },
+        );
+        get(&mut nav, 5); // mode matériel connu
+        // `Internal` sur matériel : repli, puis la nouvelle tentative réussit (l'AU n'est
+        // remplacée qu'une fois).
+        get(&mut nav, 35);
+        assert_eq!(nav.mode(), DecodeMode::Software);
+        assert_eq!(nav.take_events().len(), 1);
+    }
+
+    #[test]
+    fn unknown_mode_error_with_auto_falls_back_but_not_software_only() {
+        // Aucune image sortie : mode `Unknown`. `Auto` suppose le matériel ; `SoftwareOnly` jamais.
+        let src = FakeSource::closed_gops(2, 24, 0);
+        let mut nav = patched(
+            &src,
+            Patched {
+                wrong_au_once: Some(0),
+                ..Patched::default()
+            },
+        );
+        assert_eq!(nav.mode(), DecodeMode::Unknown);
+        get(&mut nav, 3);
+        assert_eq!(nav.mode(), DecodeMode::Software);
+        assert_eq!(nav.take_events().len(), 1);
+
+        let mut nav = patched_with(
+            &src,
+            Patched {
+                wrong_au_once: Some(0),
+                ..Patched::default()
+            },
+            ModePref::SoftwareOnly,
+        );
+        assert!(nav.frame(3, small(), &never).is_err());
+        assert_eq!(nav.take_events(), []);
+    }
+
+    #[test]
+    fn probe_size_falls_back_too() {
+        let src = FakeSource::closed_gops(4, 24, 2);
+        let mut nav = nav_with(FakeFactory {
+            hw_fail_after_receives: Some(0),
+            ..FakeFactory::new(&src)
+        });
+        assert_eq!(nav.probe_size(&never), Ok(FAKE_SIZE));
+        assert_eq!(nav.mode(), DecodeMode::Software);
+        assert_eq!(nav.take_events().len(), 1);
+    }
+
+    #[test]
+    fn prefetch_falls_back_too() {
+        let src = FakeSource::closed_gops(4, 24, 2);
+        let mut nav = nav_with(FakeFactory {
+            hw_fail_after_receives: Some(0),
+            ..FakeFactory::new(&src)
+        });
+        let f = nav
+            .prefetch_frame(10, small(), Direction::Forward, &never)
+            .unwrap();
+        assert_eq!(oracle(&f.image), Some(10));
+        assert_eq!(nav.mode(), DecodeMode::Software);
+        assert_eq!(nav.take_events().len(), 1);
+    }
+
+    #[test]
+    fn decoder_error_abandons_session_and_restarts_from_rap() {
+        // AU 30 remplacée une seule fois : le décodeur logiciel répond `Internal` pendant la demande 35
+        // (en matériel, ce serait un repli).
+        let src = FakeSource::closed_gops(2, 24, 0);
+        let mut reference = nav(&src);
+        get(&mut reference, 35);
+        let fresh = reference.stats().aus_sent;
+
+        let mut nav = patched_with(
+            &src,
+            Patched {
+                wrong_au_once: Some(30),
+                ..Patched::default()
+            },
+            ModePref::SoftwareOnly,
         );
         let err = nav.frame(35, small(), &never).unwrap_err();
         assert!(
@@ -1270,6 +1505,10 @@ mod tests {
     }
 
     fn patched(src: &FakeSource, patch: Patched) -> Navigator {
+        patched_with(src, patch, ModePref::Auto)
+    }
+
+    fn patched_with(src: &FakeSource, patch: Patched, pref: ModePref) -> Navigator {
         let patched = Patched {
             inner: Some(src.clone()),
             ..patch
@@ -1277,7 +1516,7 @@ mod tests {
         Navigator::new(
             Arc::new(patched),
             Arc::new(FakeFactory::new(src)),
-            ModePref::Auto,
+            pref,
             NavConfig::default(),
         )
         .unwrap()
