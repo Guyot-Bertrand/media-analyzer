@@ -1,0 +1,27 @@
+{
+  "name": "transport-bench",
+  "private": true,
+  "version": "0.1.0",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "tauri": "tauri",
+    "e2e": "node e2e/run.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.12.4"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^24.19.2",
+    "@wdio/cli": "^9.32.0",
+    "@wdio/local-runner": "^9.32.0",
+    "@wdio/mocha-framework": "^9.32.0",
+    "@wdio/spec-reporter": "^9.32.0",
+    "typescript": "~7.0.2",
+    "vite": "^8.3.5"
+  }
+}

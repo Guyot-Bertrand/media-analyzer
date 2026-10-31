@@ -79,5 +79,6 @@ périphérique existe, et `MA_REQUIRE_VPP=1` seulement si `vainfo` annonce `VAEn
 
 - **TSDuck** (oracle TS) : paquet `.deb` / `.rpm` des releases https://github.com/tsduck/tsduck/releases
 - **Tests d'interface de bout en bout** : `webkit2gtk-driver` (Ubuntu) / `webkit2gtk4.1` fournit `WebKitWebDriver` (Fedora), `xvfb` / `xorg-x11-server-Xvfb`, `cargo install tauri-driver --locked`
+- **Banc interface du transport d'image** (`tools/transport-bench`, hors workspace et hors CI) : Node 24 et npm en plus des outils ci-dessus ; `cd tools/transport-bench && npm ci && npm run tauri build`, puis `npm run e2e -- --spec e2e/transport.e2e.ts [--smoke] [--release] [--native]` (voir son `README.md`). Résultats dans `target/bench/ui-*.json`.
 - **Corpus généré** (`cargo xtask corpus gen`, `--big` pour `uhd_big`, ≥ 4 Go) : `ffmpeg` et `ffprobe` avec `libx264` et `libx265` (`sudo apt install ffmpeg` ; sous Fedora, `sudo dnf install -y ffmpeg` depuis RPM Fusion, le paquet `ffmpeg-free` n'ayant pas ces encodeurs). Les fichiers vont dans `$MA_CORPUS_DIR` (défaut `~/media-analyzer-corpus/generated`), hors Git.
 - **Décodage matériel** : `vainfo` pour vérifier VA-API
