@@ -186,7 +186,7 @@ Le principal risque de Tauri sous Linux vient de **WebKitGTK** : performances We
 - Chaque fichier du corpus est décrit dans un manifeste : contenu, défauts attendus, exigences qu'il illustre.
 
 ### 5.6 Intégration continue
-Ordre des étapes : formatage → clippy → `cargo deny` → tests Rust et couverture → fuzzing court → tests UI (Vitest, Playwright) → bout en bout Tauri (Xvfb) → **matrice de traçabilité (bloquante)** → build des paquets. L'hébergement CI est à choisir : GitHub Actions par défaut si le dépôt est sur GitHub.
+Ordre des étapes : formatage → clippy → `cargo deny` → tests Rust et couverture → fuzzing court → tests UI (Vitest, Playwright) → bout en bout Tauri (Xvfb) → **matrice de traçabilité (bloquante)** → build des paquets. Toutes ces étapes tournent **en local** (`cargo xtask ci`). GitHub Actions ne fait que la construction des paquets, sur tag `v*` posé sur `main`, pour économiser le quota de minutes (décision du porteur, 2026-11-03).
 
 **Temps de build** : workspace découpé, éditeur de liens **mold**, **sccache**, profil `dev` avec dépendances optimisées (`opt-level = 1` pour FFmpeg-sys et les crates de calcul), build release réservée à la CI et aux livrables.
 

@@ -2,6 +2,8 @@
 
 Plateformes : exécution sur **Ubuntu 24.04+** ; construction vérifiée aussi sur **Fedora**.
 
+> **CI GitHub Actions** (`.github/workflows/ci.yml`) : construction seule (Ubuntu 24.04 et Fedora), sans tests, déclenchée uniquement par un tag `v*` posé sur un commit de `main`. Les tests, la couverture et la traçabilité se lancent **en local** avec `cargo xtask ci`, avant de poser le tag.
+
 ## 1. Dépendances système
 
 ### Ubuntu 24.04+
