@@ -12,6 +12,7 @@ mod corpus;
 mod corrupt;
 mod frame_code;
 mod nal;
+mod oracle;
 mod ts_source;
 
 pub use corpus::{
@@ -20,4 +21,8 @@ pub use corpus::{
 pub use corrupt::CorruptingSource;
 pub use frame_code::{read_frame_code, read_frame_code_bits};
 pub use nal::{NalLeading, classify, first_slice_payload_offset};
+pub use oracle::{
+    ProbeFrame, ProbePacket, ffmpeg_es, ffmpeg_framemd5, ffprobe_frames, ffprobe_packets,
+    private_corpus, tsduck_analyze,
+};
 pub use ts_source::{MAX_AU_BYTES, TsAuSource};

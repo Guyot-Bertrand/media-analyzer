@@ -168,9 +168,17 @@ fn encoder_args(entry: &Entry) -> anyhow::Result<Vec<String>> {
     } else {
         "b-adapt=0"
     };
+    // H.264 entrelacé : `+ildct+ilme` active l'entrelacement de x264 (MBAFF), `tff=1` fixe l'ordre
+    // des trames (haut d'abord).
+    let interlaced = if entry.codec == "h264" && entry.has("interlaced") {
+        args.extend(strs(&["-flags", "+ildct+ilme"]));
+        ":tff=1"
+    } else {
+        ""
+    };
     let params = if entry.codec == "h264" {
         format!(
-            "keyint={gop}:min-keyint={gop}:scenecut=0:bframes={bframes}:{b_adapt}:open-gop={open}"
+            "keyint={gop}:min-keyint={gop}:scenecut=0:bframes={bframes}:{b_adapt}:open-gop={open}{interlaced}"
         )
     } else {
         format!(
@@ -206,33 +214,53 @@ fn tmp_path(path: &Path) -> PathBuf {
     s.into()
 }
 
+/// Lignes encodées en plus de l'image affichée pour `crop_top` (rognées par le BSF).
+const CROP_TOP_ROWS: u32 = 8;
+/// Décalage des horodatages de `pts_wrap` (secondes). 2^33 / 90 kHz = 95 443,69 s ; le muxeur
+/// `mpegts` ajoute 1,48 s au PTS initial (retard de mux et B), donc 95 438,52 s + 1,48 s fait franchir
+/// 2^33 au PTS de l'image 93 (la valeur 95 440 s du plan le ferait dès l'image 56).
+const PTS_WRAP_OFFSET: &str = "95438.52";
+
 /// Encode la source de test `testsrc2` avec le numéro incrusté.
 fn encode(e: &Entry, dest: &Path) -> anyhow::Result<()> {
-    let (w, h) = e.dims()?;
+    let (w, mut h) = e.dims()?;
+    // `crop_top` : encodé 8 lignes plus haut, puis rogné en haut par le BSF `h264_metadata`.
+    let crop_top = e.has("crop_top");
+    if crop_top {
+        h += CROP_TOP_ROWS;
+    }
     let pix_fmt = if e.profile.ends_with("10") || e.profile == "High 10" {
         "yuv420p10le"
     } else {
         "yuv420p"
     };
-    let src = format!("testsrc2=size={}:rate={}", e.size, e.fps);
+    let src = format!("testsrc2=size={w}x{h}:rate={}", e.fps);
     let filter = code_filter(w, h, e.code_modulo, pix_fmt);
-    run(Command::new("ffmpeg")
-        .args([
-            "-v",
-            "error",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            &src,
-            "-frames:v",
-            &e.frames.to_string(),
-            "-vf",
-            &filter,
-        ])
-        .args(encoder_args(e)?)
-        .args(["-f", "mpegts"])
-        .arg(tmp_path(dest)))
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args([
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        &src,
+        "-frames:v",
+        &e.frames.to_string(),
+        "-vf",
+        &filter,
+    ])
+    .args(encoder_args(e)?);
+    if crop_top {
+        cmd.args([
+            "-bsf:v",
+            &format!("h264_metadata=crop_top={CROP_TOP_ROWS}:crop_bottom=0"),
+        ]);
+    }
+    if e.has("pts_wrap") {
+        cmd.args(["-output_ts_offset", PTS_WRAP_OFFSET]);
+    }
+    run(cmd.args(["-f", "mpegts"]).arg(tmp_path(dest)))
 }
 
 /// Verbose mais explicite : lecture ffprobe d'une valeur de flux.
@@ -274,6 +302,11 @@ fn verify(e: &Entry, path: &Path) -> anyhow::Result<()> {
     let want = format!("{},{}", e.codec, e.profile);
     if cp != want {
         bail!("{} : codec/profil {cp:?} au lieu de {want:?}", e.name);
+    }
+    let dims = probe(path, "stream=width,height", &[])?;
+    let want_dims = e.size.replace('x', ",");
+    if dims != want_dims {
+        bail!("{} : taille {dims:?} au lieu de {want_dims:?}", e.name);
     }
     if e.big {
         let size = std::fs::metadata(path)?.len();
@@ -521,7 +554,7 @@ mod tests {
     fn manifest_in_repo_is_complete() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let entries = load_manifest(root).unwrap();
-        assert_eq!(entries.len(), 9);
+        assert_eq!(entries.len(), 13);
         assert_eq!(entries.iter().filter(|e| e.big).count(), 1);
         for e in &entries {
             assert_eq!(e.code_bits, 16, "{}", e.name);

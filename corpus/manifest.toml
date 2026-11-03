@@ -142,6 +142,73 @@ features = ["open_gop", "cra", "rasl", "starts_at_cra"]
 big = false
 derived_from = "hevc_720p_open_gop"
 
+# Encodé en 1920x1088 puis `-bsf:v h264_metadata=crop_top=8:crop_bottom=0` : le SPS porte un rognage en
+# haut de 8 lignes, l'image affichée fait 1920x1080 (`size`). Le numéro incrusté est dans la bande du
+# haut de l'image encodée (1088/24 lignes), donc partiellement rognée : la ligne affichée la plus
+# haute en fait toujours partie.
+[[file]]
+name = "h264_1080p_crop_top"
+file = "h264_1080p_crop_top.ts"
+codec = "h264"
+profile = "High"
+size = "1920x1080"
+fps = 25
+frames = 50
+gop = 25
+bframes = 2
+code_bits = 16
+code_modulo = 65536
+features = ["crop_top"]
+big = false
+
+# Entrelacé TFF, MBAFF (x264 `interlaced` via `-flags +ildct+ilme`, `tff=1`).
+[[file]]
+name = "h264_1080i_mbaff"
+file = "h264_1080i_mbaff.ts"
+codec = "h264"
+profile = "High"
+size = "1920x1080"
+fps = 25
+frames = 100
+gop = 25
+bframes = 2
+code_bits = 16
+code_modulo = 65536
+features = ["interlaced", "mbaff"]
+big = false
+
+# Recette de h264_720p_closed avec `-output_ts_offset 95440` : PTS et PCR franchissent 2^33 vers l'image 93.
+[[file]]
+name = "h264_720p_pts_wrap"
+file = "h264_720p_pts_wrap.ts"
+codec = "h264"
+profile = "High"
+size = "1280x720"
+fps = 25
+frames = 250
+gop = 25
+bframes = 2
+code_bits = 16
+code_modulo = 65536
+features = ["closed_gop", "pts_wrap"]
+big = false
+
+# Sans B (`-bf 0`) : base des fichiers dérivés de la Tâche 8.
+[[file]]
+name = "h264_720p_nob"
+file = "h264_720p_nob.ts"
+codec = "h264"
+profile = "High"
+size = "1280x720"
+fps = 25
+frames = 100
+gop = 25
+bframes = 0
+code_bits = 16
+code_modulo = 65536
+features = ["closed_gop"]
+big = false
+
 # Recette du spike : segment de 20 s (1000 images) bouclé jusqu'à ≥ 4 Go. Généré avec `--big` seulement.
 [[file]]
 name = "uhd_big"

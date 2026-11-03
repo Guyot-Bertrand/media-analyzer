@@ -425,6 +425,7 @@ version = "0.1.0"
 dependencies = [
  "ma-decode",
  "serde",
+ "serde_json",
  "toml",
 ]
 
