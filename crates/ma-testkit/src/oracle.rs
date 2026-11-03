@@ -27,12 +27,13 @@ pub struct ProbeFrame {
     pub key: bool,
 }
 
-fn run_tool(tool: &str, args: &[&str], path: &Path) -> Output {
-    let out = Command::new(tool)
-        .args(args)
-        .arg(path)
+/// Lance `cmd` et renvoie sa sortie ; panique si l'outil est absent (`absent_msg`) ou échoue
+/// (stderr repris dans le message).
+fn run_checked(cmd: &mut Command, absent_msg: &str, path: &Path) -> Output {
+    let tool = cmd.get_program().to_string_lossy().into_owned();
+    let out = cmd
         .output()
-        .unwrap_or_else(|e| panic!("{tool} introuvable ({e}) : installer le paquet « ffmpeg »"));
+        .unwrap_or_else(|e| panic!("{absent_msg} ({e})"));
     assert!(
         out.status.success(),
         "{tool} a échoué sur {} : {}",
@@ -40,6 +41,27 @@ fn run_tool(tool: &str, args: &[&str], path: &Path) -> Output {
         String::from_utf8_lossy(&out.stderr)
     );
     out
+}
+
+/// `run_checked` pour `ffmpeg` / `ffprobe`.
+fn run_tool(tool: &str, args: &[&str], path: &Path) -> Output {
+    run_checked(
+        Command::new(tool).args(args).arg(path),
+        &format!("{tool} introuvable : installer le paquet « ffmpeg »"),
+        path,
+    )
+}
+
+/// `ffmpeg -v error -i <path> <args>`.
+fn ffmpeg_run(path: &Path, args: &[&str]) -> Output {
+    run_checked(
+        Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(path)
+            .args(args),
+        "ffmpeg introuvable : installer le paquet « ffmpeg »",
+        path,
+    )
 }
 
 fn ffprobe_json(path: &Path, args: &[&str]) -> Value {
@@ -125,18 +147,7 @@ pub fn ffmpeg_es(path: &Path) -> Vec<u8> {
         "mpeg2video" => "mpeg2video",
         other => panic!("ffmpeg_es : codec non géré : {other}"),
     };
-    let out = Command::new("ffmpeg")
-        .args(["-v", "error", "-i"])
-        .arg(path)
-        .args(["-map", "0:v:0", "-c", "copy", "-f", format, "-"])
-        .output()
-        .unwrap_or_else(|e| panic!("ffmpeg introuvable ({e}) : installer le paquet « ffmpeg »"));
-    assert!(
-        out.status.success(),
-        "ffmpeg a échoué sur {} : {}",
-        path.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let out = ffmpeg_run(path, &["-map", "0:v:0", "-c", "copy", "-f", format, "-"]);
     out.stdout
 }
 
@@ -146,18 +157,7 @@ pub fn ffmpeg_es(path: &Path) -> Vec<u8> {
 /// Si `ffmpeg` est absent, échoue ou produit une sortie inattendue.
 #[must_use]
 pub fn ffmpeg_framemd5(path: &Path) -> Vec<(i64, String)> {
-    let out = Command::new("ffmpeg")
-        .args(["-v", "error", "-i"])
-        .arg(path)
-        .args(["-map", "0:v:0", "-f", "framemd5", "-"])
-        .output()
-        .unwrap_or_else(|e| panic!("ffmpeg introuvable ({e}) : installer le paquet « ffmpeg »"));
-    assert!(
-        out.status.success(),
-        "ffmpeg a échoué sur {} : {}",
-        path.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let out = ffmpeg_run(path, &["-map", "0:v:0", "-f", "framemd5", "-"]);
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
@@ -178,16 +178,10 @@ pub fn ffmpeg_framemd5(path: &Path) -> Vec<(i64, String)> {
 /// Si l'outil est absent (message « `TSDuck` absent : voir BUILD.md §4 »), échoue ou produit du JSON invalide.
 #[must_use]
 pub fn tsduck_analyze(path: &Path) -> Value {
-    let out = Command::new("tsanalyze")
-        .arg("--json")
-        .arg(path)
-        .output()
-        .unwrap_or_else(|e| panic!("TSDuck absent : voir BUILD.md §4 ({e})"));
-    assert!(
-        out.status.success(),
-        "tsanalyze a échoué sur {} : {}",
-        path.display(),
-        String::from_utf8_lossy(&out.stderr)
+    let out = run_checked(
+        Command::new("tsanalyze").arg("--json").arg(path),
+        "TSDuck absent : voir BUILD.md §4",
+        path,
     );
     serde_json::from_slice(&out.stdout).expect("sortie JSON de tsanalyze invalide")
 }

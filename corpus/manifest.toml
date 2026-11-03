@@ -177,7 +177,8 @@ code_modulo = 65536
 features = ["interlaced", "mbaff"]
 big = false
 
-# Recette de h264_720p_closed avec `-output_ts_offset 95440` : PTS et PCR franchissent 2^33 vers l'image 93.
+# Recette de h264_720p_closed avec `-output_ts_offset 95438.52` (`PTS_WRAP_OFFSET` de xtask/src/corpus.rs ;
+# le muxeur ajoute 1,48 s) : PTS et PCR franchissent 2^33, le PTS vers l'image 93.
 [[file]]
 name = "h264_720p_pts_wrap"
 file = "h264_720p_pts_wrap.ts"
