@@ -21,8 +21,16 @@ pub enum RapKind {
     Idr,
     Cra,
     Bla,
-    Recovery { frame_cnt: u32 },
-    Intra { closed_gop: bool },
+    /// Point de reprise (SEI « recovery point » H.264, par exemple).
+    ///
+    /// `pres_span` : nombre d'images, en ordre de présentation à partir du RAP, qui ne sont pas
+    /// encore correctes ; la source le calcule à partir de `recovery_frame_cnt` (Tâche 10).
+    Recovery {
+        pres_span: u32,
+    },
+    Intra {
+        closed_gop: bool,
+    },
 }
 
 /// Image précédant son RAP en ordre de présentation.

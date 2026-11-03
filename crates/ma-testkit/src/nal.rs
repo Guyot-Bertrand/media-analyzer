@@ -134,7 +134,11 @@ fn classify_h264(au: &[u8]) -> (PictureType, RapKind, Option<NalLeading>) {
                     .map_or(PictureType::P, slice_type_picture);
                 let rap = match (t, recovery) {
                     (5, _) => RapKind::Idr,
-                    (_, Some(frame_cnt)) => RapKind::Recovery { frame_cnt },
+                    // Valeur brute de `recovery_frame_cnt` : le vrai calcul en ordre de présentation
+                    // viendra en Tâche 10.
+                    (_, Some(frame_cnt)) => RapKind::Recovery {
+                        pres_span: frame_cnt,
+                    },
                     _ => RapKind::None,
                 };
                 return (picture, rap, None);
@@ -323,7 +327,7 @@ mod tests {
         let a = au(&[&sei, &[0x41, 0b1011_0000]]);
         assert_eq!(
             classify(Codec::H264, &a),
-            (PictureType::I, RapKind::Recovery { frame_cnt: 2 }, None)
+            (PictureType::I, RapKind::Recovery { pres_span: 2 }, None)
         );
         // Un IDR l'emporte sur un SEI.
         let a = au(&[&sei, &[0x65, 0b1011_0000]]);
@@ -339,7 +343,7 @@ mod tests {
         let a = au(&[&[0x06, 6, 1, 0b1000_0000, 0x80], &[0x01, 0b1001_1000]]);
         assert_eq!(
             classify(Codec::H264, &a).1,
-            RapKind::Recovery { frame_cnt: 0 }
+            RapKind::Recovery { pres_span: 0 }
         );
     }
 

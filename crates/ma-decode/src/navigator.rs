@@ -964,12 +964,12 @@ mod tests {
     #[test]
     fn cancel_returns_preempted_and_resumes() {
         let src = FakeSource::closed_gops(4, 24, 2);
-        let mut reference = nav(&src);
-        reference.probe_size(&never).unwrap();
-        get(&mut reference, 60);
-        let expected = reference.stats().aus_sent;
+        let factory = FakeFactory::new(&src);
+        // Nombre d'AU du plan de décodage, calculé depuis la source (pas depuis un autre Navigator).
+        let expected = factory.aus_until_output(60);
+        assert!(expected > 3, "la préemption doit tomber avant la fin");
 
-        let mut nav = nav(&src);
+        let mut nav = nav_with(factory);
         nav.probe_size(&never).unwrap();
         let calls = Cell::new(0);
         let after_three = || {
@@ -983,7 +983,7 @@ mod tests {
         );
         assert_eq!(nav.stats().aus_sent, before + 3);
         get(&mut nav, 60);
-        assert_eq!(nav.stats().aus_sent, expected);
+        assert_eq!(nav.stats().aus_sent - before, expected);
     }
 
     #[test]
@@ -1050,7 +1050,7 @@ mod tests {
         };
         let recovery_only = FakeSource::from_entries(
             crate::Codec::H264,
-            vec![entry(crate::RapKind::Recovery { frame_cnt: 4 })],
+            vec![entry(crate::RapKind::Recovery { pres_span: 4 })],
         );
         assert!(matches!(
             self::nav(&recovery_only).probe_size(&never),
@@ -1208,14 +1208,6 @@ mod tests {
         // Viewport hors image (taille inconnue du navigateur) : `Unsupported` du décodeur matériel.
         let src = FakeSource::closed_gops(2, 24, 0);
         let mut nav = nav(&src);
-        get(&mut nav, 2);
-        let mut nav = Navigator::new(
-            Arc::new(src.clone()),
-            Arc::new(FakeFactory::new(&src)),
-            ModePref::Auto,
-            NavConfig::default(),
-        )
-        .unwrap();
         let outside = Viewport {
             region: Rect {
                 x: 5000,
@@ -1231,17 +1223,30 @@ mod tests {
             "{err:?}"
         );
         assert_eq!(nav.take_events(), []);
-        // AU corrompue : `InvalidData`, toléré sans repli.
+        assert_eq!(nav.mode(), DecodeMode::Hardware);
+
+        // AU corrompue : `InvalidData`, signalée par `CorruptAu`, sans repli.
         let src = FakeSource::closed_gops(2, 24, 0).with_corrupt(HashSet::from([5]));
         let mut nav = nav_with(FakeFactory::new(&src));
-        let _ = nav.frame(5, small(), &never);
-        let _ = nav.frame(10, small(), &never);
-        assert_eq!(nav.mode(), DecodeMode::Hardware);
+        let err = nav.frame(5, small(), &never).unwrap_err();
         assert!(
-            nav.take_events()
-                .iter()
-                .all(|e| !matches!(e, DecodeEvent::FellBackToSoftware { .. }))
+            matches!(&err, FrameError::Decoder(e) if e.kind == DecodeErrorKind::InvalidData),
+            "{err:?}"
         );
+        let events = nav.take_events();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, DecodeEvent::CorruptAu { decode_idx: 5, .. })),
+            "{events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .all(|e| !matches!(e, DecodeEvent::FellBackToSoftware { .. })),
+            "{events:?}"
+        );
+        assert_eq!(nav.mode(), DecodeMode::Hardware);
     }
 
     #[test]
@@ -1267,7 +1272,57 @@ mod tests {
 
     #[test]
     fn fallback_happens_once_and_second_error_is_reported() {
-        // Matériel qui tombe dès le départ : le repli a lieu ; l'erreur du logiciel remonte.
+        // L'AU 30 est toujours fausse : `Internal` sur le matériel (repli), puis `Internal` sur le
+        // décodeur logiciel. La seconde erreur remonte, sans second repli.
+        let src = FakeSource::closed_gops(2, 24, 0);
+        let mut nav = patched(
+            &src,
+            Patched {
+                wrong_au_always: Some(30),
+                ..Patched::default()
+            },
+        );
+        get(&mut nav, 5); // mode matériel connu
+        let err = nav.frame(35, small(), &never).unwrap_err();
+        assert!(
+            matches!(&err, FrameError::Decoder(e) if e.kind == DecodeErrorKind::Internal),
+            "{err:?}"
+        );
+        assert_eq!(nav.mode(), DecodeMode::Software);
+        let falls = nav
+            .take_events()
+            .into_iter()
+            .filter(|e| matches!(e, DecodeEvent::FellBackToSoftware { .. }))
+            .count();
+        assert_eq!(falls, 1, "un seul repli");
+        // Une demande ultérieure qui ne touche pas l'AU fautive est servie en logiciel, sans repli.
+        get(&mut nav, 3);
+        assert_eq!(nav.take_events(), []);
+
+        // Mode jamais connu (aucune image sortie) : le décodeur logiciel rouvert est encore
+        // `Unknown`, donc seule la garde `fell_back` empêche un second repli.
+        let mut nav = patched(
+            &src,
+            Patched {
+                wrong_au_always: Some(0),
+                ..Patched::default()
+            },
+        );
+        let err = nav.frame(3, small(), &never).unwrap_err();
+        assert!(
+            matches!(&err, FrameError::Decoder(e) if e.kind == DecodeErrorKind::Internal),
+            "{err:?}"
+        );
+        assert_eq!(nav.mode(), DecodeMode::Unknown);
+        // La demande suivante échoue encore : l'erreur remonte, sans second repli.
+        assert!(nav.frame(3, small(), &never).is_err());
+        let events = nav.take_events();
+        assert_eq!(events.len(), 1, "un seul repli : {events:?}");
+    }
+
+    #[test]
+    fn fallback_then_single_internal_error_is_recovered() {
+        // Une AU fausse une seule fois : le repli a lieu, la nouvelle tentative réussit.
         let src = FakeSource::closed_gops(2, 24, 0);
         let mut nav = patched(
             &src,
@@ -1276,9 +1331,7 @@ mod tests {
                 ..Patched::default()
             },
         );
-        get(&mut nav, 5); // mode matériel connu
-        // `Internal` sur matériel : repli, puis la nouvelle tentative réussit (l'AU n'est
-        // remplacée qu'une fois).
+        get(&mut nav, 5);
         get(&mut nav, 35);
         assert_eq!(nav.mode(), DecodeMode::Software);
         assert_eq!(nav.take_events().len(), 1);
@@ -1325,6 +1378,56 @@ mod tests {
     }
 
     #[test]
+    fn gpu_failure_during_prefetch_falls_back_once() {
+        // Le matériel tombe pendant un préchargement alors qu'une demande explicite est déjà en
+        // attente (le `cancel` du préchargement est vrai) : le repli a lieu une seule fois, le
+        // préchargement est préempté, et la demande explicite est ensuite servie en logiciel.
+        let src = FakeSource::closed_gops(4, 24, 2);
+        let mut nav = nav_with(FakeFactory {
+            hw_fail_after_receives: Some(0),
+            ..FakeFactory::new(&src)
+        });
+        let pending = || true;
+        assert_eq!(
+            nav.prefetch_frame(10, small(), Direction::Forward, &pending),
+            Err(FrameError::Preempted)
+        );
+        assert_eq!(nav.mode(), DecodeMode::Unknown, "aucune image n'est sortie");
+        let events = nav.take_events();
+        assert!(
+            matches!(events.as_slice(), [DecodeEvent::FellBackToSoftware { reason, .. }] if reason.contains("Gpu")),
+            "{events:?}"
+        );
+        // La demande explicite en attente est servie par le décodeur logiciel.
+        get(&mut nav, 50);
+        assert_eq!(nav.mode(), DecodeMode::Software);
+        assert_eq!(nav.take_events(), []);
+    }
+
+    #[ma_trace::covers("NAV.ORACLE.04")]
+    #[test]
+    fn bla_leading_frames_not_decodable() {
+        let src = FakeSource::broken_link_gops(3, 8, 2);
+        let pres_of = |d| src.entry(d).unwrap().pres_idx;
+        let mut nav = nav(&src);
+        // B précédant le BLA (décodage 9 et 10) : lien rompu, pas de repli sur le RAP précédent.
+        for d in [9, 10] {
+            assert_eq!(
+                nav.frame(pres_of(d), small(), &never),
+                Err(FrameError::NotDecodable {
+                    pres_idx: pres_of(d),
+                    reason: NotDecodable::BrokenLink,
+                })
+            );
+        }
+        // Le BLA lui-même et les images qui le suivent sont décodables.
+        get(&mut nav, pres_of(8));
+        get(&mut nav, pres_of(12));
+        assert_eq!(nav.mode(), DecodeMode::Hardware);
+        assert_eq!(nav.take_events(), []);
+    }
+
+    #[test]
     fn prefetch_falls_back_too() {
         let src = FakeSource::closed_gops(4, 24, 2);
         let mut nav = nav_with(FakeFactory {
@@ -1361,7 +1464,9 @@ mod tests {
             matches!(&err, FrameError::Decoder(e) if e.kind == DecodeErrorKind::Internal),
             "{err:?}"
         );
-        assert_eq!(nav.stats().aus_sent, 7, "AU 24 à 30");
+        // AU du RAP de la cible (plan de décodage) jusqu'à l'AU 30 incluse.
+        let to_wrong_au = u64::from(30 - crate::start_for(&src, 30).unwrap() + 1);
+        assert_eq!(nav.stats().aus_sent, to_wrong_au);
         // Le décodage en cours est abandonné : la demande suivante repart de l'IDR 24 et renvoie
         // l'AU 30, au lieu de continuer à l'AU 31.
         let before = nav.stats().aus_sent;
@@ -1571,6 +1676,8 @@ mod tests {
         fake_idr: Option<u32>,
         wrong_au_once: Option<u32>,
         wrong_au_done: AtomicBool,
+        /// Comme `wrong_au_once`, mais à chaque lecture (le décodeur logiciel échoue aussi).
+        wrong_au_always: Option<u32>,
     }
 
     impl Patched {
@@ -1599,6 +1706,9 @@ mod tests {
         fn read_au(&self, decode_idx: u32, buf: &mut Vec<u8>) -> io::Result<()> {
             if self.fail_read == Some(decode_idx) {
                 return Err(io::Error::other("lecture impossible"));
+            }
+            if self.wrong_au_always == Some(decode_idx) {
+                return self.inner().read_au(decode_idx + 1, buf);
             }
             if self.wrong_au_once == Some(decode_idx) && !self.wrong_au_done.swap(true, SeqCst) {
                 return self.inner().read_au(decode_idx + 1, buf);

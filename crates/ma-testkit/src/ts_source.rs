@@ -553,7 +553,7 @@ mod tests {
         );
         let rap = |d| src.entry(d).unwrap().rap;
         assert_eq!(rap(0), RapKind::Idr);
-        assert_eq!(rap(4), RapKind::Recovery { frame_cnt: 0 });
+        assert_eq!(rap(4), RapKind::Recovery { pres_span: 0 });
         assert_eq!(rap(1), RapKind::None);
         assert_eq!(src.entry(2).unwrap().picture, PictureType::B);
         // Ordre de présentation.

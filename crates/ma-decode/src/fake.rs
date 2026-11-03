@@ -127,6 +127,23 @@ impl FakeSource {
         FakeSource::from_raw(Codec::Hevc, raw)
     }
 
+    /// Comme [`Self::open_gops`], mais tous les RAP après le premier sont des `Bla` : leurs images
+    /// en tête (`Skippable`) dépendent d'images remplacées et ne sortent pas du décodeur.
+    ///
+    /// # Panics
+    /// Si `gop_len <= bframes`.
+    #[must_use]
+    pub fn broken_link_gops(gops: u32, gop_len: u32, bframes: u32) -> FakeSource {
+        let mut s = FakeSource::open_gops(gops, gop_len, bframes);
+        let first = s.entries.iter().position(|e| e.rap == RapKind::Cra);
+        for (i, e) in s.entries.iter_mut().enumerate() {
+            if e.rap == RapKind::Cra && Some(i) != first {
+                e.rap = RapKind::Bla;
+            }
+        }
+        s
+    }
+
     /// Transforme en RADL (décodable) l'image qui précède immédiatement chaque CRA en présentation.
     #[must_use]
     pub fn with_radl(mut self) -> FakeSource {
@@ -145,15 +162,15 @@ impl FakeSource {
     }
 
     /// H.264 sans réordonnancement : un IDR au début, puis un I non IDR avec SEI recovery point
-    /// (`frame_cnt`) tous les `gop_len` images.
+    /// (`pres_span`) tous les `gop_len` images.
     #[must_use]
-    pub fn recovery(gops: u32, gop_len: u32, frame_cnt: u32) -> FakeSource {
+    pub fn recovery(gops: u32, gop_len: u32, pres_span: u32) -> FakeSource {
         let raw = (0..gops * gop_len)
             .map(|i| {
                 let (picture, rap) = if i == 0 {
                     (PictureType::I, RapKind::Idr)
                 } else if i % gop_len == 0 {
-                    (PictureType::I, RapKind::Recovery { frame_cnt })
+                    (PictureType::I, RapKind::Recovery { pres_span })
                 } else {
                     (PictureType::P, RapKind::None)
                 };
@@ -267,6 +284,33 @@ impl FakeFactory {
             au_delay: Duration::ZERO,
             deferred_corruption: false,
         }
+    }
+}
+
+impl FakeFactory {
+    /// Nombre d'AU qu'il faut envoyer, à partir du point de départ du plan de décodage
+    /// ([`crate::start_for`]), pour que le décodeur factice sorte l'image `pres_idx` (retard de
+    /// `reorder + latency` images). Calculé depuis la source seule, sans passer par le Navigator.
+    ///
+    /// # Panics
+    /// Si l'image est hors de la source ou non décodable.
+    #[must_use]
+    pub fn aus_until_output(&self, pres_idx: u32) -> u64 {
+        let src = &self.source;
+        let target = src.entry(src.decode_idx_of(pres_idx).expect("image hors source"));
+        let target = target.expect("entrée absente");
+        let start = crate::start_for(src, target.decode_idx).expect("image non décodable");
+        let delay = (reorder_depth(src) + self.latency) as usize;
+        let mut buf = BTreeSet::new();
+        for (sent, d) in (1u64..).zip(start..src.len()) {
+            buf.insert(src.entry(d).expect("entrée absente").pts);
+            while buf.len() > delay {
+                if buf.pop_first() == Some(target.pts) {
+                    return sent;
+                }
+            }
+        }
+        panic!("l'image n'est jamais sortie");
     }
 }
 
@@ -389,10 +433,14 @@ impl FakeDecoder {
             });
         }
         let Some(gop) = self.gop else { return };
+        // Lien rompu : les images en tête d'un BLA ne sont jamais produites.
+        if e.leading == Leading::Skippable && gop.rap.rap == RapKind::Bla {
+            return;
+        }
         let needs_prev = e.leading == Leading::Skippable
-            || matches!(gop.rap.rap, RapKind::Recovery { frame_cnt }
+            || matches!(gop.rap.rap, RapKind::Recovery { pres_span }
                 if e.rap == RapKind::None
-                    && e.pres_idx < gop.rap.pres_idx.saturating_add(frame_cnt));
+                    && e.pres_idx < gop.rap.pres_idx.saturating_add(pres_span));
         let corrupt = match (needs_prev, self.prev_gop) {
             (false, _) => gop.corrupt,
             (true, Some(prev)) => gop.corrupt || prev.corrupt,
@@ -612,7 +660,7 @@ mod tests {
     fn recovery_and_mid_gop_shapes() {
         let r = FakeSource::recovery(3, 5, 2);
         assert_eq!(r.entry(0).unwrap().rap, RapKind::Idr);
-        assert_eq!(r.entry(5).unwrap().rap, RapKind::Recovery { frame_cnt: 2 });
+        assert_eq!(r.entry(5).unwrap().rap, RapKind::Recovery { pres_span: 2 });
         let m = FakeSource::starting_mid_gop(2, 4, 0, 3);
         assert_eq!(m.entry(2).unwrap().rap, RapKind::None);
         assert_eq!(m.entry(3).unwrap().rap, RapKind::Idr);

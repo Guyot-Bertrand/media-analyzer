@@ -628,6 +628,14 @@ mod tests {
         get(&svc, 100, small());
         // L'erreur n'a pas encore eu lieu : elle survient pendant le préchargement.
         assert_eq!(svc.mode(), DecodeMode::Hardware);
+        // Demande explicite posée pendant le préchargement : elle est en attente ou en cours
+        // quand le matériel tombe, et doit être servie, avec la bonne image.
+        let pending = svc.request(50, small());
+        let f = pending
+            .recv()
+            .unwrap()
+            .expect("la demande explicite est servie malgré la panne");
+        assert_eq!((f.pres_idx, oracle(&f.image)), (50, Some(50)));
         assert!(wait_until(Duration::from_secs(1), || svc.mode()
             == DecodeMode::Software));
         get(&svc, 50, small());

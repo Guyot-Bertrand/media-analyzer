@@ -9,6 +9,8 @@ pub enum NotDecodable {
     BeforeFirstRap,
     #[error("l'image dépend d'images absentes avant le premier point d'accès aléatoire")]
     LeadingOfFirstRap,
+    #[error("l'image dépend d'images remplacées par un raccordement (lien rompu)")]
+    BrokenLink,
     #[error("numéro d'image hors du fichier")]
     OutOfRange,
 }
@@ -26,7 +28,9 @@ fn rap_at_or_before(src: &dyn AuSource, from: u32) -> Option<FrameEntry> {
 ///
 /// On part du dernier RAP au plus égal à la cible. Si la cible est une image `Skippable` de ce RAP
 /// (RASL, B précédant un I de GOP ouvert), ou si elle précède la fin de l'intervalle de reprise
-/// d'un `Recovery { frame_cnt }`, on part du RAP précédent.
+/// d'un `Recovery { pres_span }`, on part du RAP précédent. Exception : une cible `Skippable` dont le
+/// RAP le plus proche est un `Bla` (lien rompu) n'est pas décodable : le RAP précédent a été
+/// remplacé par un raccordement.
 pub fn start_for(src: &dyn AuSource, decode_idx: u32) -> Result<u32, NotDecodable> {
     let target = src.entry(decode_idx).ok_or(NotDecodable::OutOfRange)?;
     let mut from = decode_idx;
@@ -40,10 +44,13 @@ pub fn start_for(src: &dyn AuSource, decode_idx: u32) -> Result<u32, NotDecodabl
             });
         };
         let skipped = nearest && target.leading == Leading::Skippable;
+        if skipped && rap.rap == RapKind::Bla {
+            return Err(NotDecodable::BrokenLink);
+        }
         let recovering = matches!(
             rap.rap,
-            RapKind::Recovery { frame_cnt }
-                if target.pres_idx < rap.pres_idx.saturating_add(frame_cnt)
+            RapKind::Recovery { pres_span }
+                if target.pres_idx < rap.pres_idx.saturating_add(pres_span)
         );
         if !skipped && !recovering {
             return Ok(rap.decode_idx);
@@ -97,9 +104,9 @@ mod tests {
 
     #[ma_trace::covers("NAV.ORACLE.03")]
     #[test]
-    fn recovery_point_bounds_decode_to_one_interval() {
-        let (gop_len, frame_cnt) = (10, 3);
-        let s = FakeSource::recovery(4, gop_len, frame_cnt);
+    fn recovery_span_is_in_presentation_order_decode_to_one_interval() {
+        let (gop_len, pres_span) = (10, 3);
+        let s = FakeSource::recovery(4, gop_len, pres_span);
         // Cible au milieu : recovery point le plus proche, jamais l'image 0.
         assert_eq!(start_for(&s, 25), Ok(20));
         assert_eq!(start_for(&s, 33), Ok(30));
@@ -108,11 +115,26 @@ mod tests {
         assert_eq!(start_for(&s, 20), Ok(10));
         for t in 0..s.len() {
             let start = start_for(&s, t).unwrap();
-            assert!(t - start < gop_len + frame_cnt, "{t} part de {start}");
-            if t >= 2 * gop_len + frame_cnt {
+            assert!(t - start < gop_len + pres_span, "{t} part de {start}");
+            if t >= 2 * gop_len + pres_span {
                 assert_ne!(start, 0, "{t} ne doit pas repartir de l'image 0");
             }
         }
+    }
+
+    #[ma_trace::covers("NAV.ORACLE.04")]
+    #[test]
+    fn bla_leading_frames_not_decodable() {
+        let s = FakeSource::broken_link_gops(3, 8, 2);
+        assert_eq!(s.entry(8).unwrap().rap, RapKind::Bla);
+        assert_eq!(s.entry(9).unwrap().leading, Leading::Skippable);
+        assert_eq!(start_for(&s, 9), Err(NotDecodable::BrokenLink));
+        assert_eq!(start_for(&s, 10), Err(NotDecodable::BrokenLink));
+        assert_eq!(start_for(&s, 17), Err(NotDecodable::BrokenLink));
+        assert_eq!(start_for(&s, 12), Ok(8));
+        assert_eq!(start_for(&s, 8), Ok(8));
+        // Le premier CRA garde sa règle : ses images en tête manquent, sans raccordement.
+        assert_eq!(start_for(&s, 1), Err(NotDecodable::LeadingOfFirstRap));
     }
 
     #[test]
@@ -130,7 +152,7 @@ mod tests {
                 pres_idx: 0,
                 pts: 0,
                 picture: PictureType::I,
-                rap: RapKind::Recovery { frame_cnt: 2 },
+                rap: RapKind::Recovery { pres_span: 2 },
                 leading: Leading::None,
             }],
         );
