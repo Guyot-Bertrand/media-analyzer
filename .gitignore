@@ -5,3 +5,7 @@
 /spike/
 /target
 node_modules/
+
+# Corpus privé : vrais flux broadcast déposés par le porteur, jamais versionnés
+/corpus/private/*
+!/corpus/private/README.md
