@@ -314,6 +314,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
+name = "fluent-syntax"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54f0d287c53ffd184d04d8677f590f4ac5379785529e5e08b1c8083acdd5c198"
+dependencies = [
+ "memchr",
+ "thiserror",
+]
+
+[[package]]
 name = "glob"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -401,10 +411,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
+name = "ma-core"
+version = "0.1.0"
+
+[[package]]
 name = "ma-decode"
 version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
+ "ma-core",
  "ma-trace",
  "thiserror",
 ]
@@ -423,7 +438,10 @@ dependencies = [
 name = "ma-testkit"
 version = "0.1.0"
 dependencies = [
+ "fluent-syntax",
+ "ma-core",
  "ma-decode",
+ "ma-trace",
  "serde",
  "serde_json",
  "toml",

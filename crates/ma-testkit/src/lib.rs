@@ -6,8 +6,10 @@
 //! - [`classify`] : type d'image, point d'accès aléatoire et image de tête d'après les NAL.
 //! - [`read_frame_code`] : lecture du numéro d'image incrusté dans le corpus.
 //! - [`corpus_file`], [`manifest`], [`require_vaapi`] : accès au corpus et garde des tests GPU.
+//! - [`check_catalog`] : cohérence des catalogues Fluent avec les messages déclarés.
 //! - [`CorruptingSource`] : source qui corrompt des AU choisies.
 
+mod catalog;
 mod corpus;
 mod corrupt;
 mod frame_code;
@@ -15,6 +17,7 @@ mod nal;
 mod oracle;
 mod ts_source;
 
+pub use catalog::check_catalog;
 pub use corpus::{
     CorpusEntry, corpus_dir, corpus_file, corpus_file_if_present, manifest, require_vaapi,
 };

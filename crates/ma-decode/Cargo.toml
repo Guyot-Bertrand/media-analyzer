@@ -10,6 +10,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+ma-core = { path = "../ma-core" }
 crossbeam-channel = "0.5"
 thiserror = "2"
 

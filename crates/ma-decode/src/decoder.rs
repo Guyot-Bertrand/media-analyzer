@@ -1,6 +1,7 @@
 //! Traits `Decoder` et `DecoderFactory`, et types associés.
 
-use crate::types::{Codec, Planes, Size, Viewport};
+use crate::Codec;
+use crate::types::{Planes, Size, Viewport};
 
 /// Mode de décodage effectif, déduit des images produites.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
