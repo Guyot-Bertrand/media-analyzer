@@ -18,12 +18,22 @@ pub enum BitError {
 pub struct BitReader<'a> {
     data: &'a [u8],
     pos: u64,
+    /// Position du dernier bit à 1 (`rbsp_stop_one_bit`), calculée à la création.
+    stop_bit: Option<u64>,
 }
 
 impl<'a> BitReader<'a> {
     #[must_use]
     pub fn new(data: &'a [u8]) -> Self {
-        Self { data, pos: 0 }
+        let stop_bit = data
+            .iter()
+            .rposition(|&b| b != 0)
+            .map(|last| last as u64 * 8 + 7 - u64::from(data[last].trailing_zeros()));
+        Self {
+            data,
+            pos: 0,
+            stop_bit,
+        }
     }
 
     /// Position courante, en bits depuis le début.
@@ -141,11 +151,7 @@ impl<'a> BitReader<'a> {
     /// (`rbsp_stop_one_bit`) de la charge utile.
     #[must_use]
     pub fn more_rbsp_data(&self) -> bool {
-        let Some(last) = self.data.iter().rposition(|&b| b != 0) else {
-            return false;
-        };
-        let stop_bit = last as u64 * 8 + 7 - u64::from(self.data[last].trailing_zeros());
-        self.pos < stop_bit
+        self.stop_bit.is_some_and(|stop| self.pos < stop)
     }
 }
 
@@ -253,11 +259,69 @@ mod tests {
     }
 
     #[test]
+    fn more_rbsp_data_with_trailing_zero_bytes() {
+        let r = BitReader::new(&[0x80, 0, 0]);
+        assert!(!r.more_rbsp_data());
+        let mut r = BitReader::new(&[0xA0, 0, 0]);
+        r.u(1).unwrap();
+        assert!(r.more_rbsp_data());
+        r.u(1).unwrap();
+        assert!(!r.more_rbsp_data());
+    }
+
+    #[test]
     fn more_rbsp_data_detects_trailing_bits() {
         let mut r = BitReader::new(&[0xA0]);
         r.u(1).unwrap();
         assert!(r.more_rbsp_data());
         r.u(1).unwrap();
         assert!(!r.more_rbsp_data());
+    }
+}
+
+#[cfg(test)]
+mod robustness {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[derive(Debug, Clone)]
+    enum Op {
+        U(u32),
+        Flag,
+        Ue,
+        Se,
+        Skip(u64),
+        Align,
+        More,
+    }
+
+    proptest! {
+        #[ma_trace::covers("SYN.ROBUST.01")]
+        #[test]
+        fn reader_never_panics(
+            data in proptest::collection::vec(any::<u8>(), 0..32),
+            ops in proptest::collection::vec(prop_oneof![
+                (0u32..=70).prop_map(Op::U),
+                any::<u32>().prop_map(Op::U),
+                Just(Op::Flag), Just(Op::Ue), Just(Op::Se),
+                any::<u64>().prop_map(Op::Skip),
+                (0u64..80).prop_map(Op::Skip),
+                Just(Op::Align), Just(Op::More),
+            ], 0..60),
+        ) {
+            let mut r = BitReader::new(&data);
+            for op in ops {
+                let _ = match op {
+                    Op::U(n) => r.u(n).map(|_| ()),
+                    Op::Flag => r.flag().map(|_| ()),
+                    Op::Ue => r.ue().map(|_| ()),
+                    Op::Se => r.se().map(|_| ()),
+                    Op::Skip(n) => r.skip(n),
+                    Op::Align => { r.byte_align(); Ok(()) }
+                    Op::More => { let _ = r.more_rbsp_data(); Ok(()) }
+                };
+                prop_assert!(r.bit_pos() <= data.len() as u64 * 8);
+            }
+        }
     }
 }

@@ -144,8 +144,8 @@ impl<R: Recorder> Syntax<'_, '_, R> {
         Ok(v)
     }
 
-    /// Groupe nommé. En cas d'erreur, le nœud est fermé avec
-    /// `error = "truncated"` et l'erreur est propagée.
+    /// Groupe nommé. En cas d'erreur, le nœud est fermé avec un code selon la
+    /// variante (`"truncated"` ou `"exp-golomb-too-long"`) et l'erreur est propagée.
     pub fn group<T>(
         &mut self,
         name: &'static str,
@@ -153,8 +153,11 @@ impl<R: Recorder> Syntax<'_, '_, R> {
     ) -> Result<T, BitError> {
         self.rec.enter(name, self.bits.bit_pos());
         let r = f(self);
-        self.rec
-            .exit(self.bits.bit_pos(), r.as_ref().err().map(|_| "truncated"));
+        let code = r.as_ref().err().map(|e| match e {
+            BitError::Truncated { .. } => "truncated",
+            BitError::ExpGolombTooLong { .. } => "exp-golomb-too-long",
+        });
+        self.rec.exit(self.bits.bit_pos(), code);
         r
     }
 }
@@ -254,6 +257,15 @@ mod tests {
         assert_eq!(t.nodes[0].error, Some("truncated"));
         assert_eq!(t.nodes[0].bit_len, 16);
         assert_eq!(t.nodes[0].children, 1..3);
+    }
+
+    #[test]
+    fn exp_golomb_error_in_group_is_labelled() {
+        let mut t = TreeRecorder::default();
+        let mut s = Syntax::new(&[0, 0, 0, 0, 0], &mut t);
+        let r = s.group("g", |s| s.ue("x"));
+        assert_eq!(r, Err(BitError::ExpGolombTooLong { at_bit: 0 }));
+        assert_eq!(t.nodes[0].error, Some("exp-golomb-too-long"));
     }
 
     #[test]
