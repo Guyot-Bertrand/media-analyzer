@@ -15,6 +15,8 @@ use crate::packet::{
 const BLOCK: usize = 4 << 20;
 /// Zone lue par `probe` pour détecter le format.
 const PROBE_BYTES: usize = 1 << 20;
+/// Invariant interne rompu (ne doit pas arriver) : erreur explicite, jamais de panique.
+const INCONSISTENT: IoError = IoError::InvalidData("ts-scanner-inconsistent");
 const SUB_FAMILY: &str = "sync";
 
 /// Paquet lu, avec sa position dans le fichier.
@@ -38,8 +40,6 @@ pub struct PacketScanner<'s> {
     /// Fin exclusive des données exploitables.
     limit: u64,
     index: u64,
-    /// Les paquets précédents ont été trouvés à la période.
-    synced: bool,
     buf: Vec<u8>,
     buf_start: u64,
     /// La dernière lecture a rendu moins que demandé : rien de plus à attendre dans ce bloc.
@@ -58,7 +58,6 @@ impl<'s> PacketScanner<'s> {
             pos: start,
             limit,
             index: 0,
-            synced: false,
             buf: Vec::new(),
             buf_start: 0,
             exhausted: false,
@@ -132,6 +131,14 @@ impl<'s> PacketScanner<'s> {
         Ok(None)
     }
 
+    /// Fenêtre de 188 octets à la position `i` du tampon.
+    fn raw(&self, i: usize) -> Result<&[u8; TS_PACKET_SIZE], IoError> {
+        self.buf
+            .get(i..i + TS_PACKET_SIZE)
+            .and_then(|w| <&[u8; TS_PACKET_SIZE]>::try_from(w).ok())
+            .ok_or(INCONSISTENT)
+    }
+
     /// Avance jusqu'au prochain paquet valide et renvoie (offset, index, position dans le tampon).
     fn advance(
         &mut self,
@@ -142,12 +149,8 @@ impl<'s> PacketScanner<'s> {
             if self.pos >= self.limit {
                 return Ok(None);
             }
-            // Tant que la synchronisation n'est pas établie (début de plage), on vérifie aussi
-            // celle du paquet suivant : un 0x47 isolé ne passe pas pour un paquet. Une fois
-            // établie, un octet de synchro faux est détecté au paquet où il se trouve, sans
-            // perdre le paquet précédent.
             let period = self.format.size();
-            let follows = !self.synced && self.pos + (period as u64) < self.limit;
+            let follows = self.pos + (period as u64) < self.limit;
             self.ensure(self.pos, if follows { period + 1 } else { tail })?;
             let avail = self
                 .available(self.pos)
@@ -156,17 +159,27 @@ impl<'s> PacketScanner<'s> {
                 self.pos = self.limit;
                 return Ok(None);
             }
-            let next_ok = !follows || self.byte(self.pos + period as u64) == Some(SYNC_BYTE);
-            if self.byte(self.pos) != Some(SYNC_BYTE) || !next_ok {
+            let mut resumed = None;
+            if self.byte(self.pos) != Some(SYNC_BYTE) {
+                resumed = Some(self.find_sync(self.pos + 1)?.unwrap_or(self.limit));
+            } else if follows && self.byte(self.pos + period as u64) != Some(SYNC_BYTE) {
+                // Candidat suspect : le paquet suivant n'est pas à la période. Une vraie suite de
+                // synchros qui commence avant lui prouve qu'il est faux (0x47 parasite) ; sinon
+                // c'est le dernier paquet avant une zone parasite.
                 let lost = self.pos;
-                let resumed = self.find_sync(lost + 1)?.unwrap_or(self.limit);
+                resumed = self
+                    .find_sync(lost + 1)?
+                    .filter(|&q| q < lost + period as u64);
+                self.ensure(lost, tail)?;
+            }
+            if let Some(resumed) = resumed {
+                let lost = self.pos;
                 sink.push(
                     Message::new(&RESYNC, Severity::Warning, Family::Transport, SUB_FAMILY)
                         .param("skipped", Param::UInt(resumed - lost))
                         .at(lost),
                 );
                 self.pos = resumed;
-                self.synced = true;
                 continue;
             }
             if avail < tail {
@@ -187,10 +200,8 @@ impl<'s> PacketScanner<'s> {
             let index = self.index;
             self.pos += self.format.size() as u64;
             self.index += 1;
-            let i = usize::try_from(offset - self.buf_start).unwrap_or(0);
-            let raw = <&[u8; TS_PACKET_SIZE]>::try_from(&self.buf[i..i + TS_PACKET_SIZE])
-                .unwrap_or(&[0; TS_PACKET_SIZE]);
-            self.synced = true;
+            let i = usize::try_from(offset - self.buf_start).map_err(|_| INCONSISTENT)?;
+            let raw = self.raw(i)?;
             if parse_packet(raw).is_ok() {
                 return Ok(Some((offset, index, i)));
             }
@@ -219,10 +230,9 @@ impl<'s> PacketScanner<'s> {
         let Some((offset, index, i)) = self.advance(sink)? else {
             return Ok(None);
         };
-        let packet = <&[u8; TS_PACKET_SIZE]>::try_from(&self.buf[i..i + TS_PACKET_SIZE])
-            .ok()
-            .and_then(|raw| parse_packet(raw).ok());
-        Ok(packet.map(|packet| ScannedPacket {
+        // Déjà validé par `advance` : un échec ici serait un défaut interne, signalé et non masqué.
+        let packet = parse_packet(self.raw(i)?).map_err(|_| INCONSISTENT)?;
+        Ok(Some(ScannedPacket {
             offset,
             index,
             packet,
@@ -274,7 +284,7 @@ mod tests {
     use crate::messages::{ADAPTATION_LENGTH, RESYNC, TRUNCATED_PACKET};
     use crate::testutil::{packet, repacketize};
     use ma_core::{Param, VecSink};
-    use ma_io::testing::{MemSource, TruncatingSource};
+    use ma_io::testing::MemSource;
     use proptest::prelude::*;
 
     fn stream(n: usize) -> Vec<u8> {
@@ -461,14 +471,80 @@ mod tests {
 
     #[test]
     fn truncated_source_ends_the_scan_without_panic() {
-        let src = TruncatingSource::new(MemSource::new(stream(20)), 188 * 10 + 5);
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        /// Comme `FileSource` : une lecture au-delà de la taille actuelle est `Truncated`.
+        struct Shrinking {
+            inner: MemSource,
+            cut: AtomicU64,
+        }
+        impl ReadAt for Shrinking {
+            fn len(&self) -> u64 {
+                self.inner.len()
+            }
+            fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, IoError> {
+                let cut = self.cut.load(Ordering::SeqCst);
+                if offset + buf.len() as u64 > cut {
+                    return Err(IoError::Truncated {
+                        expected_len: self.inner.len(),
+                        actual_len: cut,
+                    });
+                }
+                self.inner.read_at(offset, buf)
+            }
+        }
+
+        let packets = 2 * BLOCK / 188;
+        let src = Shrinking {
+            inner: MemSource::new(stream(packets)),
+            cut: AtomicU64::new(u64::MAX),
+        };
         let mut sink = VecSink::default();
         let mut sc = PacketScanner::new(&src, PacketFormat::Ts188, 0, None);
-        let mut n = 0;
-        while let Ok(Some(_)) = sc.next(&mut sink) {
-            n += 1;
+        // Le 1er bloc contient BLOCK / 188 paquets entiers ; le fichier rétrécit ensuite.
+        let in_first_block = BLOCK / 188;
+        for i in 0..in_first_block {
+            assert_eq!(sc.next(&mut sink).unwrap().unwrap().index, i as u64);
+            if i == 0 {
+                src.cut.store(1000, Ordering::SeqCst);
+            }
         }
-        assert!(n <= 10);
+        let err = sc.next(&mut sink).err();
+        assert!(
+            matches!(
+                err,
+                Some(IoError::Truncated {
+                    actual_len: 1000,
+                    ..
+                })
+            ),
+            "{err:?}"
+        );
+        assert!(sink.messages.is_empty());
+    }
+
+    #[test]
+    fn stray_sync_byte_after_a_packet_is_not_a_packet() {
+        let mut data = stream(10);
+        data.extend([0x47, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
+        data.extend(stream(10));
+        let mut sink = VecSink::default();
+        let got = scan_all(
+            &MemSource::new(data),
+            PacketFormat::Ts188,
+            0,
+            None,
+            &mut sink,
+        );
+        assert_eq!(got.len(), 20);
+        for (i, g) in got.iter().enumerate() {
+            let extra = if i < 10 { 0 } else { 7 };
+            assert_eq!(g.0, extra + i as u64 * 188, "paquet {i}");
+            assert_eq!(g.1, i as u64);
+        }
+        assert_eq!(sink.messages.len(), 1);
+        assert_eq!(sink.messages[0].id, RESYNC.id);
+        assert_eq!(sink.messages[0].params, vec![("skipped", Param::UInt(7))]);
     }
 
     #[test]
