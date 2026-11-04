@@ -44,6 +44,22 @@ pub(crate) const PSI_INVALID: MsgDef = MsgDef {
     params: &["table_id"],
 };
 
+/// Rupture du compteur de continuité d'un PID : paquets perdus ou dupliqués plus d'une fois.
+pub(crate) const CC_GAP: MsgDef = MsgDef {
+    id: "ts-cc-gap",
+    params: &["pid", "expected", "got"],
+};
+/// Paquets brouillés (`transport_scrambling_control` non nul) : charge ignorée, une fois par PID.
+pub(crate) const SCRAMBLED: MsgDef = MsgDef {
+    id: "ts-scrambled",
+    params: &["pid"],
+};
+/// En-tête PES invalide ou abandonné : le PES est ignoré jusqu'au prochain début de PES.
+pub(crate) const PES_INVALID: MsgDef = MsgDef {
+    id: "ts-pes-invalid",
+    params: &["pid"],
+};
+
 /// Tous les messages de la crate (vérifiés contre `locales/{fr,en}/engine.ftl`).
 pub const MESSAGES: &[MsgDef] = &[
     RESYNC,
@@ -54,6 +70,9 @@ pub const MESSAGES: &[MsgDef] = &[
     PMT_CHANGED,
     PSI_TOO_LONG,
     PSI_INVALID,
+    CC_GAP,
+    SCRAMBLED,
+    PES_INVALID,
 ];
 
 #[cfg(test)]

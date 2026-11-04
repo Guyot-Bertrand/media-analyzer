@@ -354,3 +354,38 @@ code_modulo = 1000
 features = ["closed_gop", "looped"]
 big = true
 bitrate = "25M"
+
+# Dérivé de h264_720p_closed par `ma_ts::testutil::rewrite_video_pes` : le PES n contient la 2e moitié de
+# l'AU n et la 1re moitié de l'AU n+1, avec les PTS/DTS de l'AU n+1 (le 1er PES ne porte que la 1re moitié de l'AU 0).
+[[file]]
+name = "h264_720p_pes_split"
+file = "h264_720p_pes_split.ts"
+codec = "h264"
+profile = "High"
+size = "1280x720"
+fps = 25
+frames = 250
+gop = 25
+bframes = 2
+code_bits = 16
+code_modulo = 65536
+features = ["closed_gop", "pes_split"]
+big = false
+derived_from = "h264_720p_closed"
+
+# Dérivé de h264_720p_nob par `ma_ts::testutil::rewrite_video_pes` : 2 AU par PES, avec le PTS de la première seulement.
+[[file]]
+name = "h264_720p_pes_grouped"
+file = "h264_720p_pes_grouped.ts"
+codec = "h264"
+profile = "High"
+size = "1280x720"
+fps = 25
+frames = 100
+gop = 25
+bframes = 0
+code_bits = 16
+code_modulo = 65536
+features = ["closed_gop", "pes_grouped"]
+big = false
+derived_from = "h264_720p_nob"

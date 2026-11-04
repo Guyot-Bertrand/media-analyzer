@@ -13,3 +13,8 @@ ts-psi-crc = Section PSI/SI ignorée : CRC-32 faux (table_id { $table_id }).
 ts-pmt-changed = PMT du programme { $program } modifiée (version { $version }).
 ts-psi-too-long = Section PSI/SI abandonnée : section_length { $length } trop grande.
 ts-psi-invalid = Section PSI/SI invalide ignorée (table_id { $table_id }).
+
+# Continuité et PES (ma-ts)
+ts-cc-gap = Rupture du compteur de continuité sur le PID { $pid } : attendu { $expected }, reçu { $got }.
+ts-scrambled = Le PID { $pid } est brouillé : sa charge utile est ignorée.
+ts-pes-invalid = En-tête PES invalide ou incomplet sur le PID { $pid } : PES ignoré.

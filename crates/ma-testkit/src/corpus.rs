@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn manifest_lists_the_corpus() {
-        assert_eq!(entries().len(), 20);
+        assert_eq!(entries().len(), 22);
         let e = manifest("hevc_720p_main10");
         assert_eq!(e.codec, "hevc");
         assert_eq!(e.dims(), Size { w: 1280, h: 720 });

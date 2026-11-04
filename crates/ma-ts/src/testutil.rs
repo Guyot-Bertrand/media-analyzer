@@ -105,7 +105,7 @@ pub fn psi_packets(pid: u16, section: &[u8], cc: u8) -> Vec<[u8; 188]> {
         out.push(packet(
             pid,
             false,
-            cc.wrapping_add(k as u8 + 1),
+            cc.wrapping_add(k as u8).wrapping_add(1),
             None,
             chunk,
         ));
@@ -339,6 +339,229 @@ pub fn fill_nulls(
     Ok(out)
 }
 
+/// PTS ou DTS sur 5 octets (`prefix` : 2 = PTS seul, 3 = PTS avant DTS, 1 = DTS).
+fn timestamp_bytes(prefix: u8, ts: u64) -> [u8; 5] {
+    let ts = ts & ((1 << 33) - 1);
+    [
+        prefix << 4 | ((ts >> 29) & 0x0E) as u8 | 1,
+        (ts >> 22) as u8,
+        ((ts >> 14) & 0xFE) as u8 | 1,
+        (ts >> 7) as u8,
+        ((ts << 1) & 0xFE) as u8 | 1,
+    ]
+}
+
+/// En-tête PES d'un flux vidéo (`stream_id` 0xE0) : `packet_length` déclaré, PTS et DTS facultatifs
+/// (un DTS sans PTS est ignoré) et `stuffing` octets 0xFF de bourrage dans l'en-tête.
+///
+/// # Panics
+/// Si l'en-tête dépasse 255 octets de données facultatives.
+#[must_use]
+pub fn pes_header(
+    packet_length: u16,
+    pts: Option<u64>,
+    dts: Option<u64>,
+    stuffing: usize,
+) -> Vec<u8> {
+    let dts = dts.filter(|_| pts.is_some());
+    let mut optional = Vec::new();
+    if let Some(pts) = pts {
+        optional.extend(timestamp_bytes(if dts.is_some() { 3 } else { 2 }, pts));
+    }
+    if let Some(dts) = dts {
+        optional.extend(timestamp_bytes(1, dts));
+    }
+    optional.resize(optional.len() + stuffing, 0xFF);
+    let flags = match (pts, dts) {
+        (Some(_), Some(_)) => 0xC0,
+        (Some(_), None) => 0x80,
+        _ => 0,
+    };
+    let mut h = vec![
+        0,
+        0,
+        1,
+        0xE0,
+        (packet_length >> 8) as u8,
+        packet_length as u8,
+        0x80,
+        flags,
+    ];
+    h.push(u8::try_from(optional.len()).expect("en-tête PES trop long"));
+    h.extend(optional);
+    h
+}
+
+/// PES complet : en-tête (`packet_length` renseigné s'il tient sur 16 bits, sinon 0) et charge.
+#[must_use]
+pub fn pes_bytes(pts: Option<u64>, dts: Option<u64>, payload: &[u8]) -> Vec<u8> {
+    let probe = pes_header(0, pts, dts, 0);
+    let length = u16::try_from(probe.len() - 6 + payload.len()).unwrap_or(0);
+    let mut pes = pes_header(length, pts, dts, 0);
+    pes.extend_from_slice(payload);
+    pes
+}
+
+/// Champ d'adaptation conservé d'un paquet vidéo d'origine : drapeaux et PCR bruts.
+#[derive(Debug, Clone, Copy)]
+struct KeptAf {
+    flags: u8,
+    pcr: [u8; 6],
+}
+
+impl KeptAf {
+    /// Octets du champ d'adaptation conservé, hors octet de longueur (drapeaux + PCR).
+    const LEN: usize = 7;
+}
+
+/// Paquet vidéo : `payload` finit le paquet (bourrage dans le champ d'adaptation), qui reprend
+/// `keep` (drapeaux et PCR) s'il y en a un.
+fn video_packet(pid: u16, pusi: bool, cc: u8, keep: Option<KeptAf>, payload: &[u8]) -> [u8; 188] {
+    let mut p = [0xFFu8; TS_PACKET_SIZE];
+    p[0] = SYNC_BYTE;
+    p[1] = u8::from(pusi) << 6 | ((pid >> 8) & 0x1F) as u8;
+    p[2] = (pid & 0xFF) as u8;
+    let max = TS_PACKET_SIZE - 4 - keep.map_or(0, |_| 1 + KeptAf::LEN);
+    let n = payload.len().min(max);
+    if keep.is_none() && n == TS_PACKET_SIZE - 4 {
+        p[3] = 0x10 | (cc & 0x0F);
+        p[4..].copy_from_slice(&payload[..n]);
+        return p;
+    }
+    let af_len = TS_PACKET_SIZE - 5 - n;
+    p[3] = 0x30 | (cc & 0x0F);
+    p[4] = af_len as u8;
+    if let Some(k) = keep {
+        p[5] = k.flags;
+        p[6..12].copy_from_slice(&k.pcr);
+    } else if af_len > 0 {
+        p[5] = 0;
+    }
+    p[5 + af_len..].copy_from_slice(&payload[..n]);
+    p
+}
+
+/// Paquets portant `pes` sur `pid` (début de PES au premier paquet, compteurs à partir de `cc`,
+/// bourrage dans le champ d'adaptation du dernier paquet). Le premier paquet porte `first_len`
+/// octets de PES au plus (184 au maximum), les suivants 184.
+#[must_use]
+pub fn pes_packets(pid: u16, cc: u8, pes: &[u8], first_len: usize) -> Vec<[u8; 188]> {
+    let first_len = first_len.min(184).min(pes.len());
+    let (head, tail) = pes.split_at(first_len);
+    let mut out = vec![video_packet(pid, true, cc, None, head)];
+    for (k, c) in tail.chunks(184).enumerate() {
+        out.push(video_packet(
+            pid,
+            false,
+            cc.wrapping_add(k as u8).wrapping_add(1),
+            None,
+            c,
+        ));
+    }
+    out
+}
+
+/// PES d'origine d'un flux vidéo, tel que lu par [`rewrite_video_pes`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrigPes {
+    pub pts: Option<u64>,
+    pub dts: Option<u64>,
+    /// Octets d'ES (sans l'en-tête PES).
+    pub payload: Vec<u8>,
+}
+
+/// PES à écrire par [`rewrite_video_pes`].
+pub type NewPes = OrigPes;
+
+/// Réécrit les PES du PID vidéo `pid` : `f` reçoit les PES d'origine et renvoie les nouveaux.
+///
+/// Les paquets vidéo sont réécrits aux positions d'origine, dans l'ordre, en gardant le champ
+/// d'adaptation des paquets qui portent un PCR ; les paquets en surplus deviennent des paquets
+/// nuls, ceux qui manquent sont insérés après le dernier paquet vidéo. Les compteurs de
+/// continuité de `pid` sont renumérotés. Les paquets des autres PID sont conservés tels quels.
+///
+/// # Panics
+/// Si `ts` contient des paquets de `pid` sans en-tête PES valide, ou si un PES dépasse la
+/// capacité d'un en-tête.
+#[must_use]
+pub fn rewrite_video_pes(
+    ts: &[u8],
+    pid: u16,
+    f: impl FnOnce(Vec<OrigPes>) -> Vec<NewPes>,
+) -> Vec<u8> {
+    let (raw, _) = ts.as_chunks::<TS_PACKET_SIZE>();
+    // Paquets vidéo : indice, champ d'adaptation conservé ; PES d'origine accumulés.
+    let mut slots: Vec<(usize, Option<KeptAf>)> = Vec::new();
+    let mut pes_raw: Vec<Vec<u8>> = Vec::new();
+    for (i, p) in raw.iter().enumerate() {
+        if p[0] != SYNC_BYTE || pid_of(p) != pid {
+            continue;
+        }
+        let packet = parse_packet(p).expect("paquet vidéo invalide");
+        let keep = packet.adaptation.filter(|a| a.pcr.is_some()).map(|_| {
+            let mut pcr = [0u8; 6];
+            pcr.copy_from_slice(&p[6..12]);
+            KeptAf { flags: p[5], pcr }
+        });
+        slots.push((i, keep));
+        if packet.header.pusi {
+            pes_raw.push(Vec::new());
+        }
+        if let Some(cur) = pes_raw.last_mut() {
+            cur.extend_from_slice(packet.payload);
+        }
+    }
+    let orig: Vec<OrigPes> = pes_raw
+        .iter()
+        .map(|bytes| {
+            let h = crate::pes::parse_pes_header(bytes).expect("en-tête PES d'origine invalide");
+            OrigPes {
+                pts: h.pts,
+                dts: h.dts,
+                payload: bytes[h.header_len..].to_vec(),
+            }
+        })
+        .collect();
+    let new = f(orig);
+    // Paquets à écrire, dans l'ordre : chaque PES prend les emplacements suivants.
+    let mut written: Vec<[u8; 188]> = Vec::new();
+    let mut cc = 0u8;
+    let mut next_slot = 0;
+    for pes in &new {
+        let bytes = pes_bytes(pes.pts, pes.dts, &pes.payload);
+        let mut rest = bytes.as_slice();
+        let mut first = true;
+        while !rest.is_empty() {
+            let keep = slots.get(next_slot).and_then(|s| s.1);
+            next_slot += 1;
+            let cap = TS_PACKET_SIZE - 4 - keep.map_or(0, |_| 1 + KeptAf::LEN);
+            let (now, later) = rest.split_at(rest.len().min(cap));
+            written.push(video_packet(pid, first, cc, keep, now));
+            cc = (cc + 1) & 0x0F;
+            first = false;
+            rest = later;
+        }
+    }
+    let null = packet(0x1FFF, false, 0, None, &[]);
+    let mut out = Vec::with_capacity(ts.len());
+    let last_slot = slots.last().map(|s| s.0);
+    let mut slot_rank = 0;
+    for (i, p) in raw.iter().enumerate() {
+        if p[0] == SYNC_BYTE && pid_of(p) == pid {
+            out.extend(written.get(slot_rank).unwrap_or(&null));
+            slot_rank += 1;
+        } else {
+            out.extend(p);
+        }
+        if Some(i) == last_slot {
+            for extra in written.iter().skip(slots.len()) {
+                out.extend(extra);
+            }
+        }
+    }
+    out
+}
+
 /// Réécrit un flux de paquets de 188 octets dans le format `f` (le reste incomplet est ignoré) :
 /// 204 et 208 ajoutent 16 et 20 octets 0x00 ; TTS ajoute un préfixe de 4 octets (compteur 27 MHz
 /// croissant, big-endian).
@@ -360,6 +583,7 @@ pub fn repacketize(ts: &[u8], f: PacketFormat) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::packet::parse_packet;
 
     #[test]
     fn packet_is_188_bytes_with_sync_and_padding() {
@@ -474,6 +698,154 @@ mod tests {
         // Même sans paquets nuls, une table de même longueur est remplacée en place.
         let same = section(0x02, 1, 1, &[4, 5, 6]);
         assert!(replace_psi(&ts, 0x1000, &[same]).is_ok());
+    }
+
+    /// Flux : audio, puis 3 PES vidéo (500 octets d'ES chacun, 3 paquets, PCR sur chaque
+    /// premier paquet), un paquet audio entre chaque PES.
+    fn video_stream() -> Vec<u8> {
+        let mut ts = Vec::new();
+        ts.extend(packet(0x300, true, 0, None, &[1; 20]));
+        let mut cc = 0;
+        for k in 0..3u8 {
+            let pes = pes_bytes(Some(u64::from(k) * 3600), None, &[k; 500]);
+            let mut packets = pes_packets(0x100, cc, &pes, 184);
+            // PCR sur le premier paquet : charge réduite, donc PES un peu plus long en paquets.
+            packets[0] = packet(
+                0x100,
+                true,
+                cc,
+                Some(AfSpec {
+                    pcr: Some(Pcr {
+                        base: u64::from(k) + 10,
+                        ext: 1,
+                    }),
+                    random_access: true,
+                    ..AfSpec::default()
+                }),
+                &pes[..176],
+            );
+            let rest = pes_packets(0x100, cc + 1, &pes[176..], 184);
+            packets.truncate(1);
+            packets.extend(rest.into_iter().map(|mut p| {
+                p[1] &= !0x40;
+                p
+            }));
+            cc += packets.len() as u8;
+            ts.extend(packets.iter().flatten());
+            ts.extend(packet(0x300, false, k + 1, None, &[2; 20]));
+        }
+        ts
+    }
+
+    fn video_of(ts: &[u8]) -> Vec<(usize, [u8; 188])> {
+        ts.chunks(188)
+            .enumerate()
+            .filter(|(_, p)| pid_of(p) == 0x100)
+            .map(|(i, p)| (i, p.try_into().unwrap()))
+            .collect()
+    }
+
+    #[test]
+    fn rewrite_video_pes_keeps_positions_pcr_and_pads_with_nulls() {
+        let ts = video_stream();
+        let before = video_of(&ts);
+        assert_eq!(before.len(), 9);
+        // Fusionne les 2 premiers PES en un seul et supprime le 3e : moins de paquets, le reste devient nul.
+        let mut seen = Vec::new();
+        let out = rewrite_video_pes(&ts, 0x100, |orig| {
+            seen = orig.clone();
+            vec![NewPes {
+                pts: Some(7),
+                dts: None,
+                payload: orig
+                    .iter()
+                    .take(2)
+                    .flat_map(|o| o.payload.clone())
+                    .collect(),
+            }]
+        });
+        assert_eq!(seen.len(), 3);
+        assert_eq!(seen[1].pts, Some(3600));
+        assert_eq!(seen[2].payload, vec![2; 500]);
+        assert_eq!(out.len(), ts.len(), "même nombre de paquets");
+        let after = video_of(&out);
+        // 1000 octets d'ES + 14 d'en-tête tiennent en 6 paquets (deux portent un PCR) ; les autres
+        // emplacements sont nuls, les paquets des autres PID sont intacts.
+        assert_eq!(after.len(), 6);
+        assert!(after.len() < before.len(), "{} paquets vidéo", after.len());
+        let nulls = out.chunks(188).filter(|p| pid_of(p) == 0x1FFF).count();
+        assert_eq!(after.len() + nulls, before.len());
+        assert_eq!(
+            after.iter().filter(|p| p.1[1] & 0x40 != 0).count(),
+            1,
+            "un seul PUSI"
+        );
+        assert!(
+            after
+                .iter()
+                .map(|p| p.0)
+                .eq(before.iter().take(after.len()).map(|p| p.0))
+        );
+        for (i, p) in ts.chunks(188).enumerate() {
+            if pid_of(p) == 0x300 {
+                assert_eq!(&out[i * 188..(i + 1) * 188], p);
+            }
+        }
+        // Compteurs continus, PCR du 1er emplacement conservé (pas les autres : paquets sans PCR
+        // d'origine ou devenus nuls).
+        let ccs: Vec<u8> = after.iter().map(|p| p.1[3] & 0x0F).collect();
+        assert!(ccs.iter().enumerate().all(|(k, &c)| usize::from(c) == k));
+        let first = parse_packet(&after[0].1).unwrap();
+        assert_eq!(
+            first.adaptation.unwrap().pcr,
+            Some(Pcr { base: 10, ext: 1 })
+        );
+        assert!(first.adaptation.unwrap().random_access);
+        let second_pcr = after
+            .iter()
+            .skip(1)
+            .filter_map(|p| parse_packet(&p.1).unwrap().adaptation.and_then(|a| a.pcr))
+            .count();
+        assert_eq!(
+            second_pcr, 1,
+            "le PCR du 2e PES d'origine tombe sur un emplacement conservé"
+        );
+    }
+
+    #[test]
+    fn rewrite_video_pes_inserts_missing_packets_after_the_last_video_packet() {
+        let ts = video_stream();
+        let out = rewrite_video_pes(&ts, 0x100, |orig| {
+            // Chaque PES est écrit deux fois : plus de paquets que d'emplacements.
+            orig.iter().chain(orig.iter()).cloned().collect()
+        });
+        let before = video_of(&ts);
+        let after = video_of(&out);
+        assert!(after.len() > before.len());
+        assert_eq!(out.len(), ts.len() + (after.len() - before.len()) * 188);
+        // Les paquets en plus suivent le dernier paquet vidéo d'origine.
+        let last_original = before.last().unwrap().0;
+        let tail: Vec<usize> = after.iter().skip(before.len()).map(|p| p.0).collect();
+        assert!(
+            tail.iter()
+                .enumerate()
+                .all(|(k, &i)| i == last_original + 1 + k)
+        );
+        assert_eq!(after.iter().filter(|p| p.1[1] & 0x40 != 0).count(), 6);
+    }
+
+    #[test]
+    fn pes_helpers_round_trip_through_parse() {
+        let pes = pes_bytes(Some(0x1_FFFF_FFFF), Some(5), &[1, 2, 3]);
+        let h = crate::pes::parse_pes_header(&pes).unwrap();
+        assert_eq!(
+            (h.pts, h.dts, h.header_len),
+            (Some(0x1_FFFF_FFFF), Some(5), 19)
+        );
+        assert_eq!(usize::from(h.packet_length), pes.len() - 6);
+        // Trop grand pour 16 bits : longueur 0.
+        let big = pes_bytes(None, None, &vec![0; 70_000]);
+        assert_eq!(&big[4..6], &[0, 0]);
     }
 
     #[test]

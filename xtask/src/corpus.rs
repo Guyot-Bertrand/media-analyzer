@@ -552,6 +552,97 @@ fn make_lone_pcr(source: &Path, dest: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `h264_720p_pes_split` : le PES n porte la 2e moitié de l'AU n puis la 1re moitié de l'AU n+1
+/// avec les PTS/DTS de l'AU n+1. Un PES de plus ouvre le fichier (1re moitié de l'AU 0, avec ses
+/// propres PTS/DTS) et le dernier PES, sans début d'AU, n'a pas d'horodatage.
+fn split_pes(orig: &[ma_ts::testutil::OrigPes]) -> Vec<ma_ts::testutil::NewPes> {
+    use ma_ts::testutil::NewPes;
+    let halves: Vec<(&[u8], &[u8])> = orig
+        .iter()
+        .map(|o| o.payload.split_at(o.payload.len() / 2))
+        .collect();
+    let mut out = Vec::with_capacity(orig.len() + 1);
+    for (n, au) in orig.iter().enumerate() {
+        // Début de l'AU n : dans le PES qui contient aussi la fin de l'AU n-1.
+        let mut payload = n
+            .checked_sub(1)
+            .map_or_else(Vec::new, |m| halves[m].1.to_vec());
+        payload.extend_from_slice(halves[n].0);
+        out.push(NewPes {
+            pts: au.pts,
+            dts: au.dts,
+            payload,
+        });
+    }
+    if let Some(&(_, last)) = halves.last() {
+        out.push(NewPes {
+            pts: None,
+            dts: None,
+            payload: last.to_vec(),
+        });
+    }
+    out
+}
+
+/// `h264_720p_pes_grouped` : 2 AU par PES, avec le PTS/DTS de la première seulement.
+fn group_pes(orig: &[ma_ts::testutil::OrigPes]) -> Vec<ma_ts::testutil::NewPes> {
+    orig.chunks(2)
+        .map(|pair| ma_ts::testutil::NewPes {
+            pts: pair[0].pts,
+            dts: pair[0].dts,
+            payload: pair.iter().flat_map(|o| o.payload.clone()).collect(),
+        })
+        .collect()
+}
+
+/// Dérivés par réécriture des PES vidéo (`pes_split`, `pes_grouped`).
+fn make_pes(e: &Entry, source: &Path, dest: &Path) -> anyhow::Result<()> {
+    let raw = std::fs::read(source)?;
+    let ts = if e.has("pes_split") {
+        ma_ts::testutil::rewrite_video_pes(&raw, VIDEO_PID, |o| split_pes(&o))
+    } else {
+        ma_ts::testutil::rewrite_video_pes(&raw, VIDEO_PID, |o| group_pes(&o))
+    };
+    std::fs::write(tmp_path(dest), ts)?;
+    Ok(())
+}
+
+/// Horodatages (PTS, DTS) des paquets vidéo vus par `ffprobe`, dans l'ordre du fichier.
+fn packet_timestamps(path: &Path) -> anyhow::Result<Vec<String>> {
+    Ok(probe_raw(path, "packet=pts,dts", &[])?
+        .lines()
+        .map(|l| l.trim().trim_end_matches(',').to_owned())
+        .collect())
+}
+
+/// Un dérivé par réécriture des PES garde toutes les images de sa source : `pes_split` aussi tous
+/// ses PTS/DTS, `pes_grouped` ceux de la première image de chaque PES (la seconde n'en a pas).
+fn verify_pes(e: &Entry, path: &Path, source: &Path) -> anyhow::Result<()> {
+    let (ours, theirs) = (packet_timestamps(path)?, packet_timestamps(source)?);
+    if ours.len() != theirs.len() {
+        bail!(
+            "{} : {} images au lieu de {}",
+            e.name,
+            ours.len(),
+            theirs.len()
+        );
+    }
+    if e.has("pes_split") && ours != theirs {
+        bail!(
+            "{} : PTS/DTS différents de ceux de {}",
+            e.name,
+            source.display()
+        );
+    }
+    if e.has("pes_grouped") && ours.iter().step_by(2).ne(theirs.iter().step_by(2)) {
+        bail!(
+            "{} : PTS/DTS des premières images de chaque PES différents",
+            e.name
+        );
+    }
+    Ok(())
+}
+
 /// Écrit la version re-paquetée de `source` dans `dest` (fichier temporaire).
 fn make_repacketized(f: PacketFormat, source: &Path, dest: &Path) -> anyhow::Result<()> {
     let data = std::fs::read(source)?;
@@ -806,6 +897,9 @@ pub fn generate(root: &Path, big: bool, out: Option<PathBuf>) -> anyhow::Result<
                     Some(f) => make_repacketized(f, &source, &dest)?,
                     None if e.has("lone_pcr") => make_lone_pcr(&source, &dest)?,
                     None if e.has("extra_streams") => make_unsupported(&source, &dest)?,
+                    None if e.has("pes_split") || e.has("pes_grouped") => {
+                        make_pes(e, &source, &dest)?;
+                    }
                     None => make_cut(e, &source, &dest)?,
                 }
             }
@@ -816,6 +910,11 @@ pub fn generate(root: &Path, big: bool, out: Option<PathBuf>) -> anyhow::Result<
         }
         let part = tmp_path(&dest);
         verify(e, &part).with_context(|| format!("vérification de {}", e.name))?;
+        if let (Some(src), true) = (&e.derived_from, e.has("pes_split") || e.has("pes_grouped")) {
+            let src_entry = entries.iter().find(|s| &s.name == src);
+            let source = dir.join(src_entry.map_or("", |s| s.file.as_str()));
+            verify_pes(e, &part, &source).with_context(|| format!("vérification de {}", e.name))?;
+        }
         std::fs::rename(&part, &dest)?;
         created.push(e.name.clone());
     }
@@ -857,7 +956,7 @@ mod tests {
     fn manifest_in_repo_is_complete() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let entries = load_manifest(root).unwrap();
-        assert_eq!(entries.len(), 20);
+        assert_eq!(entries.len(), 22);
         assert_eq!(entries.iter().filter(|e| e.big).count(), 1);
         for e in &entries {
             assert_eq!(e.code_bits, 16, "{}", e.name);
