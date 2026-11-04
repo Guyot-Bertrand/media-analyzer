@@ -60,6 +60,21 @@ pub fn packet(pid: u16, pusi: bool, cc: u8, af: Option<AfSpec>, payload: &[u8]) 
 /// Si `body` dépasse la capacité d'une section (1012 octets pour une PSI, ici bornée à 4084).
 #[must_use]
 pub fn section(table_id: u8, ext: u16, version: u8, body: &[u8]) -> Vec<u8> {
+    section_numbered(table_id, ext, version, (0, 0), body)
+}
+
+/// Comme [`section`], avec `(section_number, last_section_number)`.
+///
+/// # Panics
+/// Si `body` est trop long.
+#[must_use]
+pub fn section_numbered(
+    table_id: u8,
+    ext: u16,
+    version: u8,
+    (number, last): (u8, u8),
+    body: &[u8],
+) -> Vec<u8> {
     let length = body.len() + 5 + 4;
     assert!(length <= 4093, "section trop longue");
     let mut s = vec![
@@ -69,8 +84,8 @@ pub fn section(table_id: u8, ext: u16, version: u8, body: &[u8]) -> Vec<u8> {
         (ext >> 8) as u8,
         (ext & 0xFF) as u8,
         0xC0 | (version & 0x1F) << 1 | 1,
-        0,
-        0,
+        number,
+        last,
     ];
     s.extend_from_slice(body);
     s.extend(crc32_mpeg2(&s).to_be_bytes());
@@ -135,6 +150,22 @@ pub fn pat(ts_id: u16, version: u8, programs: &[(u16, u16)]) -> Vec<u8> {
         .flat_map(|&(n, pid)| [(n >> 8) as u8, n as u8, 0xE0 | (pid >> 8) as u8, pid as u8])
         .collect();
     section(0x00, ts_id, version, &body)
+}
+
+/// Section de PAT numérotée (`number` sur `last`).
+#[must_use]
+pub fn pat_section(
+    ts_id: u16,
+    version: u8,
+    number: u8,
+    last: u8,
+    programs: &[(u16, u16)],
+) -> Vec<u8> {
+    let body: Vec<u8> = programs
+        .iter()
+        .flat_map(|&(n, pid)| [(n >> 8) as u8, n as u8, 0xE0 | (pid >> 8) as u8, pid as u8])
+        .collect();
+    section_numbered(0x00, ts_id, version, (number, last), &body)
 }
 
 /// Section PMT : `program_info` et les descripteurs de chaque flux sont des boucles déjà

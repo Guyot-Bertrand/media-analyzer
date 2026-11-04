@@ -142,7 +142,8 @@ impl SectionAssembler {
             if h.cc == last && !discontinuity {
                 return; // doublon autorisé par la norme
             }
-            if h.cc != (last + 1) & 0x0F && !discontinuity {
+            // Un saut de compteur abandonne la section, même avec `discontinuity_indicator`.
+            if h.cc != (last + 1) & 0x0F {
                 self.abandon(sink);
             }
         }
@@ -415,6 +416,20 @@ mod tests {
         let (out, sink) = run(0, &[packet(0, true, 0, None, &[250, 1, 2])]);
         assert!(out.is_empty());
         assert_eq!(ids(&sink), vec!["ts-psi-invalid"]);
+    }
+
+    #[test]
+    fn discontinuity_with_cc_jump_abandons_the_section() {
+        let long = section(0x40, 1, 0, &[0xAA; 300]);
+        let p = psi_packets(0x30, &long, 0);
+        let af = AfSpec {
+            discontinuity: true,
+            ..AfSpec::default()
+        };
+        let tail = packet(0x30, false, 7, Some(af), &p[1][4..]);
+        let (out, sink) = run(0x30, &[p[0], tail]);
+        assert!(out.is_empty());
+        assert_eq!(ids(&sink), vec!["ts-psi-incomplete"]);
     }
 
     #[test]

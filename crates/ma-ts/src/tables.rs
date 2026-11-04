@@ -166,8 +166,88 @@ fn service_names(d: &[u8]) -> Option<(String, String)> {
     Some((dvb_string(provider), dvb_string(name)))
 }
 
-/// Texte DVB : 0x15 ⇒ UTF-8 ; sans préfixe ou `0x10 0x00 0x01` ⇒ Latin-1 ; tout autre jeu de
-/// caractères ⇒ un U+FFFD par octet. Les codes d'emphase 0x86/0x87 sont retirés.
+/// Symboles ISO 6937 (EN 300 468, annexe A) des octets 0xA0 à 0xFF ; `'\0'` = non défini.
+/// Les octets 0xC0 à 0xCF sont des diacritiques (traités à part).
+const ISO6937_HIGH: [char; 96] = [
+    '\u{A0}', '¡', '¢', '£', '€', '¥', '\0', '§', '¤', '‘', '“', '«', '←', '↑', '→',
+    '↓', // A0
+    '°', '±', '²', '³', '×', 'µ', '¶', '·', '÷', '’', '”', '»', '¼', '½', '¾', '¿', // B0
+    '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
+    '\0', // C0
+    '―', '¹', '®', '©', '™', '♪', '¬', '¦', '\0', '\0', '\0', '\0', '⅛', '⅜', '⅝', '⅞', // D0
+    'Ω', 'Æ', 'Đ', 'ª', 'Ħ', '\0', 'Ĳ', 'Ŀ', 'Ł', 'Ø', 'Œ', 'º', 'Þ', 'Ŧ', 'Ŋ', 'ŉ', // E0
+    'ĸ', 'æ', 'đ', 'ð', 'ħ', 'ı', 'ĳ', 'ŀ', 'ł', 'ø', 'œ', 'ß', 'þ', 'ŧ', 'ŋ', '\u{AD}', // F0
+];
+
+/// Diacritique ISO 6937 (octet 0xC1 à 0xCF) : (octet, signe combinant, lettres de base, lettres
+/// précomposées correspondantes).
+const ISO6937_MARKS: [(u8, char, &str, &str); 13] = [
+    (0xC1, '\u{300}', "AEIOUaeiou", "ÀÈÌÒÙàèìòù"),
+    (
+        0xC2,
+        '\u{301}',
+        "AEIOUYaeiouyCcLlNnRrSsZz",
+        "ÁÉÍÓÚÝáéíóúýĆćĹĺŃńŔŕŚśŹź",
+    ),
+    (
+        0xC3,
+        '\u{302}',
+        "AEIOUaeiouCcGgHhJjSsWwYy",
+        "ÂÊÎÔÛâêîôûĈĉĜĝĤĥĴĵŜŝŴŵŶŷ",
+    ),
+    (0xC4, '\u{303}', "ANOanoIiUu", "ÃÑÕãñõĨĩŨũ"),
+    (0xC5, '\u{304}', "AEIOUaeiou", "ĀĒĪŌŪāēīōū"),
+    (0xC6, '\u{306}', "AGUagu", "ĂĞŬăğŭ"),
+    (0xC7, '\u{307}', "CEGIZcegz", "ĊĖĠİŻċėġż"),
+    (0xC8, '\u{308}', "AEIOUaeiouyY", "ÄËÏÖÜäëïöüÿŸ"),
+    (0xCA, '\u{30A}', "AUau", "ÅŮåů"),
+    (0xCB, '\u{327}', "CGKLNRSTcgklnrst", "ÇĢĶĻŅŖŞŢçģķļņŗşţ"),
+    (0xCD, '\u{30B}', "OUou", "ŐŰőű"),
+    (0xCE, '\u{328}', "AEIUaeiu", "ĄĘĮŲąęįų"),
+    (0xCF, '\u{30C}', "CDELNRSTZcdelnrstz", "ČĎĚĽŇŘŠŤŽčďěľňřšťž"),
+];
+
+/// Décode du texte ISO 6937 (table par défaut de DVB). Un diacritique suivi d'une lettre donne le
+/// caractère précomposé s'il existe, sinon la lettre suivie du signe combinant ; sans lettre
+/// derrière, ou pour un octet non défini : U+FFFD.
+fn iso6937(b: &[u8]) -> String {
+    let mut out = String::new();
+    let mut bytes = b.iter().copied();
+    while let Some(c) = bytes.next() {
+        match c {
+            0xC1..=0xCF => {
+                let mark = ISO6937_MARKS.iter().find(|m| m.0 == c);
+                match (mark, bytes.next()) {
+                    (Some(&(_, combining, bases, composed)), Some(base)) => {
+                        let base = char::from(base);
+                        let pre = bases
+                            .chars()
+                            .position(|x| x == base)
+                            .and_then(|i| composed.chars().nth(i));
+                        if let Some(ch) = pre {
+                            out.push(ch);
+                        } else {
+                            out.push(base);
+                            out.push(combining);
+                        }
+                    }
+                    _ => out.push('\u{FFFD}'),
+                }
+            }
+            0xA0..=0xFF => match ISO6937_HIGH[usize::from(c - 0xA0)] {
+                '\0' => out.push('\u{FFFD}'),
+                ch => out.push(ch),
+            },
+            _ => out.push(char::from(c)),
+        }
+    }
+    out
+}
+
+/// Texte DVB : 0x15 ⇒ UTF-8 ; `0x10 0x00 0x01` ⇒ Latin-1 ; sans préfixe ⇒ ISO 6937 (table par
+/// défaut d'EN 300 468) ; tout autre jeu de caractères ⇒ un U+FFFD par octet. Les contrôles C1
+/// (U+0080 à U+009F, dont les codes d'emphase 0x86/0x87 et le saut de ligne 0x8A) et leurs
+/// équivalents UTF-8 privés U+E086, U+E087 et U+E08A sont retirés.
 #[must_use]
 pub fn dvb_string(b: &[u8]) -> String {
     let latin1 = |t: &[u8]| t.iter().map(|&c| char::from(c)).collect::<String>();
@@ -177,10 +257,15 @@ pub fn dvb_string(b: &[u8]) -> String {
         [0x10, 0x00, 0x01, rest @ ..] => latin1(rest),
         [0x10, rest @ ..] => "\u{FFFD}".repeat(rest.len().saturating_sub(2)),
         [first, rest @ ..] if *first < 0x20 => "\u{FFFD}".repeat(rest.len()),
-        _ => latin1(b),
+        _ => iso6937(b),
     };
     text.chars()
-        .filter(|c| !matches!(c, '\u{86}' | '\u{87}'))
+        .filter(|c| {
+            !matches!(
+                c,
+                '\u{80}'..='\u{9F}' | '\u{E086}' | '\u{E087}' | '\u{E08A}'
+            )
+        })
         .collect()
 }
 
@@ -263,13 +348,52 @@ mod tests {
     fn dvb_string_charsets() {
         assert_eq!(dvb_string(b""), "");
         assert_eq!(dvb_string(b"P1"), "P1");
-        assert_eq!(dvb_string(&[b'M', 0xE9]), "M\u{e9}"); // Latin-1 sans préfixe
+        // Latin-1 sous préfixe.
         assert_eq!(dvb_string(&[0x10, 0x00, 0x01, 0xE9]), "\u{e9}");
         assert_eq!(dvb_string(&[0x15, 0xC3, 0xA9]), "\u{e9}"); // UTF-8
         assert_eq!(dvb_string(&[0x05, b'a', b'b']), "\u{FFFD}\u{FFFD}"); // autre jeu
         assert_eq!(dvb_string(&[0x10, 0x00, 0x05, b'a']), "\u{FFFD}");
         assert_eq!(dvb_string(&[0x10]), "");
-        assert_eq!(dvb_string(&[b'a', 0x86, b'b', 0x87]), "ab"); // emphase retirée
+        // UTF-8 invalide : remplacement, sans panique.
+        assert_eq!(dvb_string(&[0x15, 0xFF]), "\u{FFFD}");
+        assert_eq!(dvb_string(&[0x15]), "");
+    }
+
+    #[test]
+    fn dvb_string_iso6937_default_table() {
+        assert_eq!(dvb_string(&[0xC2, b'e']), "\u{e9}");
+        assert_eq!(dvb_string(&[0xC1, b'a']), "\u{e0}");
+        assert_eq!(dvb_string(&[0xCB, b'c']), "\u{e7}");
+        assert_eq!(
+            dvb_string(&[b'M', b'A', b' ', b'R', 0xC2, b'e', b'f']),
+            "MA R\u{e9}f"
+        );
+        // Diacritique sans forme précomposée : lettre + signe combinant.
+        assert_eq!(dvb_string(&[0xC1, b'x']), "x\u{300}");
+        // Diacritique en fin de texte ou octet non défini.
+        assert_eq!(dvb_string(&[b'a', 0xC2]), "a\u{FFFD}");
+        assert_eq!(dvb_string(&[0xC0]), "\u{FFFD}");
+        // Symboles de 0xA0 à 0xFF (différents de Latin-1).
+        assert_eq!(
+            dvb_string(&[0xE9, 0xFB, 0xE1, 0xA4, 0xB5]),
+            "\u{d8}\u{df}\u{c6}\u{20ac}\u{b5}"
+        );
+        assert_eq!(dvb_string(&[0xC8, b'u', 0xC8, b'O']), "\u{fc}\u{d6}");
+    }
+
+    #[test]
+    fn dvb_string_strips_control_codes() {
+        assert_eq!(dvb_string(&[b'a', 0x86, b'b', 0x87, 0x8A, b'c']), "abc");
+        assert_eq!(
+            dvb_string(&[0x10, 0x00, 0x01, b'a', 0x80, 0x9F, b'b']),
+            "ab"
+        );
+        assert_eq!(
+            dvb_string(&[
+                0x15, b'a', 0xC2, 0x86, 0xEE, 0x82, 0x86, 0xEE, 0x82, 0x87, 0xEE, 0x82, 0x8A, b'b'
+            ]),
+            "ab"
+        );
     }
 
     #[test]

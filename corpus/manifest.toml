@@ -285,8 +285,10 @@ features = ["closed_gop", "ref_mux"]
 big = false
 bitrate = "800k"
 
-# Dérivé de ts_ref : PMT_PID = 0x1FF et paquets PCR seuls (champ d'adaptation seul) sur 0x1FF, un par PCR vidéo
-# (PCR interpolé depuis ceux de la vidéo, au plus 30 ms d'écart), à la place de paquets nuls.
+# Dérivé de ts_ref : PCR_PID = 0x1FF et paquets PCR seuls (champ d'adaptation seul) sur 0x1FF. Ils remplacent
+# des paquets nuls situés entre le premier et le dernier PCR vidéo, choisis gloutonnement : au plus 100 paquets
+# (25 ms à 6 Mb/s, donc ≤ 30 ms) après le précédent, le plus tard possible. Valeur du PCR interpolée linéairement
+# (en position de paquet) entre les deux PCR vidéo qui encadrent le paquet. Les PCR de la vidéo restent.
 [[file]]
 name = "ts_pcr_pid"
 file = "ts_pcr_pid.ts"

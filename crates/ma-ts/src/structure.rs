@@ -60,6 +60,35 @@ pub struct TsStructure {
     pub programs: Vec<Program>,
 }
 
+/// Sections d'une même version de la PAT, fusionnées quand elles sont toutes arrivées.
+#[derive(Debug, Default)]
+struct PatParts {
+    version: Option<u8>,
+    last: u8,
+    parts: BTreeMap<u8, Pat>,
+}
+
+impl PatParts {
+    /// Ajoute une section ; renvoie la PAT complète (sections 0..=last dans l'ordre) quand toutes
+    /// sont présentes. Une autre version ou un autre `last_section_number` repart de zéro.
+    fn add(&mut self, s: &Section, pat: Pat) -> Option<Pat> {
+        if self.version != Some(s.version) || self.last != s.last_section_number {
+            self.parts.clear();
+            self.version = Some(s.version);
+            self.last = s.last_section_number;
+        }
+        let ts_id = pat.ts_id;
+        self.parts.insert(s.section_number, pat);
+        (0..=self.last)
+            .map(|n| self.parts.get(&n))
+            .collect::<Option<Vec<_>>>()
+            .map(|all| Pat {
+                ts_id,
+                programs: all.iter().flat_map(|p| p.programs.clone()).collect(),
+            })
+    }
+}
+
 /// Construit la structure du flux au fil des paquets. Seules les sections valides (CRC bon,
 /// `current_next = 1`) sont prises en compte.
 #[derive(Debug)]
@@ -71,6 +100,8 @@ pub struct StructureBuilder {
     /// Assembleur de chaque PID de PMT annoncé par la PAT.
     pmt_asm: BTreeMap<u16, SectionAssembler>,
     pat: Option<Pat>,
+    /// Sections de la PAT en cours d'assemblage (version, dernier numéro, par numéro).
+    pat_parts: PatParts,
     pmts: BTreeMap<u16, Pmt>,
     services: BTreeMap<u16, SdtService>,
     has_cat: bool,
@@ -88,6 +119,7 @@ impl StructureBuilder {
             sdt_asm: SectionAssembler::new(PID_SDT),
             pmt_asm: BTreeMap::new(),
             pat: None,
+            pat_parts: PatParts::default(),
             pmts: BTreeMap::new(),
             services: BTreeMap::new(),
             has_cat: false,
@@ -144,8 +176,12 @@ impl StructureBuilder {
     fn apply(&mut self, pid: u16, s: &Section, sink: &mut dyn MessageSink) {
         match pid {
             PID_PAT if s.table_id == 0x00 => match parse_pat(s) {
-                Some(pat) => self.set_pat(pat),
-                None => Self::invalid(pid, s, sink),
+                Some(pat) if s.section_number <= s.last_section_number => {
+                    if let Some(merged) = self.pat_parts.add(s, pat) {
+                        self.set_pat(merged);
+                    }
+                }
+                _ => Self::invalid(pid, s, sink),
             },
             PID_CAT => {
                 if s.table_id == TABLE_CAT && !self.has_cat {
@@ -279,7 +315,7 @@ mod tests {
     use crate::packet::{PacketFormat, parse_packet};
     use crate::scan::ScannedPacket;
     use crate::tables::{AudioKind, StreamKind};
-    use crate::testutil::{pat, pmt, psi_packets, sdt, section};
+    use crate::testutil::{pat, pat_section, pmt, psi_packets, sdt, section};
     use ma_core::{Codec, VecSink};
 
     /// Pousse des paquets bruts (188 octets) dans le constructeur.
@@ -301,7 +337,7 @@ mod tests {
         sink.messages.iter().map(|m| m.id).collect()
     }
 
-    fn video_pmt(version: u8, pid: u16) -> Vec<[u8; 188]> {
+    fn video_pmt(version: u8, cc: u8, pid: u16) -> Vec<[u8; 188]> {
         let bytes = pmt(
             1,
             version,
@@ -309,7 +345,7 @@ mod tests {
             &[],
             &[(0x24, pid, &[]), (0x0F, 0x101, &[])],
         );
-        psi_packets(0x1000, &bytes, version)
+        psi_packets(0x1000, &bytes, cc)
     }
 
     #[test]
@@ -323,7 +359,7 @@ mod tests {
             &psi_packets(0, &pat(1, 0, &[(1, 0x1000), (2, 0x1001)]), 0),
         );
         assert!(!b.complete());
-        feed(&mut b, &mut sink, &video_pmt(0, 0x100));
+        feed(&mut b, &mut sink, &video_pmt(0, 0, 0x100));
         assert!(!b.complete());
         let p2 = pmt(2, 0, 0x200, &[], &[(0x1B, 0x200, &[])]);
         feed(&mut b, &mut sink, &psi_packets(0x1001, &p2, 0));
@@ -397,7 +433,7 @@ mod tests {
             &mut sink,
             &psi_packets(0, &pat(1, 0, &[(1, 0x1000)]), 0),
         );
-        feed(&mut b, &mut sink, &video_pmt(0, 0x100));
+        feed(&mut b, &mut sink, &video_pmt(0, 0, 0x100));
         let g0 = b.generation();
         let pids = |b: &StructureBuilder| -> Vec<u16> {
             b.structure().programs[0]
@@ -407,12 +443,12 @@ mod tests {
                 .collect()
         };
         assert_eq!(pids(&b), vec![0x100, 0x101]);
-        // Répétition identique : rien ne change.
-        feed(&mut b, &mut sink, &video_pmt(0, 0x100));
+        // Répétition identique avec le CC suivant (pas un doublon de paquet) : rien ne change.
+        feed(&mut b, &mut sink, &video_pmt(0, 1, 0x100));
         assert_eq!(b.generation(), g0);
         assert!(sink.messages.is_empty());
         // Nouvelle version, nouveau PID vidéo.
-        feed(&mut b, &mut sink, &video_pmt(1, 0x200));
+        feed(&mut b, &mut sink, &video_pmt(1, 2, 0x200));
         assert_eq!(pids(&b), vec![0x200, 0x101]);
         assert_eq!(b.generation(), g0 + 1);
         assert_eq!(ids(&sink), vec!["ts-pmt-changed"]);
@@ -496,5 +532,69 @@ mod tests {
         feed(&mut b, &mut sink, &psi_packets(0x1000, &pm, 2));
         let prog = b.structure().programs[0].clone();
         assert_eq!((prog.pcr_pid, prog.dedicated_pcr_pid()), (None, None));
+    }
+
+    #[test]
+    fn next_pmt_is_ignored() {
+        let mut b = StructureBuilder::new(PacketFormat::Ts188);
+        let mut sink = VecSink::default();
+        feed(
+            &mut b,
+            &mut sink,
+            &psi_packets(0, &pat(1, 0, &[(1, 0x1000)]), 0),
+        );
+        feed(&mut b, &mut sink, &video_pmt(0, 0, 0x100));
+        let g0 = b.generation();
+        // PMT « suivante » (current_next = 0) avec un autre PID vidéo.
+        let mut next = pmt(1, 1, 0x200, &[], &[(0x24, 0x200, &[])]);
+        next[5] &= !1;
+        let n = next.len();
+        let crc = crate::psi::crc32_mpeg2(&next[..n - 4]).to_be_bytes();
+        next[n - 4..].copy_from_slice(&crc);
+        feed(&mut b, &mut sink, &psi_packets(0x1000, &next, 1));
+        assert_eq!(b.generation(), g0);
+        assert!(sink.messages.is_empty());
+        assert_eq!(b.structure().programs[0].streams[0].pid, 0x100);
+    }
+
+    #[test]
+    fn multi_section_pat_is_merged_and_stable() {
+        let mut b = StructureBuilder::new(PacketFormat::Ts188);
+        let mut sink = VecSink::default();
+        let s0 = pat_section(7, 0, 0, 1, &[(1, 0x1000)]);
+        let s1 = pat_section(7, 0, 1, 1, &[(2, 0x1001)]);
+        let programs = |b: &StructureBuilder| -> Vec<u16> {
+            b.structure().programs.iter().map(|p| p.number).collect()
+        };
+        // Tant que la 2e section manque, la PAT n'est pas appliquée.
+        feed(&mut b, &mut sink, &psi_packets(0, &s0, 0));
+        assert_eq!(programs(&b), Vec::<u16>::new());
+        feed(&mut b, &mut sink, &psi_packets(0, &s1, 1));
+        assert_eq!(programs(&b), vec![1, 2]);
+        let generation = b.generation();
+        for cycle in 1..3u8 {
+            feed(&mut b, &mut sink, &psi_packets(0, &s0, cycle * 2));
+            assert_eq!(programs(&b), vec![1, 2], "cycle {cycle}, section 0");
+            feed(&mut b, &mut sink, &psi_packets(0, &s1, cycle * 2 + 1));
+            assert_eq!(programs(&b), vec![1, 2], "cycle {cycle}, section 1");
+            assert_eq!(b.generation(), generation, "cycle {cycle}");
+        }
+        assert!(sink.messages.is_empty());
+        // Nouvelle version en une section : remplace tout.
+        feed(
+            &mut b,
+            &mut sink,
+            &psi_packets(0, &pat_section(7, 1, 0, 0, &[(3, 0x1002)]), 6),
+        );
+        assert_eq!(programs(&b), vec![3]);
+        assert_eq!(b.generation(), generation + 1);
+        // Numéro de section supérieur au dernier : invalide.
+        feed(
+            &mut b,
+            &mut sink,
+            &psi_packets(0, &pat_section(7, 2, 3, 1, &[(4, 0x1003)]), 7),
+        );
+        assert_eq!(ids(&sink), vec!["ts-psi-invalid"]);
+        assert_eq!(programs(&b), vec![3]);
     }
 }
