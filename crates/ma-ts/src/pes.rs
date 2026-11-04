@@ -11,6 +11,8 @@
 //! - Le `pos` d'un [`EsChunk`] est la position de son premier octet ; l'octet `n` du chunk est
 //!   à `EsPos { packet_offset, skip: pos.skip + n }`.
 //! - Une position de fin à `skip == 0` désigne le début du paquet : ses octets sont exclus.
+//! - `(P2, 0)` n'est jamais une position valide quand l'en-tête couvre P1 et P2 : ces octets
+//!   sont `(P1, n)`.
 //! - Cas particulier : quand l'en-tête PES est réparti sur plusieurs paquets, les octets d'ES
 //!   du dernier de ces paquets sont ancrés au **premier** paquet du PES (celui qui porte le
 //!   `PUSI`) avec `skip` compté à partir de 0 : rejouer depuis un paquet intermédiaire est
@@ -159,8 +161,11 @@ enum Phase {
 }
 
 /// Assembleur de PES d'un PID : suit le compteur de continuité et sépare l'en-tête PES des
-/// octets d'ES, paquet par paquet (le tampon d'en-tête reste sous `MAX_PES_HEADER` octets plus une charge de paquet : il est
-/// décodé dès qu'il est complet, et `Truncated` signifie qu'il est plus court que son en-tête).
+/// octets d'ES, paquet par paquet.
+///
+/// L'en-tête est mis en tampon jusqu'à être décodable : `Truncated` signifie que le tampon est
+/// plus court que l'en-tête annoncé (264 octets au plus), donc le tampon reste sous
+/// `MAX_PES_HEADER` octets plus une charge de paquet.
 pub struct PesAssembler {
     pid: u16,
     phase: Phase,
@@ -634,6 +639,30 @@ mod tests {
         assert_eq!(got[0].data, es(20, 2));
         assert!(got[0].gap);
         assert_eq!(sink.messages.len(), 1);
+    }
+
+    #[test]
+    fn pusi_without_start_code_after_a_running_pes_is_a_gap() {
+        let mut packets = pes_packets(PID, 0, &pes_bytes(Some(1), None, &es(300, 1)), 184);
+        let n = packets.len() as u8;
+        // Début de PES invalide pendant l'ES du premier, puis une suite et un PES valide.
+        packets.push(packet(PID, true, n, None, &[0xAA; 184]));
+        packets.push(packet(PID, false, n + 1, None, &[0xBB; 184]));
+        packets.extend(pes_packets(
+            PID,
+            n + 2,
+            &pes_bytes(Some(2), None, &es(40, 2)),
+            184,
+        ));
+        let mut sink = VecSink::default();
+        let got = run(&packets, &mut sink);
+        let all = concat(&got);
+        assert_eq!(all, [es(300, 1), es(40, 2)].concat(), "aucun octet recollé");
+        assert_eq!(sink.messages.len(), 1);
+        assert_eq!(sink.messages[0].id, PES_INVALID.id);
+        let last = got.last().unwrap();
+        assert!(last.gap && last.start.is_some());
+        assert_eq!(got.iter().filter(|c| c.gap).count(), 1);
     }
 
     #[test]

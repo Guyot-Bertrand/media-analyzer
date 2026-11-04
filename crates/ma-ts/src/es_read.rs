@@ -7,8 +7,12 @@ use crate::packet::PacketFormat;
 use crate::pes::{EsChunk, EsPos, MAX_AU_BYTES, PesAssembler};
 use crate::scan::PacketScanner;
 
-/// Paquets lus au plus après le paquet de fin pour terminer un en-tête PES en cours.
-const HEADER_TAIL_PACKETS: u64 = 4;
+/// Paquets **du PID** examinés au plus après le paquet de fin pour terminer un en-tête PES en
+/// cours (un en-tête compte 3 paquets au plus).
+const HEADER_TAIL_PACKETS: usize = 8;
+/// Octets lus au plus pour cette recherche, tous PID confondus.
+const HEADER_TAIL_BYTES: u64 = 4 << 20;
+const HEADER_UNFINISHED: IoError = IoError::InvalidData("en-tete pes incomplet");
 const TOO_LARGE: IoError = IoError::InvalidData("au trop grande");
 
 /// Puits qui jette les messages d'une relecture (déjà émis lors de l'indexation).
@@ -63,7 +67,9 @@ impl Replay<'_> {
         format: PacketFormat,
         pid: u16,
         (from, limit): (u64, u64),
+        pid_budget: Option<usize>,
     ) -> Result<(), IoError> {
+        let mut seen = 0;
         let mut scanner = PacketScanner::new(src, format, from, Some(limit));
         let mut sink = Discard;
         while !self.done {
@@ -72,6 +78,10 @@ impl Replay<'_> {
             };
             if p.packet.header.pid != pid {
                 continue;
+            }
+            seen += 1;
+            if pid_budget.is_some_and(|b| seen > b) {
+                return Err(HEADER_UNFINISHED);
             }
             // Le premier paquet du PID décide de l'état initial : début de PES, ou ES en cours
             // (sans historique de compteur, donc ni trou ni message à ce moment).
@@ -96,11 +106,12 @@ impl Replay<'_> {
 /// documentation de [`EsPos`] pour la sémantique des positions) et renvoie exactement les octets
 /// de l'assemblage en direct, y compris autour d'un trou de continuité. Les messages du rejeu
 /// sont jetés. Le paquet `end.packet_offset` n'est pas lu quand `end.skip == 0` ; sinon rien
-/// n'est lu au-delà, sauf quelques paquets pour finir l'en-tête PES en cours.
+/// n'est lu au-delà, sauf pour finir l'en-tête PES en cours (8 paquets du PID au plus, 4 Mio au
+/// plus) ; si l'en-tête n'est pas fini alors, c'est `InvalidData("en-tete pes incomplet")`.
 ///
 /// # Errors
 /// Erreur d'E/S de la source, ou `InvalidData("au trop grande")` si la plage dépasse
-/// `MAX_AU_BYTES`.
+/// `MAX_AU_BYTES`, ou en-tête PES de la borne `end` introuvable (`InvalidData`).
 pub fn read_es(
     src: &dyn ReadAt,
     format: PacketFormat,
@@ -127,12 +138,16 @@ pub fn read_es(
         } else {
             format.tail() as u64
         };
-    replay.run(src, format, pid, (start.packet_offset, packet_end))?;
+    replay.run(src, format, pid, (start.packet_offset, packet_end), None)?;
     let pending = replay.asm.as_ref().is_some_and(PesAssembler::in_header);
     if !replay.done && end.skip > 0 && pending {
         let next = end.packet_offset + format.size() as u64;
-        let limit = next + HEADER_TAIL_PACKETS * format.size() as u64;
-        replay.run(src, format, pid, (next, limit))?;
+        let limit = next + HEADER_TAIL_BYTES;
+        replay.run(src, format, pid, (next, limit), Some(HEADER_TAIL_PACKETS))?;
+        if !replay.done {
+            // Jamais une plage silencieusement courte : l'assemblage en direct aurait des octets.
+            return Err(HEADER_UNFINISHED);
+        }
     }
     Ok(())
 }
@@ -219,6 +234,10 @@ mod tests {
             }
             es.extend(d);
         }
+        assert!(
+            pos.windows(2).all(|w| w[0].0 < w[1].0),
+            "positions strictement croissantes"
+        );
         (es, pos)
     }
 
@@ -371,5 +390,48 @@ mod tests {
             "{err:?}"
         );
         assert!(buf.len() <= MAX_AU_BYTES);
+    }
+
+    #[test]
+    fn read_es_finishes_a_pes_header_despite_interleaved_pids() {
+        // PES à en-tête sur 2 paquets, 5 paquets d'un autre PID entre P1 et P2.
+        let pes = pes_bytes(Some(10), Some(5), &es(300, 8));
+        let p = pes_packets(PID, 0, &pes, 10);
+        let mut packets = vec![p[0]];
+        packets.extend((0..5).map(|k| packet(0x200, false, k, None, &[k; 50])));
+        packets.extend(&p[1..]);
+        let data: Vec<u8> = packets.into_iter().flatten().collect();
+        let chunks = live(&data, PacketFormat::Ts188);
+        assert_eq!(
+            chunks[0].0,
+            EsPos {
+                packet_offset: 0,
+                skip: 0
+            }
+        );
+        let (all, _) = positions(&chunks);
+        assert_eq!(all, es(300, 8));
+        let src = MemSource::new(data);
+        let mut buf = Vec::new();
+        let end = EsPos {
+            packet_offset: 0,
+            skip: 20,
+        };
+        read_es(&src, PacketFormat::Ts188, PID, chunks[0].0, end, &mut buf).unwrap();
+        assert_eq!(buf, all[..20]);
+        // En-tête qui ne se termine jamais dans la fenêtre : erreur, pas une plage courte.
+        let mut lone = vec![pes_packets(PID, 0, &pes, 10)[0]];
+        lone.extend((0..20).map(|k| packet(PID + 1, false, k, None, &[0; 50])));
+        let data: Vec<u8> = lone.into_iter().flatten().collect();
+        let src = MemSource::new(data);
+        let start = EsPos {
+            packet_offset: 0,
+            skip: 0,
+        };
+        let err = read_es(&src, PacketFormat::Ts188, PID, start, end, &mut buf).unwrap_err();
+        assert!(
+            matches!(err, IoError::InvalidData("en-tete pes incomplet")),
+            "{err:?}"
+        );
     }
 }
