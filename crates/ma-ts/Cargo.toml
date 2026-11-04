@@ -1,0 +1,26 @@
+[package]
+name = "ma-ts"
+description = "Démultiplexeur MPEG-2 TS maison : paquets 188/192/204/208, détection du format, resynchronisation"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Constructeurs de paquets et re-paquetage (tests et génération du corpus uniquement).
+testutil = []
+
+[dependencies]
+ma-core = { path = "../ma-core" }
+ma-io = { path = "../ma-io" }
+thiserror = "2"
+
+[dev-dependencies]
+ma-io = { path = "../ma-io", features = ["testing"] }
+ma-testkit = { path = "../ma-testkit" }
+ma-trace = { path = "../ma-trace" }
+proptest = "1"
+tempfile = "3"

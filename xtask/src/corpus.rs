@@ -5,6 +5,7 @@
 //! `$MA_CORPUS_DIR` (défaut `~/media-analyzer-corpus/generated`). La génération est idempotente.
 
 use anyhow::{Context, bail};
+use ma_ts::PacketFormat;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -296,8 +297,42 @@ fn probe(path: &Path, entries: &str, extra: &[&str]) -> anyhow::Result<String> {
     )
 }
 
+/// Format de paquet d'un fichier dérivé par re-paquetage (`packet_204`, `packet_208`, `packet_tts`).
+fn packet_format(e: &Entry) -> Option<PacketFormat> {
+    [
+        ("packet_204", PacketFormat::Rs204),
+        ("packet_208", PacketFormat::Ts208),
+        ("packet_tts", PacketFormat::Tts192),
+    ]
+    .into_iter()
+    .find_map(|(feature, format)| e.has(feature).then_some(format))
+}
+
+/// Fichier re-paqueté : détecte le format (`FFmpeg` n'est pas juge ici) et vérifie que la taille est
+/// un multiple de la période.
+fn verify_repacketized(e: &Entry, f: PacketFormat, path: &Path) -> anyhow::Result<()> {
+    let data = std::fs::read(path)?;
+    let detected = ma_ts::detect_format(&data[..data.len().min(1 << 20)]);
+    let ok = detected.is_some_and(|(d, off)| d == f && off == f.sync_offset())
+        && data.len() % f.size() == 0;
+    if !ok {
+        bail!("{} : format {detected:?} au lieu de {f:?}", e.name);
+    }
+    Ok(())
+}
+
+/// Écrit la version re-paquetée de `source` dans `dest` (fichier temporaire).
+fn make_repacketized(f: PacketFormat, source: &Path, dest: &Path) -> anyhow::Result<()> {
+    let data = std::fs::read(source)?;
+    std::fs::write(tmp_path(dest), ma_ts::testutil::repacketize(&data, f))?;
+    Ok(())
+}
+
 /// Vérifie codec, profil et nombre d'images (ou taille pour `big`) d'un fichier généré.
 fn verify(e: &Entry, path: &Path) -> anyhow::Result<()> {
+    if let Some(f) = packet_format(e) {
+        return verify_repacketized(e, f, path);
+    }
     let cp = probe(path, "stream=codec_name,profile", &[])?;
     let want = format!("{},{}", e.codec, e.profile);
     if cp != want {
@@ -506,7 +541,11 @@ pub fn generate(root: &Path, big: bool, out: Option<PathBuf>) -> anyhow::Result<
                     .iter()
                     .find(|s| &s.name == src)
                     .with_context(|| format!("source {src} inconnue"))?;
-                make_cut(e, &dir.join(&src_entry.file), &dest)?;
+                let source = dir.join(&src_entry.file);
+                match packet_format(e) {
+                    Some(f) => make_repacketized(f, &source, &dest)?,
+                    None => make_cut(e, &source, &dest)?,
+                }
             }
             None if e.big => make_big(e, &dest, &dir)?,
             None => encode(e, &dest)?,
@@ -554,13 +593,51 @@ mod tests {
     fn manifest_in_repo_is_complete() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let entries = load_manifest(root).unwrap();
-        assert_eq!(entries.len(), 13);
+        assert_eq!(entries.len(), 16);
         assert_eq!(entries.iter().filter(|e| e.big).count(), 1);
         for e in &entries {
             assert_eq!(e.code_bits, 16, "{}", e.name);
             assert!(e.dims().is_ok(), "{}", e.name);
             assert!(encoder_args(e).is_ok(), "{}", e.name);
         }
+    }
+
+    #[test]
+    fn repacketized_files_are_verified_without_ffprobe() {
+        let dir = std::env::temp_dir().join(format!("ma-xtask-repack-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("src.ts");
+        let ts: Vec<u8> = (0..10u8)
+            .flat_map(|i| ma_ts::testutil::packet(0x100, false, i, None, &[i]))
+            .collect();
+        std::fs::write(&src, &ts).unwrap();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let entries = load_manifest(root).unwrap();
+        for (name, f) in [
+            ("ts204_h264", PacketFormat::Rs204),
+            ("ts208_h264", PacketFormat::Ts208),
+            ("tts_h264", PacketFormat::Tts192),
+        ] {
+            let e = entries.iter().find(|e| e.name == name).unwrap();
+            assert_eq!(packet_format(e), Some(f));
+            let dest = dir.join(format!("{name}.ts"));
+            make_repacketized(f, &src, &dest).unwrap();
+            let part = tmp_path(&dest);
+            verify(e, &part).unwrap();
+            assert_eq!(
+                std::fs::metadata(&part).unwrap().len(),
+                10 * f.size() as u64
+            );
+        }
+        // Un fichier 188 n'est pas un 204.
+        let e = entries.iter().find(|e| e.name == "ts204_h264").unwrap();
+        assert!(verify(e, &src).is_err());
+        let plain = entries
+            .iter()
+            .find(|e| e.name == "h264_720p_closed")
+            .unwrap();
+        assert_eq!(packet_format(plain), None);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

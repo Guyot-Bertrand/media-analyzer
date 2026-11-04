@@ -210,6 +210,60 @@ code_modulo = 65536
 features = ["closed_gop"]
 big = false
 
+# Dérivé de h264_720p_closed par `ma_ts::testutil::repacketize` : paquets de 204 octets (16 octets 0x00 de trailer).
+# Pas de vérification ffprobe (la détection de format de FFmpeg n'est pas l'objet) : taille et format.
+[[file]]
+name = "ts204_h264"
+file = "ts204_h264.ts"
+codec = "h264"
+profile = "High"
+size = "1280x720"
+fps = 25
+frames = 250
+gop = 25
+bframes = 2
+code_bits = 16
+code_modulo = 65536
+features = ["closed_gop", "packet_204"]
+big = false
+derived_from = "h264_720p_closed"
+
+# Dérivé de h264_720p_closed par `ma_ts::testutil::repacketize` : paquets de 208 octets (20 octets 0x00 de trailer).
+# Pas de vérification ffprobe (la détection de format de FFmpeg n'est pas l'objet) : taille et format.
+[[file]]
+name = "ts208_h264"
+file = "ts208_h264.ts"
+codec = "h264"
+profile = "High"
+size = "1280x720"
+fps = 25
+frames = 250
+gop = 25
+bframes = 2
+code_bits = 16
+code_modulo = 65536
+features = ["closed_gop", "packet_208"]
+big = false
+derived_from = "h264_720p_closed"
+
+# Dérivé de h264_720p_closed par `ma_ts::testutil::repacketize` : paquets de 192 octets (préfixe de 4 octets, compteur 27 MHz croissant).
+# Pas de vérification ffprobe (la détection de format de FFmpeg n'est pas l'objet) : taille et format.
+[[file]]
+name = "tts_h264"
+file = "tts_h264.ts"
+codec = "h264"
+profile = "High"
+size = "1280x720"
+fps = 25
+frames = 250
+gop = 25
+bframes = 2
+code_bits = 16
+code_modulo = 65536
+features = ["closed_gop", "packet_tts"]
+big = false
+derived_from = "h264_720p_closed"
+
 # Recette du spike : segment de 20 s (1000 images) bouclé jusqu'à ≥ 4 Go. Généré avec `--big` seulement.
 [[file]]
 name = "uhd_big"
