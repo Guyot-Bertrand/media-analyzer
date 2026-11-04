@@ -6,3 +6,10 @@
 ts-resync = TS synchronization lost: { $skipped } bytes skipped before packets were found again.
 ts-truncated-packet = Incomplete last TS packet: { $bytes } bytes present.
 ts-adaptation-length = Invalid adaptation field (length { $length }): packet skipped.
+
+# PSI/SI sections (ma-ts)
+ts-psi-incomplete = PSI/SI section dropped before its end ({ $bytes } bytes received).
+ts-psi-crc = PSI/SI section ignored: wrong CRC-32 (table_id { $table_id }).
+ts-pmt-changed = PMT of program { $program } changed (version { $version }).
+ts-psi-too-long = PSI/SI section dropped: section_length { $length } too large.
+ts-psi-invalid = Invalid PSI/SI section ignored (table_id { $table_id }).

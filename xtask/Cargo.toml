@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+ma-core = { path = "../crates/ma-core" }
 ma-ts = { path = "../crates/ma-ts", features = ["testutil"] }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

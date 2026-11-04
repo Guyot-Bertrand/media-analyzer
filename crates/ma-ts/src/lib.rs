@@ -4,7 +4,10 @@
 
 mod messages;
 mod packet;
+mod psi;
 mod scan;
+mod structure;
+mod tables;
 #[cfg(any(test, feature = "testutil"))]
 pub mod testutil;
 
@@ -12,4 +15,10 @@ pub use messages::MESSAGES;
 pub use packet::{
     AdaptationField, Packet, PacketError, PacketFormat, PacketHeader, detect_format, parse_packet,
 };
+pub use psi::{Section, SectionAssembler, crc32_mpeg2};
 pub use scan::{OpenError, PacketScanner, ScannedPacket, probe};
+pub use structure::{EsInfo, Program, StructureBuilder, TsStructure};
+pub use tables::{
+    AudioKind, Descriptor, Pat, Pmt, PmtStream, Sdt, SdtService, StreamKind, dvb_string, parse_pat,
+    parse_pmt, parse_sdt, stream_kind,
+};

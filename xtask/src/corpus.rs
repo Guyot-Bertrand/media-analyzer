@@ -321,6 +321,237 @@ fn verify_repacketized(e: &Entry, f: PacketFormat, path: &Path) -> anyhow::Resul
     Ok(())
 }
 
+/// PID de la PMT du programme 1 écrit par le muxer `mpegts` de `FFmpeg`.
+const PMT_PID: u16 = 0x1000;
+/// PID dédié au PCR de `ts_pcr_pid`.
+const PCR_PID: u16 = 0x1FF;
+/// PID des sections SCTE-35 de `ts_ref`.
+const SCTE35_PID: u16 = 0x1F4;
+/// Écart maximal (paquets) entre deux PCR seuls de `ts_pcr_pid` : 100 paquets = 25 ms à 6 Mb/s.
+const MAX_STEP: usize = 100;
+/// Débit de multiplexage de `ts_ref` (`-muxrate 6M`), en paquets de 188 octets par seconde.
+const REF_PACKETS_PER_SECOND: usize = 6_000_000 / 8 / TS_PACKET;
+
+/// Flux de `ts_ref` : (`stream_type`, PID, boucle de descripteurs encodée).
+fn ref_streams() -> Vec<(u8, u16, Vec<u8>)> {
+    use ma_ts::testutil::descriptor;
+    vec![
+        (0x24, 0x100, vec![]),
+        (0x0F, 0x101, vec![]),
+        // E-AC-3 : `enhanced_AC-3_descriptor` sans champ optionnel.
+        (0x06, 0x102, descriptor(0x7A, &[0x00])),
+        // Sous-titres DVB « fra » (type 0x10, pages de composition et auxiliaire 1).
+        (0x06, 0x103, descriptor(0x59, b"fra\x10\x00\x01\x00\x01")),
+        // SCTE-35 : `registration_descriptor` « CUEI ».
+        (0x86, SCTE35_PID, descriptor(0x05, b"CUEI")),
+    ]
+}
+
+/// PMT du programme 1 avec le `PCR_PID` donné et des flux supplémentaires.
+fn ref_pmt(pcr_pid: u16, extra: &[(u8, u16, Vec<u8>)]) -> Vec<u8> {
+    let mut streams = ref_streams();
+    streams.extend(extra.iter().cloned());
+    let borrowed: Vec<(u8, u16, &[u8])> = streams
+        .iter()
+        .map(|(t, p, d)| (*t, *p, d.as_slice()))
+        .collect();
+    ma_ts::testutil::pmt(1, 0, pcr_pid, &[], &borrowed)
+}
+
+/// Charge utile d'un paquet portant une section SCTE-35 `splice_null` (`pointer_field` 0).
+fn splice_null_payload() -> Vec<u8> {
+    // table_id 0xFC, section_length 17, protocol_version 0, pts_adjustment 0, cw_index 0,
+    // tier 0xFFF, splice_command_length 0, splice_null (0), descriptor_loop_length 0, CRC-32.
+    let mut s = vec![
+        0xFC, 0x30, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xF0, 0x00, 0x00, 0x00,
+        0x00,
+    ];
+    s.extend(ma_ts::crc32_mpeg2(&s).to_be_bytes());
+    let mut payload = vec![0];
+    payload.extend(s);
+    payload
+}
+
+/// `ts_ref` : PMT réécrite (même PID, mêmes positions de paquets : la nouvelle PMT remplace chaque
+/// occurrence de l'ancienne, avec des paquets nuls voisins si elle est plus longue) puis une
+/// section SCTE-35 `splice_null` par seconde à la place de paquets nuls.
+fn finish_ref(raw: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let ts = ma_ts::testutil::replace_psi(raw, PMT_PID, &[ref_pmt(0x100, &[])])
+        .map_err(anyhow::Error::msg)?;
+    let payload = splice_null_payload();
+    let packets = ts.len() / TS_PACKET;
+    let targets: Vec<usize> = (200..packets).step_by(REF_PACKETS_PER_SECOND).collect();
+    ma_ts::testutil::fill_nulls(&ts, &targets, |_, k| {
+        ma_ts::testutil::packet(
+            SCTE35_PID,
+            true,
+            u8::try_from(k % 16).unwrap_or(0),
+            None,
+            &payload,
+        )
+    })
+    .map_err(anyhow::Error::msg)
+}
+
+/// Recette de `ts_ref` : `FFmpeg` (HEVC, AAC, E-AC-3, service) puis `finish_ref`.
+fn make_ref(e: &Entry, dest: &Path) -> anyhow::Result<()> {
+    let (w, h) = e.dims()?;
+    let src = format!("testsrc2=size={w}x{h}:rate={}", e.fps);
+    let filter = code_filter(w, h, e.code_modulo, "yuv420p10le");
+    let part = tmp_path(dest);
+    let raw = part.with_extension("raw");
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args(["-v", "error", "-y", "-f", "lavfi", "-i", &src])
+        .args(["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000"])
+        .args(["-map", "0:v", "-map", "1:a", "-map", "1:a"])
+        .args(["-frames:v", &e.frames.to_string(), "-vf", &filter])
+        .args(encoder_args(e)?)
+        // VBV serré : l'image I n'occupe pas le multiplex plus de ~25 ms d'affilée.
+        .args(["-maxrate", "1M", "-bufsize", "100k"])
+        .args([
+            "-c:a:0", "aac", "-b:a:0", "128k", "-c:a:1", "eac3", "-b:a:1", "192k", "-ac", "2",
+        ])
+        .args([
+            "-shortest",
+            "-streamid",
+            "0:256",
+            "-streamid",
+            "1:257",
+            "-streamid",
+            "2:258",
+        ])
+        .args(["-muxrate", "6M"])
+        .args(["-metadata", "service_name=MA Référence"])
+        .args(["-metadata", "service_provider=Media Analyzer"])
+        .args(["-f", "mpegts"])
+        .arg(&raw);
+    run(&mut cmd)?;
+    let ts = finish_ref(&std::fs::read(&raw)?)?;
+    std::fs::remove_file(&raw)?;
+    std::fs::write(part, ts)?;
+    Ok(())
+}
+
+/// Recette de `mpts_3prog` : trois vidéos H.264, un programme chacun.
+fn make_mpts(e: &Entry, dest: &Path) -> anyhow::Result<()> {
+    let (w, h) = e.dims()?;
+    let src = format!("testsrc2=size={w}x{h}:rate={}", e.fps);
+    let filter = code_filter(w, h, e.code_modulo, "yuv420p");
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args(["-v", "error", "-y"]);
+    for _ in 0..3 {
+        cmd.args(["-f", "lavfi", "-i", &src]);
+    }
+    cmd.args(["-map", "0:v", "-map", "1:v", "-map", "2:v"])
+        .args(["-frames:v", &e.frames.to_string(), "-vf", &filter])
+        .args(encoder_args(e)?);
+    for k in 0..3 {
+        cmd.args([
+            "-program",
+            &format!("title=P{}:program_num={}:st={k}", k + 1, k + 1),
+        ]);
+    }
+    run(cmd.args(["-f", "mpegts"]).arg(tmp_path(dest)))
+}
+
+/// `ts_unsupported` : PMT de `ts_ref` avec un flux VC-1 (0xEA) et un flux AC-4 (0x06 + descripteur
+/// d'extension 0x15), sans PID de données associé (la PMT les déclare seulement).
+fn make_unsupported(source: &Path, dest: &Path) -> anyhow::Result<()> {
+    use ma_ts::testutil::descriptor;
+    let extra = [
+        (0xEA, 0x104, vec![]),
+        (0x06, 0x105, descriptor(0x7F, &[0x15])),
+    ];
+    let ts =
+        ma_ts::testutil::replace_psi(&std::fs::read(source)?, PMT_PID, &[ref_pmt(0x100, &extra)])
+            .map_err(anyhow::Error::msg)?;
+    std::fs::write(tmp_path(dest), ts)?;
+    Ok(())
+}
+
+/// Positions (indice de paquet) et valeurs (27 MHz) des PCR de la vidéo.
+fn video_pcrs(ts: &[u8]) -> Vec<(usize, u64)> {
+    ts.as_chunks::<TS_PACKET>()
+        .0
+        .iter()
+        .enumerate()
+        .filter_map(|(i, raw)| {
+            let p = ma_ts::parse_packet(raw).ok()?;
+            let pcr = p.adaptation?.pcr?;
+            (p.header.pid == VIDEO_PID).then_some((i, pcr.ticks()))
+        })
+        .collect()
+}
+
+/// `ts_pcr_pid` : `PCR_PID = 0x1FF` et, entre deux PCR vidéo consécutifs, un paquet PCR
+/// seul sur 0x1FF à la place du premier paquet nul qui suit le milieu de l'intervalle. Sa valeur est interpolée linéairement
+/// (en position de paquet) entre les deux PCR vidéo qui l'encadrent. Les PCR de la vidéo restent.
+fn make_lone_pcr(source: &Path, dest: &Path) -> anyhow::Result<()> {
+    use ma_ts::testutil::{AfSpec, fill_nulls, packet, replace_psi};
+    let raw = std::fs::read(source)?;
+    let pcrs = video_pcrs(&raw);
+    if pcrs.len() < 3 {
+        bail!("{} : moins de 3 PCR vidéo", source.display());
+    }
+    let ts = replace_psi(&raw, PMT_PID, &[ref_pmt(PCR_PID, &[])]).map_err(anyhow::Error::msg)?;
+    // Cibles : des paquets nuls entre le premier et le dernier PCR vidéo, au plus MAX_STEP paquets
+    // (25 ms à 6 Mb/s) après le précédent PCR seul, le plus tard possible.
+    let nulls: Vec<usize> = ts
+        .as_chunks::<TS_PACKET>()
+        .0
+        .iter()
+        .enumerate()
+        .filter(|(i, p)| {
+            p[1] & 0x1F == 0x1F && p[2] == 0xFF && (pcrs[0].0..=pcrs[pcrs.len() - 1].0).contains(i)
+        })
+        .map(|(i, _)| i)
+        .collect();
+    let mut targets = Vec::new();
+    let mut at = *nulls
+        .first()
+        .context("aucun paquet nul entre les PCR vidéo")?;
+    loop {
+        targets.push(at);
+        let next = nulls
+            .iter()
+            .copied()
+            .rfind(|&n| n > at && n <= at + MAX_STEP)
+            .or_else(|| nulls.iter().copied().find(|&n| n > at));
+        match next {
+            Some(n) => at = n,
+            None => break,
+        }
+    }
+    let ts = fill_nulls(&ts, &targets, |at, _| {
+        let k = pcrs
+            .partition_point(|p| p.0 <= at)
+            .saturating_sub(1)
+            .min(pcrs.len() - 2);
+        let ((ia, va), (ib, vb)) = (pcrs[k], pcrs[k + 1]);
+        let at_pos = at.clamp(ia, ib);
+        let ticks =
+            u128::from(va) + u128::from(vb - va) * (at_pos - ia) as u128 / (ib - ia) as u128;
+        let ticks = u64::try_from(ticks).unwrap_or(va);
+        let pcr = ma_core::Pcr {
+            base: ticks / 300,
+            ext: u16::try_from(ticks % 300).unwrap_or(0),
+        };
+        packet(
+            PCR_PID,
+            false,
+            0,
+            Some(AfSpec {
+                pcr: Some(pcr),
+                ..AfSpec::default()
+            }),
+            &[],
+        )
+    })
+    .map_err(anyhow::Error::msg)?;
+    std::fs::write(tmp_path(dest), ts)?;
+    Ok(())
+}
+
 /// Écrit la version re-paquetée de `source` dans `dest` (fichier temporaire).
 fn make_repacketized(f: PacketFormat, source: &Path, dest: &Path) -> anyhow::Result<()> {
     let data = std::fs::read(source)?;
@@ -328,8 +559,37 @@ fn make_repacketized(f: PacketFormat, source: &Path, dest: &Path) -> anyhow::Res
     Ok(())
 }
 
+/// `ts_unsupported` : `ffprobe` refuse d'ouvrir un flux VC-1 qui ne porte aucune donnée ; la
+/// structure est donc relue par le démultiplexeur du projet (PID 0x104 VC-1 et 0x105 AC-4 déclarés).
+fn verify_extra_streams(e: &Entry, path: &Path) -> anyhow::Result<()> {
+    let (src, format, start) = ma_ts::probe(path)?;
+    let mut sink = ma_core::VecSink::default();
+    let mut scanner = ma_ts::PacketScanner::new(&src, format, start, None);
+    let mut builder = ma_ts::StructureBuilder::new(format);
+    while let Some(p) = scanner.next(&mut sink)? {
+        builder.push(&p, &mut sink);
+    }
+    let pids: Vec<u16> = builder
+        .structure()
+        .programs
+        .iter()
+        .flat_map(|p| p.streams.iter().map(|s| s.pid))
+        .collect();
+    if !builder.complete()
+        || !sink.messages.is_empty()
+        || !pids.contains(&0x104)
+        || !pids.contains(&0x105)
+    {
+        bail!("{} : structure inattendue ({pids:x?})", e.name);
+    }
+    Ok(())
+}
+
 /// Vérifie codec, profil et nombre d'images (ou taille pour `big`) d'un fichier généré.
 fn verify(e: &Entry, path: &Path) -> anyhow::Result<()> {
+    if e.has("extra_streams") {
+        return verify_extra_streams(e, path);
+    }
     if let Some(f) = packet_format(e) {
         return verify_repacketized(e, f, path);
     }
@@ -544,10 +804,14 @@ pub fn generate(root: &Path, big: bool, out: Option<PathBuf>) -> anyhow::Result<
                 let source = dir.join(&src_entry.file);
                 match packet_format(e) {
                     Some(f) => make_repacketized(f, &source, &dest)?,
+                    None if e.has("lone_pcr") => make_lone_pcr(&source, &dest)?,
+                    None if e.has("extra_streams") => make_unsupported(&source, &dest)?,
                     None => make_cut(e, &source, &dest)?,
                 }
             }
             None if e.big => make_big(e, &dest, &dir)?,
+            None if e.has("ref_mux") => make_ref(e, &dest)?,
+            None if e.has("mpts") => make_mpts(e, &dest)?,
             None => encode(e, &dest)?,
         }
         let part = tmp_path(&dest);
@@ -593,7 +857,7 @@ mod tests {
     fn manifest_in_repo_is_complete() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let entries = load_manifest(root).unwrap();
-        assert_eq!(entries.len(), 16);
+        assert_eq!(entries.len(), 20);
         assert_eq!(entries.iter().filter(|e| e.big).count(), 1);
         for e in &entries {
             assert_eq!(e.code_bits, 16, "{}", e.name);
@@ -719,5 +983,24 @@ mod tests {
     #[test]
     fn corpus_dir_prefers_explicit_out() {
         assert_eq!(corpus_dir(Some("/x".into())).unwrap(), PathBuf::from("/x"));
+    }
+
+    #[test]
+    fn splice_null_section_has_a_valid_crc() {
+        let payload = splice_null_payload();
+        assert_eq!(payload[0], 0, "pointer_field");
+        assert_eq!(payload[1], 0xFC);
+        let length = usize::from(payload[2] & 0x0F) << 8 | usize::from(payload[3]);
+        assert_eq!(payload.len(), 1 + 3 + length);
+        assert_eq!(ma_ts::crc32_mpeg2(&payload[1..]), 0);
+    }
+
+    #[test]
+    fn reference_pmt_declares_the_five_streams_and_extras() {
+        let section = ma_ts::testutil::section_of(&ref_pmt(PCR_PID, &[(0xEA, 0x104, vec![])]));
+        let pmt = ma_ts::parse_pmt(&section).unwrap();
+        assert_eq!(pmt.pcr_pid, PCR_PID);
+        let pids: Vec<u16> = pmt.streams.iter().map(|s| s.pid).collect();
+        assert_eq!(pids, vec![0x100, 0x101, 0x102, 0x103, 0x1F4, 0x104]);
     }
 }

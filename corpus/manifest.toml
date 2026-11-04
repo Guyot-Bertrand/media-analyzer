@@ -264,6 +264,78 @@ features = ["closed_gop", "packet_tts"]
 big = false
 derived_from = "h264_720p_closed"
 
+# Flux de référence de la structure (STRUCT.TREE.*) : HEVC Main 10 (PID 0x100), AAC (0x101), E-AC-3 (0x102),
+# `-streamid`, `-muxrate 6M` (paquets nuls disponibles : débit vidéo 800 kb/s, VBV de 100 kbit, pour que l'image I
+# ne crée jamais plus de 99 paquets consécutifs sans paquet nul, soit 25 ms), service « MA Référence » / « Media Analyzer ».
+# `xtask` réécrit ensuite la PMT (ajoute 0x103 sous-titres et 0x1F4 SCTE-35 CUEI) et remplace des paquets nuls
+# par une section SCTE-35 `splice_null` par seconde sur 0x1F4.
+[[file]]
+name = "ts_ref"
+file = "ts_ref.ts"
+codec = "hevc"
+profile = "Main 10"
+size = "1280x720"
+fps = 50
+frames = 100
+gop = 50
+bframes = 3
+code_bits = 16
+code_modulo = 65536
+features = ["closed_gop", "ref_mux"]
+big = false
+bitrate = "800k"
+
+# Dérivé de ts_ref : PMT_PID = 0x1FF et paquets PCR seuls (champ d'adaptation seul) sur 0x1FF, un par PCR vidéo
+# (PCR interpolé depuis ceux de la vidéo, au plus 30 ms d'écart), à la place de paquets nuls.
+[[file]]
+name = "ts_pcr_pid"
+file = "ts_pcr_pid.ts"
+codec = "hevc"
+profile = "Main 10"
+size = "1280x720"
+fps = 50
+frames = 100
+gop = 50
+bframes = 3
+code_bits = 16
+code_modulo = 65536
+features = ["closed_gop", "lone_pcr"]
+big = false
+derived_from = "ts_ref"
+
+# Dérivé de ts_ref : la PMT ajoute 0x104 (0xEA, VC-1) et 0x105 (0x06 + descripteur d'extension AC-4), flux non analysés.
+[[file]]
+name = "ts_unsupported"
+file = "ts_unsupported.ts"
+codec = "hevc"
+profile = "Main 10"
+size = "1280x720"
+fps = 50
+frames = 100
+gop = 50
+bframes = 3
+code_bits = 16
+code_modulo = 65536
+features = ["closed_gop", "extra_streams"]
+big = false
+derived_from = "ts_ref"
+
+# MPTS : 3 programmes H.264 640x360 (`-program` × 3), services « P1 », « P2 », « P3 ».
+[[file]]
+name = "mpts_3prog"
+file = "mpts_3prog.ts"
+codec = "h264"
+profile = "High"
+size = "640x360"
+fps = 25
+frames = 50
+gop = 25
+bframes = 2
+code_bits = 16
+code_modulo = 65536
+features = ["closed_gop", "mpts"]
+big = false
+
 # Recette du spike : segment de 20 s (1000 images) bouclé jusqu'à ≥ 4 Go. Généré avec `--big` seulement.
 [[file]]
 name = "uhd_big"

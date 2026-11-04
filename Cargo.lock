@@ -598,7 +598,9 @@ dependencies = [
  "ma-io",
  "ma-testkit",
  "ma-trace",
+ "ma-ts",
  "proptest",
+ "serde_json",
  "tempfile",
  "thiserror",
 ]
@@ -1199,6 +1201,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "ma-core",
  "ma-ts",
  "proc-macro2",
  "quick-xml",

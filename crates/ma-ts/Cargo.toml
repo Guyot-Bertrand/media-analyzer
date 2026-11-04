@@ -19,6 +19,8 @@ ma-io = { path = "../ma-io" }
 thiserror = "2"
 
 [dev-dependencies]
+ma-ts = { path = ".", features = ["testutil"] }
+serde_json = "1"
 ma-io = { path = "../ma-io", features = ["testing"] }
 ma-testkit = { path = "../ma-testkit" }
 ma-trace = { path = "../ma-trace" }
