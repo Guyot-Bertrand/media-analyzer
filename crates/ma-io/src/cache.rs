@@ -48,11 +48,13 @@ struct Inner {
 }
 
 impl Inner {
-    fn lookup(&mut self, idx: u64) -> Option<&[u8]> {
+    /// Copie depuis le bloc `idx` s'il est en cache (le rend le plus récent, compte un hit).
+    fn read_cached(&mut self, idx: u64, from: usize, dst: &mut [u8]) -> Option<usize> {
         let pos = self.blocks.iter().position(|(i, _)| *i == idx)?;
         let entry = self.blocks.remove(pos);
         self.blocks.push(entry);
-        self.blocks.last().map(|(_, d)| d.as_slice())
+        self.stats.hits += 1;
+        self.blocks.last().map(|(_, d)| copy_out(d, from, dst))
     }
 
     fn insert(&mut self, idx: u64, data: Vec<u8>, max_blocks: usize) {
@@ -99,36 +101,65 @@ impl<S: ReadAt> BlockCache<S> {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Lit le bloc `idx` et les `read_ahead` suivants (bornés à la fin) en un seul appel.
-    fn load(&self, inner: &mut Inner, idx: u64) -> Result<(), IoError> {
+    /// Lit le bloc `idx` et les `read_ahead` suivants (bornés à la fin) en un seul appel,
+    /// sans tenir le verrou. Renvoie les blocs entiers reçus `(index, données)`, le bloc
+    /// demandé en premier. Seule l'illisibilité du bloc demandé est une erreur : en cas de
+    /// lecture courte ou d'erreur avec anticipation, on garde ce qui est entier, ou on
+    /// retente le bloc demandé seul.
+    fn fetch(&self, idx: u64) -> Result<Vec<(u64, Vec<u8>)>, IoError> {
         let bs = u64::from(self.cfg.block_size);
         let len = self.src.len();
         let total_blocks = len.div_ceil(bs);
         let count = (1 + u64::from(self.cfg.read_ahead)).min(total_blocks.saturating_sub(idx));
+        match self.fetch_run(idx, count) {
+            Err(IoError::Os(_) | IoError::Truncated { .. } | IoError::Modified) if count > 1 => {
+                self.fetch_run(idx, 1)
+            }
+            other => other,
+        }
+    }
+
+    fn fetch_run(&self, idx: u64, count: u64) -> Result<Vec<(u64, Vec<u8>)>, IoError> {
+        let bs = u64::from(self.cfg.block_size);
+        let len = self.src.len();
         let start = idx * bs;
         let want = (count * bs).min(len - start);
         let mut buf =
             vec![0u8; usize::try_from(want).map_err(|_| IoError::InvalidData("block-too-large"))?];
-        inner.stats.syscalls += 1;
-        let got = self.src.read_at(start, &mut buf)?;
-        inner.stats.bytes_read += got as u64;
-        if (got as u64) < want {
+        let res = self.src.read_at(start, &mut buf);
+        {
+            let mut inner = self.lock();
+            inner.stats.syscalls += 1;
+            if let Ok(n) = &res {
+                inner.stats.bytes_read += *n as u64;
+            }
+        }
+        let got = res? as u64;
+        let mut blocks = Vec::new();
+        for k in 0..count {
+            let off = k * bs;
+            let size = bs.min(len - (start + off));
+            if got < off + size {
+                break;
+            }
+            // Les indices et tailles sont bornés par `want`, déjà converti en `usize`.
+            let (Ok(o), Ok(z)) = (usize::try_from(off), usize::try_from(size)) else {
+                break;
+            };
+            blocks.push((idx + k, buf[o..o + z].to_vec()));
+        }
+        if blocks.is_empty() {
             return Err(IoError::Truncated {
                 expected_len: len,
-                actual_len: start + got as u64,
+                actual_len: start + got,
             });
         }
-        // Les blocs anticipés d'abord : le bloc demandé finit le plus récent.
-        let chunk = self.cfg.block_size as usize;
-        for (k, data) in buf.chunks(chunk).enumerate().skip(1) {
-            inner.insert(idx + k as u64, data.to_vec(), self.cfg.max_blocks);
-        }
-        buf.truncate(chunk);
-        inner.insert(idx, buf, self.cfg.max_blocks);
-        Ok(())
+        Ok(blocks)
     }
 
     /// Lit exactement `buf.len()` octets ; au-delà de `len()` : erreur `UnexpectedEof`.
+    /// Le verrou n'est jamais tenu pendant une lecture de la source : deux fils qui
+    /// manquent le même bloc le lisent chacun une fois (tolérée).
     pub fn read_exact_at(&self, offset: u64, buf: &mut [u8]) -> Result<(), IoError> {
         let end = offset
             .checked_add(buf.len() as u64)
@@ -137,33 +168,43 @@ impl<S: ReadAt> BlockCache<S> {
             return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into());
         }
         let bs = u64::from(self.cfg.block_size);
-        let mut inner = self.lock();
         let mut pos = offset;
         let mut done = 0;
         while done < buf.len() {
             let idx = pos / bs;
-            if inner.lookup(idx).is_some() {
-                inner.stats.hits += 1;
-            } else {
-                self.load(&mut inner, idx)?;
-            }
-            let block = inner
-                .lookup(idx)
-                .ok_or(IoError::InvalidData("block-missing"))?;
             let in_block = usize::try_from(pos - idx * bs).unwrap_or(usize::MAX);
-            let avail = block
-                .get(in_block..)
-                .ok_or(IoError::InvalidData("block-short"))?;
-            let n = avail.len().min(buf.len() - done);
+            let cached = self.lock().read_cached(idx, in_block, &mut buf[done..]);
+            let n = if let Some(n) = cached {
+                n
+            } else {
+                let mut blocks = self.fetch(idx)?;
+                let n = copy_out(&blocks[0].1, in_block, &mut buf[done..]);
+                let mut inner = self.lock();
+                // Anticipés d'abord : le bloc demandé finit le plus récent.
+                blocks.rotate_left(1);
+                for (i, data) in blocks {
+                    inner.insert(i, data, self.cfg.max_blocks);
+                }
+                n
+            };
             if n == 0 {
                 return Err(IoError::InvalidData("block-short"));
             }
-            buf[done..done + n].copy_from_slice(&avail[..n]);
             done += n;
             pos += n as u64;
         }
         Ok(())
     }
+}
+
+/// Copie `block[from..]` dans `dst` (au plus `dst.len()` octets) ; renvoie le nombre copié.
+fn copy_out(block: &[u8], from: usize, dst: &mut [u8]) -> usize {
+    let Some(avail) = block.get(from..) else {
+        return 0;
+    };
+    let n = avail.len().min(dst.len());
+    dst[..n].copy_from_slice(&avail[..n]);
+    n
 }
 
 impl<S: ReadAt> ReadAt for BlockCache<S> {
@@ -380,5 +421,69 @@ mod tests {
         assert_eq!(l.len(), 10);
         let mut b = [0u8; 3];
         assert_eq!(l.read_at(0, &mut b).unwrap(), 3);
+    }
+
+    #[test]
+    fn lock_not_held_during_source_read() {
+        use std::sync::Arc;
+        let latency = Duration::from_millis(200);
+        let data = pattern(4 * KI);
+        let src = LatencySource::new(MemSource::new(data.clone()), latency);
+        let c = Arc::new(BlockCache::new(src, cfg(KI as u32, 8, 0)));
+        let mut a = [0u8; 16];
+        c.read_exact_at(0, &mut a).unwrap(); // bloc A en cache
+        let c2 = Arc::clone(&c);
+        let slow = std::thread::spawn(move || {
+            let mut b = [0u8; 16];
+            c2.read_exact_at(2 * KI as u64, &mut b).unwrap();
+            b
+        });
+        std::thread::sleep(Duration::from_millis(50)); // le fil lent est dans la source
+        let t = Instant::now();
+        c.read_exact_at(0, &mut a).unwrap();
+        assert!(t.elapsed() < latency / 4, "hit bloqué {:?}", t.elapsed());
+        assert_eq!(a, data[..16]);
+        assert_eq!(slow.join().unwrap(), data[2 * KI..2 * KI + 16]);
+    }
+
+    #[test]
+    fn truncating_source_with_read_ahead_serves_valid_block() {
+        let data = pattern(4 * KI);
+        let src = TruncatingSource::new(MemSource::new(data.clone()), KI as u64 + 10);
+        let c = BlockCache::new(src, cfg(KI as u32, 8, 2));
+        let mut b = [0u8; 8];
+        // Bloc 0 entier ; l'anticipation (blocs 1, 2) déborde sur la zone coupée.
+        c.read_exact_at(5, &mut b).unwrap();
+        assert_eq!(b, data[5..13]);
+        // Le bloc 1 est partiel : illisible.
+        let e = c.read_exact_at(KI as u64, &mut b).unwrap_err();
+        assert!(
+            matches!(e, IoError::Truncated { expected_len, actual_len }
+            if expected_len == 4 * KI as u64 && actual_len == KI as u64 + 10),
+            "{e:?}"
+        );
+    }
+
+    #[test]
+    fn source_error_with_read_ahead_retries_requested_block_alone() {
+        // Source qui échoue sur toute lecture de plus d'un bloc.
+        struct Picky(MemSource);
+        impl ReadAt for Picky {
+            fn len(&self) -> u64 {
+                self.0.len()
+            }
+            fn read_at(&self, o: u64, b: &mut [u8]) -> Result<usize, IoError> {
+                if b.len() > KI {
+                    return Err(IoError::Modified);
+                }
+                self.0.read_at(o, b)
+            }
+        }
+        let data = pattern(4 * KI);
+        let c = BlockCache::new(Picky(MemSource::new(data.clone())), cfg(KI as u32, 8, 1));
+        let mut b = [0u8; 8];
+        c.read_exact_at(KI as u64, &mut b).unwrap();
+        assert_eq!(b, data[KI..KI + 8]);
+        assert_eq!(c.stats().syscalls, 2);
     }
 }

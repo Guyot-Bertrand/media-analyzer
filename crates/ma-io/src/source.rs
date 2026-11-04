@@ -182,15 +182,7 @@ mod tests {
                 if expected_len == 3 * MI && actual_len == MI),
             "{err:?}"
         );
-        // Le début est encore lisible (sans anticipation qui déborderait sur la zone coupée).
-        let s = FileSource::open(f.path()).unwrap();
-        let cache = BlockCache::new(
-            s,
-            CacheConfig {
-                read_ahead: 0,
-                ..CacheConfig::for_locality(Locality::Local)
-            },
-        );
+        // Le début reste lisible malgré l'anticipation qui déborde sur la zone coupée.
         cache.read_exact_at(0, &mut buf).unwrap();
         assert_eq!(buf, data[..4096]);
     }
