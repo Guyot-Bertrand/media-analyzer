@@ -559,6 +559,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ma-io"
+version = "0.1.0"
+dependencies = [
+ "ma-trace",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "ma-testkit"
 version = "0.1.0"
 dependencies = [

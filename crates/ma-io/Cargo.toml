@@ -1,0 +1,21 @@
+[package]
+name = "ma-io"
+description = "Lectures positionnelles, cache de blocs et lecture anticipée (locale et distante) pour les fichiers médias"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Sources de test (mémoire, latence simulée, troncature) pour les autres crates.
+testing = []
+
+[dependencies]
+thiserror = "2"
+
+[dev-dependencies]
+ma-trace = { path = "../ma-trace" }
+tempfile = "3"
