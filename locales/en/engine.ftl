@@ -22,3 +22,5 @@ ts-pes-invalid = Invalid or incomplete PES header on PID { $pid }: PES ignored.
 # Video index (ma-ts)
 ts-au-no-pts = Picture without PTS on PID { $pid }: PTS estimated.
 ts-au-too-large = Picture ignored on PID { $pid }: { $size } bytes, more than the maximum picture size.
+ts-pts-discontinuity = PTS discontinuity on PID { $pid }: new presentation segment.
+ts-index-forced-publish = Too many pictures pending on PID { $pid }: { $count } pictures published without waiting for an access point.

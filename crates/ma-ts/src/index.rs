@@ -25,11 +25,28 @@
 //! - **Champs** : deux AU consécutives et contiguës `Top`/`Bottom` complémentaires (H.264 :
 //!   même `frame_num`) forment une entrée (`fields = 2`).
 //! - **RAP** et **images de tête** : voir `EntryBuilder` (même module).
-//! - **`damaged`** : l'AU contient un trou (`gap_before` d'un chunk strictement à l'intérieur).
+//! - **`damaged`** (R12) : un trou (rupture de continuité, TEI, brouillage, PES sauté) ne
+//!   réinitialise pas le découpeur : les octets suivants sont poussés à la suite et toute AU qui
+//!   chevauche le trou (`start < trou <= end`) est marquée `damaged`. Elle reste dans l'index,
+//!   avec ses octets restants. Deux compromis : un code de début perdu dans le trou fusionne
+//!   deux AU (une seule entrée `damaged`, une image de moins) ; des octets recollés de part et
+//!   d'autre du trou peuvent former un faux `00 00 01` (une AU de trop, `damaged`).
+//! - **Segments de PTS** (R14) : un RAP dont le PTS recule de plus d'1 s sous le maximum du
+//!   segment, ou le 1er RAP après un `discontinuity_indicator` sur le PID de PCR du programme,
+//!   ouvre un nouveau segment (`ts-pts-discontinuity`) ; le déroulement 33 bits du PTS repart
+//!   alors de zéro (un saut de discontinuité n'est pas pris pour un bouclage). Les segments se
+//!   suivent en ordre de décodage ; `pres_idx` est le rang dans (segment, PTS). Un PID qui
+//!   revient repart dans un nouveau segment.
 //! - **Préfixe publié** : L est le plus grand index de décodage d'un RAP r tel qu'un RAP
-//!   postérieur à r soit vu, que `max(PTS de [0, r)) < min(PTS de [r, vus))` et que les
-//!   `Recovery` de [0, r) soient résolus **dans [0, r)** (leur R aussi : `pres(R)` est alors
-//!   définitif). En fin de fichier, L couvre tout. Une entrée publiée ne change plus.
+//!   postérieur à r soit vu (ou que r ouvre un segment), que `max(PTS de [début du segment de
+//!   r, r)) < min(PTS de [r, fin du segment de r))` et que les `Recovery` de [0, r) soient
+//!   résolus **dans [0, r)** (leur R aussi : `pres(R)` est alors définitif ; un `Recovery` non
+//!   résolu à la fin de son segment l'est jusqu'à cette fin). En fin de fichier, L couvre tout.
+//!   Une entrée publiée ne change plus.
+//! - **Mémoire bornée sur entrée hostile** (R15) : au-delà de 4096 entrées ou 64 Mio d'ES en
+//!   attente, coupe forcée au dernier RAP vu, ou à défaut tout le lot en ordre de décodage
+//!   (`ts-index-forced-publish`) ; `recovery_frame_cnt` est borné à 256 ; chunks, PES et trous
+//!   sont bornés en nombre (PES sans octet remplacés, trous consécutifs fusionnés).
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -44,7 +61,7 @@ use ma_core::{
 use ma_es::{AuBoundary, AuFramer, AuMeta, Field, NalLeading, ParamSet, RapClass};
 use ma_io::{IoError, ReadAt};
 
-use crate::messages::{AU_NO_PTS, AU_TOO_LARGE};
+use crate::messages::{AU_NO_PTS, AU_TOO_LARGE, FORCED_PUBLISH, PTS_DISCONTINUITY};
 use crate::packet::PacketFormat;
 use crate::pes::{EsPos, MAX_AU_BYTES, PesAssembler};
 use crate::scan::{PacketScanner, ScannedPacket};
@@ -60,6 +77,17 @@ const PTS_DIFFS: usize = 16;
 const RECENT_PTS: usize = 256;
 /// Octets d'ES couverts au plus par la table des chunks d'un PID.
 const CHUNK_WINDOW: u64 = 2 * MAX_AU_BYTES as u64;
+/// Chunks gardés au plus (une fenêtre de paquets pleins) : borne aussi les PES gardés.
+const MAX_CHUNKS: usize = (CHUNK_WINDOW / 184) as usize;
+/// Trous gardés au plus.
+const MAX_GAPS: usize = 4096;
+/// Entrées en attente de publication au plus, et leurs octets d'ES (au-delà : coupe forcée).
+const MAX_PENDING: usize = 4096;
+const MAX_PENDING_BYTES: u64 = 64 << 20;
+/// `recovery_frame_cnt` pris en compte au plus.
+const MAX_RECOVERY_FRAMES: u32 = 256;
+/// Recul du PTS d'un RAP sous le maximum du segment qui ouvre un nouveau segment (1 s).
+const SEGMENT_BACKSTEP: i64 = 90_000;
 const PID_COUNT: usize = 8192;
 const MASK_33: u64 = (1 << 33) - 1;
 const PANICKED: IoError = IoError::InvalidData("ma-index-panic");
@@ -386,19 +414,21 @@ struct ResolvedAu {
     pts: Option<u64>,
     dts: Option<u64>,
     damaged: bool,
-    /// Un trou précède immédiatement l'AU.
-    gap_before: bool,
     meta: AuMeta,
 }
 
 /// Point de reprise en attente de son image R.
 #[derive(Debug, Clone, Copy)]
 struct Recovery {
+    /// Borné à `MAX_RECOVERY_FRAMES`.
     frame_cnt: u32,
     /// AU de référence vues dans [RAP, AU courante).
     refs: u32,
     /// Index de décodage de R.
     r: Option<u32>,
+    /// Fermé par un nouveau segment : `r` est le 1er index du segment suivant, et
+    /// `pres_span` court jusqu'à la fin du segment du RAP.
+    closed: bool,
 }
 
 impl Recovery {
@@ -420,6 +450,14 @@ impl Recovery {
 struct PendingEntry {
     rec: Record,
     recovery: Option<Recovery>,
+    /// Segment de PTS (voir le module).
+    seg: u32,
+}
+
+impl PendingEntry {
+    fn is_rap(&self) -> bool {
+        self.rec.rap != RapTag::None
+    }
 }
 
 /// Entrées à ajouter à un [`VideoIndex`].
@@ -466,9 +504,10 @@ fn wrap_diff(a: u64, b: u64) -> i64 {
 /// préfixe publiable.
 ///
 /// - `RapClass` devient `RapKind` ; `Intra { broken_link: true }` donne `Bla`.
-/// - `Recovery { frame_cnt }` : R est la 1re AU, à partir du RAP, telle que [RAP, R) compte
-///   `frame_cnt` AU de référence ; `pres_span = pres(R) − pres(RAP)`, borné à 0. Sans R en fin
-///   de flux, `pres_span` couvre toutes les images présentées à partir du RAP.
+/// - `Recovery { frame_cnt }` (borné à 256) : R est la 1re AU, à partir du RAP, telle que
+///   [RAP, R) compte `frame_cnt` AU de référence ; `pres_span = pres(R) − pres(RAP)`, borné à 0.
+///   Sans R en fin de flux (ou de lot forcé), `pres_span` couvre toutes les images présentées à
+///   partir du RAP ; sans R à la fin de son segment, jusqu'à la fin du segment.
 /// - Images de tête : HEVC d'après le type de NAL ; H.264 et MPEG-2, une AU non RAP présentée
 ///   avant le dernier RAP (ordre de décodage) est `Skippable`, `Decodable` si ce RAP est une
 ///   `Idr` ou une `Intra` de GOP fermé. Avant le 1er RAP du flux : `None` (le Navigator rend
@@ -485,10 +524,19 @@ struct EntryBuilder {
     /// PTS du dernier RAP et images de tête décodables.
     last_rap: Option<(i64, bool)>,
     pending: Vec<PendingEntry>,
-    /// Index de décodage des points de reprise non résolus.
+    /// Octets d'ES des entrées en attente.
+    pending_bytes: u64,
+    /// Index de décodage des points de reprise non résolus (⊂ `pending`, donc bornés).
     unresolved: Vec<u32>,
     /// Entrées déjà publiées.
     base: u32,
+    /// Segment courant et PTS maximal vu dans ce segment.
+    seg: u32,
+    seg_max: Option<i64>,
+    /// Un `discontinuity_indicator` du PCR attend le prochain RAP.
+    discontinuity: bool,
+    /// Segment de la dernière entrée publiée et PTS maximal publié dans ce segment.
+    published_seg: u32,
     published_max: Option<i64>,
 }
 
@@ -504,8 +552,13 @@ impl EntryBuilder {
             recent: RecentPts::default(),
             last_rap: None,
             pending: Vec::new(),
+            pending_bytes: 0,
             unresolved: Vec::new(),
             base,
+            seg: 0,
+            seg_max: None,
+            discontinuity: false,
+            published_seg: 0,
             published_max: None,
         }
     }
@@ -558,7 +611,39 @@ impl EntryBuilder {
         pts
     }
 
-    /// PTS (déroulé, ou estimé avec `ts-au-no-pts`) et DTS d'une entrée.
+    /// Ouvre un segment de PTS à l'entrée `decode_idx` (`ts-pts-discontinuity`) : les points de
+    /// reprise non résolus du segment qui se termine sont fermés.
+    fn new_segment(&mut self, decode_idx: u32, offset: u64, sink: &mut dyn MessageSink) {
+        sink.push(
+            Message::new(
+                &PTS_DISCONTINUITY,
+                Severity::Warning,
+                Family::Video,
+                SUB_FAMILY,
+            )
+            .param("pid", Param::Pid(self.pid))
+            .at(offset)
+            .pid(self.pid)
+            .frame(decode_idx),
+        );
+        for d in std::mem::take(&mut self.unresolved) {
+            if let Some(rc) = self
+                .pending
+                .get_mut((d - self.base) as usize)
+                .and_then(|e| e.recovery.as_mut())
+            {
+                rc.r = Some(decode_idx);
+                rc.closed = true;
+            }
+        }
+        self.seg += 1;
+        self.seg_max = None;
+        self.diffs.clear();
+        self.pts_unwrap = TsUnwrapper::new(33);
+    }
+
+    /// PTS (déroulé, ou estimé avec `ts-au-no-pts`) et DTS d'une entrée ; un RAP peut ouvrir un
+    /// segment.
     fn timestamps(
         &mut self,
         first: &ResolvedAu,
@@ -572,8 +657,17 @@ impl EntryBuilder {
             second.filter(|s| s.pts.is_some())
         };
         let raw = timed.and_then(|t| t.pts.map(|p| (p, t.dts)));
-        let (pts, dts) = if let Some((p, d)) = raw {
-            let pts = self.pts_unwrap.unwrap(p);
+        let mut unwrapped = raw.map(|(p, _)| self.pts_unwrap.unwrap(p));
+        if first.meta.rap != RapClass::None {
+            let backwards = matches!((unwrapped, self.seg_max),
+                (Some(p), Some(m)) if p < m.saturating_sub(SEGMENT_BACKSTEP));
+            if self.seg_max.is_some() && (self.discontinuity || backwards) {
+                self.new_segment(decode_idx, first.start.packet_offset, sink);
+                unwrapped = raw.map(|(p, _)| self.pts_unwrap.unwrap(p));
+            }
+            self.discontinuity = false;
+        }
+        let (pts, dts) = if let (Some((p, d)), Some(pts)) = (raw, unwrapped) {
             (pts, Some(pts - d.map_or(0, |d| wrap_diff(p, d))))
         } else {
             sink.push(
@@ -596,6 +690,7 @@ impl EntryBuilder {
             self.diffs.push_back(pts - prev);
         }
         self.prev_pts = Some((pts, real));
+        self.seg_max = self.seg_max.max(Some(pts));
         self.recent.insert(pts);
         (pts, dts)
     }
@@ -656,9 +751,10 @@ impl EntryBuilder {
             return None;
         };
         let mut rc = Recovery {
-            frame_cnt,
+            frame_cnt: frame_cnt.min(MAX_RECOVERY_FRAMES),
             refs: 0,
             r: None,
+            closed: false,
         };
         rc.see(decode_idx, reference);
         self.unresolved.push(decode_idx);
@@ -675,10 +771,11 @@ impl EntryBuilder {
         let reference = meta.reference || second.is_some_and(|s| s.meta.reference);
         let recovery = self.recoveries(&meta, decode_idx, reference);
         let mut params = meta.params;
+        // Un trou entre les deux champs est à la fin du 1er : `first.damaged` le compte.
         let mut damaged = first.damaged;
         if let Some(s) = second {
             params.insert(s.meta.params);
-            damaged |= s.damaged || s.gap_before;
+            damaged |= s.damaged;
         }
         let flags = if dts.is_none() {
             FLAG_ESTIMATED
@@ -705,7 +802,12 @@ impl EntryBuilder {
             rap,
             leading,
         };
-        self.pending.push(PendingEntry { rec, recovery });
+        self.pending_bytes += u64::from(rec.size);
+        self.pending.push(PendingEntry {
+            rec,
+            recovery,
+            seg: self.seg,
+        });
         self.unresolved.retain(|&d| {
             self.pending
                 .get((d - self.base) as usize)
@@ -714,26 +816,45 @@ impl EntryBuilder {
         });
     }
 
-    /// Nombre d'entrées en attente publiables (règle du préfixe L, voir le module).
+    /// Nombre d'entrées en attente publiables (règle du préfixe L, par segment ; voir le
+    /// module).
     fn cut(&self) -> Option<usize> {
         let p = &self.pending;
-        let last_rap = p.iter().rposition(|e| e.rec.rap != RapTag::None)?;
-        let mut suffix_min = vec![i64::MAX; p.len() + 1];
+        let last_rap = p.iter().rposition(PendingEntry::is_rap)?;
+        // Minimum des PTS de [k, fin du segment de k).
+        let mut suffix_min = vec![i64::MAX; p.len()];
+        let mut cur = i64::MAX;
         for i in (0..p.len()).rev() {
-            suffix_min[i] = suffix_min[i + 1].min(p[i].rec.pts);
+            if p.get(i + 1).is_some_and(|n| n.seg != p[i].seg) {
+                cur = i64::MAX;
+            }
+            cur = cur.min(p[i].rec.pts);
+            suffix_min[i] = cur;
         }
-        let mut prefix_max = self.published_max.unwrap_or(i64::MIN);
+        let mut prefix_max = match p.first() {
+            Some(e) if e.seg == self.published_seg => self.published_max.unwrap_or(i64::MIN),
+            _ => i64::MIN,
+        };
         // [0, k) doit contenir R de chaque point de reprise de [0, k).
         let mut need = 0;
         let mut best = None;
-        for k in 0..last_rap {
-            if k > 0 && need <= k && p[k].rec.rap != RapTag::None && prefix_max < suffix_min[k] {
+        for k in 0..=last_rap {
+            let seg_start = k > 0 && p[k].seg != p[k - 1].seg;
+            if seg_start {
+                prefix_max = i64::MIN;
+            }
+            // Un RAP qui ouvre un segment rend le segment précédent entièrement publiable.
+            let later_rap = k < last_rap || seg_start;
+            if k > 0 && need <= k && p[k].is_rap() && later_rap && prefix_max < suffix_min[k] {
                 best = Some(k);
             }
             prefix_max = prefix_max.max(p[k].rec.pts);
             if let Some(rc) = p[k].recovery {
                 match rc.r {
-                    Some(r) => need = need.max((r - self.base) as usize + 1),
+                    Some(r) => {
+                        let pos = (r - self.base) as usize;
+                        need = need.max(if rc.closed { pos } else { pos + 1 });
+                    }
                     None => break,
                 }
             }
@@ -744,12 +865,48 @@ impl EntryBuilder {
     /// Entrées à publier : le préfixe L, ou tout (`all`, fin du flux).
     fn publish(&mut self, all: bool) -> Option<Batch> {
         let k = if all { self.pending.len() } else { self.cut()? };
+        self.take(k, true)
+    }
+
+    /// Coupe forcée quand l'attente dépasse `MAX_PENDING` entrées ou `MAX_PENDING_BYTES`
+    /// (flux sans RAP, point de reprise jamais résolu, entrée hostile) : au dernier RAP vu,
+    /// ou à défaut tout le lot en ordre de décodage (`ts-index-forced-publish`).
+    fn forced(&mut self, sink: &mut dyn MessageSink) -> Option<Batch> {
+        if self.pending.len() < MAX_PENDING && self.pending_bytes < MAX_PENDING_BYTES {
+            return None;
+        }
+        let at_rap = self
+            .pending
+            .iter()
+            .rposition(PendingEntry::is_rap)
+            .filter(|&k| k > 0);
+        let k = at_rap.unwrap_or(self.pending.len());
+        sink.push(
+            Message::new(
+                &FORCED_PUBLISH,
+                Severity::Warning,
+                Family::Video,
+                SUB_FAMILY,
+            )
+            .param("pid", Param::Pid(self.pid))
+            .param("count", Param::UInt(k as u64))
+            .pid(self.pid)
+            .frame(self.base),
+        );
+        self.take(k, at_rap.is_some())
+    }
+
+    /// Publie les `k` premières entrées en attente ; `by_pts` : rang de présentation par
+    /// (segment, PTS), sinon rang de décodage.
+    fn take(&mut self, k: usize, by_pts: bool) -> Option<Batch> {
         if k == 0 {
             return None;
         }
         let mut batch: Vec<PendingEntry> = self.pending.drain(..k).collect();
         let mut order: Vec<usize> = (0..k).collect();
-        order.sort_by_key(|&i| (batch[i].rec.pts, i));
+        if by_pts {
+            order.sort_by_key(|&i| (batch[i].seg, batch[i].rec.pts, i));
+        }
         let base = self.base;
         let to_u32 = |i: usize| base + u32::try_from(i).unwrap_or(u32::MAX);
         let mut by_pres = Vec::with_capacity(k);
@@ -761,14 +918,33 @@ impl EntryBuilder {
         for i in 0..k {
             if let Some(rc) = batch[i].recovery {
                 let pres = batch[i].rec.pres_idx;
-                let until =
-                    rc.r.and_then(|r| batch.get((r - base) as usize))
-                        .map_or(end, |e| e.rec.pres_idx);
+                let until = match rc.r {
+                    // Segments concaténés : les images des segments antérieurs occupent
+                    // exactement les rangs [0, 1er index du segment suivant).
+                    Some(r) if rc.closed => r,
+                    Some(r) => batch
+                        .get((r - base) as usize)
+                        .map_or(end, |e| e.rec.pres_idx),
+                    None => end,
+                };
                 batch[i].rec.pres_span = until.saturating_sub(pres);
             }
         }
-        let max = batch.iter().map(|e| e.rec.pts).max();
-        self.published_max = self.published_max.max(max);
+        if let Some(last) = batch.last() {
+            let seg = last.seg;
+            let max = batch
+                .iter()
+                .filter(|e| e.seg == seg)
+                .map(|e| e.rec.pts)
+                .max();
+            self.published_max = if seg == self.published_seg {
+                self.published_max.max(max)
+            } else {
+                max
+            };
+            self.published_seg = seg;
+        }
+        self.pending_bytes -= batch.iter().map(|e| u64::from(e.rec.size)).sum::<u64>();
         self.base = end;
         self.unresolved.retain(|&d| d >= end);
         Some(Batch {
@@ -854,40 +1030,65 @@ impl Track {
         let Some(c) = self.asm.push(pkt, sink) else {
             return;
         };
-        if c.gap_before {
-            self.framer.gap();
+        // R12 : pas de `framer.gap()` ; les octets continuent, l'AU qui chevauche le trou est
+        // marquée `damaged`. Des trous successifs sans octet entre eux n'en font qu'un.
+        if c.gap_before && self.gaps.back() != Some(&self.es_total) {
             self.gaps.push_back(self.es_total);
         }
         if let Some(s) = c.pes_start {
-            self.pes_seq += 1;
-            self.pes.push_back(PesRec {
+            let rec = PesRec {
                 id: self.pes_seq,
                 es_start: self.es_total,
                 pts: s.pts,
                 dts: s.dts,
                 packet_offset: s.packet_offset,
                 taken: false,
+            };
+            match self.pes.back_mut() {
+                // PES précédent sans aucun octet d'ES : remplacé (même numéro).
+                Some(last) if last.es_start == self.es_total => {
+                    *last = PesRec { id: last.id, ..rec }
+                }
+                _ => {
+                    self.pes_seq += 1;
+                    self.pes.push_back(PesRec {
+                        id: self.pes_seq,
+                        ..rec
+                    });
+                }
+            }
+        }
+        if !c.data.is_empty() {
+            // Ancrage au paquet du PUSI quand l'en-tête PES couvrait plusieurs paquets.
+            let packet_index = match c.pes_start {
+                Some(s) if c.pos.packet_offset != pkt.offset => s.packet_index,
+                _ => pkt.index,
+            };
+            let len = c.data.len() as u64;
+            self.chunks.push_back(ChunkRec {
+                es_start: self.es_total,
+                len,
+                pos: c.pos,
+                packet_index,
+                pes: self.pes_seq,
             });
+            self.framer.push(c.data, &mut self.out);
+            self.es_total += len;
+            self.drain(sink);
         }
-        if c.data.is_empty() {
-            return;
-        }
-        // Ancrage au paquet du PUSI quand l'en-tête PES couvrait plusieurs paquets.
-        let packet_index = match c.pes_start {
-            Some(s) if c.pos.packet_offset != pkt.offset => s.packet_index,
-            _ => pkt.index,
-        };
-        let len = c.data.len() as u64;
-        self.chunks.push_back(ChunkRec {
-            es_start: self.es_total,
-            len,
-            pos: c.pos,
-            packet_index,
-            pes: self.pes_seq,
-        });
-        self.framer.push(c.data, &mut self.out);
-        self.es_total += len;
-        self.drain(sink);
+        self.prune();
+    }
+
+    /// Tailles internes : chunks, PES, trous, entrées en attente, points de reprise.
+    #[cfg(test)]
+    fn sizes(&self) -> [usize; 5] {
+        [
+            self.chunks.len(),
+            self.pes.len(),
+            self.gaps.len(),
+            self.builder.pending.len(),
+            self.builder.unresolved.len(),
+        ]
     }
 
     fn finish(&mut self, sink: &mut dyn MessageSink) {
@@ -909,7 +1110,6 @@ impl Track {
         }
         self.out = out;
         self.out.clear();
-        self.prune();
     }
 
     fn chunk_at(&self, off: u64) -> Option<&ChunkRec> {
@@ -937,8 +1137,9 @@ impl Track {
         };
         let start = first.at(b.start)?;
         let end = last.at(b.end)?;
-        let damaged = self.gaps.iter().any(|&g| g > b.start && g < b.end);
-        let gap_before = self.gaps.contains(&b.start);
+        // Trou après le 1er octet et au plus à la fin : la fin de l'AU (dernier paquet d'un
+        // PES perdu, PES sauté) compte ; un trou juste avant son début, non.
+        let damaged = self.gaps.iter().any(|&g| g > b.start && g <= b.end);
         // Le PES de l'AU est celui de la fin de son code de début (`b.start + 2`) : l'octet nul
         // qui précède `00 00 01` (`zero_byte`, ou zéro de fin de l'image précédente en MPEG-2)
         // peut être le dernier octet du PES précédent.
@@ -965,7 +1166,6 @@ impl Track {
             pts: timing.0,
             dts: timing.1,
             damaged,
-            gap_before,
             meta: b.meta,
         })
     }
@@ -974,14 +1174,19 @@ impl Track {
     fn prune(&mut self) {
         while let Some(c) = self.chunks.front() {
             let used = c.es_start + c.len <= self.last_end;
-            let too_old = self.es_total - c.es_start > CHUNK_WINDOW;
+            let too_old =
+                self.es_total - c.es_start > CHUNK_WINDOW || self.chunks.len() > MAX_CHUNKS;
             if !used && !too_old {
                 break;
             }
             self.chunks.pop_front();
         }
         let keep_pes = self.chunks.front().map_or(self.pes_seq, |c| c.pes);
-        while self.pes.front().is_some_and(|p| p.id < keep_pes) {
+        while self
+            .pes
+            .front()
+            .is_some_and(|p| p.id < keep_pes || self.pes.len() > MAX_CHUNKS + 1)
+        {
             self.pes.pop_front();
         }
         let floor = self
@@ -989,7 +1194,11 @@ impl Track {
             .front()
             .map_or(self.es_total, |p| p.es_start)
             .min(self.chunks.front().map_or(self.es_total, |c| c.es_start));
-        while self.gaps.front().is_some_and(|&g| g < floor) {
+        while self
+            .gaps
+            .front()
+            .is_some_and(|&g| g < floor || self.gaps.len() > MAX_GAPS)
+        {
             self.gaps.pop_front();
         }
     }
@@ -1001,6 +1210,8 @@ impl Track {
 struct PcrTrack {
     unwrap: TsUnwrapper,
     buf: Vec<PcrSample>,
+    /// PID vidéo des programmes dont c'est le PID de PCR.
+    videos: Vec<u16>,
 }
 
 struct Indexer<'o> {
@@ -1040,6 +1251,21 @@ impl<'o> Indexer<'o> {
             && let Some(t) = self.pcr.get_mut(&p.packet.header.pid)
         {
             let (v, af) = pcr;
+            if af.discontinuity {
+                // Nouvelle base de temps : le déroulement repart, le prochain RAP des vidéos
+                // du programme ouvre un segment de PTS.
+                t.unwrap = TsUnwrapper::new(33);
+                for &vp in &t.videos {
+                    let slot = usize::from(self.slot[usize::from(vp)]);
+                    if let Some(track) = slot
+                        .checked_sub(1)
+                        .and_then(|i| self.tracks.get_mut(i))
+                        .and_then(Option::as_mut)
+                    {
+                        track.builder.discontinuity = true;
+                    }
+                }
+            }
             let base = t.unwrap.unwrap(v.base);
             t.buf.push(PcrSample {
                 packet_index: p.index,
@@ -1049,12 +1275,14 @@ impl<'o> Indexer<'o> {
             });
         }
         let slot = usize::from(self.slot.get(pid).copied().unwrap_or(0));
-        if let Some(t) = slot
-            .checked_sub(1)
-            .and_then(|i| self.tracks.get_mut(i))
-            .and_then(Option::as_mut)
-        {
+        let Some(i) = slot.checked_sub(1) else {
+            return;
+        };
+        if let Some(t) = self.tracks.get_mut(i).and_then(Option::as_mut) {
             t.push(p, sink);
+            if let Some(b) = t.builder.forced(sink) {
+                Self::apply(&mut self.out.write(), i, b);
+            }
         }
     }
 
@@ -1092,9 +1320,22 @@ impl<'o> Indexer<'o> {
                 continue;
             }
             match sh.videos.iter().position(|v| v.pid == pid) {
-                // PID revenu : son index (figé) reprend, en ajout.
+                // PID revenu : son index (figé) reprend, en ajout, dans un nouveau segment de
+                // PTS (`ts-pts-discontinuity`).
                 Some(i) if sh.videos[i].codec == codec && self.tracks[i].is_none() => {
-                    self.tracks[i] = Some(Track::new(pid, codec, sh.videos[i].published()));
+                    let base = sh.videos[i].published();
+                    sink.push(
+                        Message::new(
+                            &PTS_DISCONTINUITY,
+                            Severity::Warning,
+                            Family::Video,
+                            SUB_FAMILY,
+                        )
+                        .param("pid", Param::Pid(pid))
+                        .pid(pid)
+                        .frame(base),
+                    );
+                    self.tracks[i] = Some(Track::new(pid, codec, base));
                     self.slot[p] = u16::try_from(i + 1).unwrap_or(0);
                 }
                 // Même PID, autre codec : non indexé (un PID n'a qu'un index).
@@ -1107,14 +1348,23 @@ impl<'o> Indexer<'o> {
             }
         }
         self.pcr_slot.fill(false);
-        for pcr in s.programs.iter().filter_map(|p| p.pcr_pid) {
+        for t in self.pcr.values_mut() {
+            t.videos.clear();
+        }
+        for prog in &s.programs {
+            let Some(pcr) = prog.pcr_pid else {
+                continue;
+            };
             if let Some(f) = self.pcr_slot.get_mut(usize::from(pcr)) {
                 *f = true;
             }
-            self.pcr.entry(pcr).or_insert_with(|| PcrTrack {
+            let t = self.pcr.entry(pcr).or_insert_with(|| PcrTrack {
                 unwrap: TsUnwrapper::new(33),
                 buf: Vec::new(),
+                videos: Vec::new(),
             });
+            t.videos
+                .extend(prog.streams.iter().filter(|e| e.analysed).map(|e| e.pid));
         }
         sh.structure = s;
     }
@@ -1606,7 +1856,7 @@ mod tests {
         let ticks = |b: i64| b * 300 + 7;
         assert_eq!(
             p.iter().map(|s| s.pcr).collect::<Vec<_>>(),
-            [ticks(wrap - 10), ticks(wrap + 5), ticks(wrap + 100)]
+            [ticks(wrap - 10), ticks(wrap + 5), ticks(100)]
         );
         assert_eq!(
             p.iter().map(|s| s.discontinuity).collect::<Vec<_>>(),
@@ -1669,7 +1919,6 @@ mod tests {
             pts,
             dts: None,
             damaged: false,
-            gap_before: false,
             meta,
         }
     }
@@ -1910,14 +2159,14 @@ mod tests {
             rau(2, Some(3600), field(Field::Top, 2, RapClass::None)),
             &mut sink,
         );
-        let mut damaged = rau(3, Some(5400), field(Field::Bottom, 3, RapClass::None));
-        damaged.gap_before = true;
+        let damaged = rau(3, Some(5400), field(Field::Bottom, 3, RapClass::None));
         b.push(damaged, &mut sink);
         let mut pair = rau(4, Some(7200), field(Field::Bottom, 4, RapClass::None));
         pair.meta.params = ParamSet::SPS;
+        // Trou entre les deux champs : compté à la fin du 1er (`start < trou <= end`).
+        pair.damaged = true;
         b.push(pair, &mut sink);
         let mut second = rau(5, None, field(Field::Top, 4, RapClass::None));
-        second.gap_before = true;
         second.meta.params = ParamSet::SEI;
         b.push(second, &mut sink);
         b.push(
@@ -2083,5 +2332,269 @@ mod tests {
             Err(IndexError::Io(IoError::InvalidData("ma-index-panic")))
         ));
         assert!(IndexError::Cancelled.to_string().contains("annul"));
+    }
+
+    // ------------------------------------------------------------ correction 1 (R12, R14, R15)
+
+    /// GOP `I P P P P` de PTS `start + 3600 × i`, AU n° `first` et suivantes.
+    fn ipppp(b: &mut EntryBuilder, first: u64, start: u64, sink: &mut VecSink) {
+        for i in 0..5 {
+            let (rap, t) = if i == 0 {
+                (RapClass::Idr, PictureType::I)
+            } else {
+                (RapClass::None, PictureType::P)
+            };
+            b.push(
+                rau(first + i, Some(start + 3600 * i), meta(rap, true, t)),
+                sink,
+            );
+        }
+    }
+
+    #[test]
+    fn pts_discontinuity_opens_a_segment() {
+        let mut b = EntryBuilder::new(0x100, Codec::H264, 0);
+        let mut sink = VecSink::default();
+        let a0 = 1_000_000;
+        for g in 0..3 {
+            ipppp(&mut b, g * 5, a0 + g * 18_000, &mut sink);
+        }
+        // RAP 0, 5, 10 vus : L = 5.
+        assert_eq!(b.publish(false).unwrap().records.len(), 5);
+        // Segment B : PTS plus petits de 10 s que ceux de A.
+        let b0 = a0 - 900_000;
+        ipppp(&mut b, 15, b0, &mut sink);
+        // Le RAP qui ouvre B rend toute la fin de A publiable (L = 15).
+        let tail = b.publish(false).unwrap();
+        assert_eq!(tail.by_pres, (5..15).collect::<Vec<_>>());
+        ipppp(&mut b, 20, b0 + 18_000, &mut sink);
+        ipppp(&mut b, 25, b0 + 36_000, &mut sink);
+        // La publication progressive continue dans B (préfixe par segment).
+        let more = b.publish(false).unwrap();
+        let pres: Vec<u32> = more.records.iter().map(|r| r.pres_idx).collect();
+        assert_eq!(pres, (15..20).collect::<Vec<_>>());
+        assert_eq!(more.records[0].pts, b0 as i64);
+        let rest = b.publish(true).unwrap();
+        assert_eq!(rest.by_pres, (20..30).collect::<Vec<_>>());
+        let n = sink
+            .messages
+            .iter()
+            .filter(|m| m.id == "ts-pts-discontinuity")
+            .count();
+        assert_eq!(n, 1);
+        assert_eq!(sink.messages[0].decode_idx, Some(15));
+    }
+
+    #[test]
+    fn segment_closes_unresolved_recovery() {
+        let mut b = EntryBuilder::new(0x100, Codec::H264, 0);
+        let mut sink = VecSink::default();
+        let rec = RapClass::Recovery { frame_cnt: 50 };
+        b.push(
+            rau(0, Some(10_000), meta(rec, true, PictureType::I)),
+            &mut sink,
+        );
+        b.push(
+            rau(1, Some(16_000), meta(RapClass::None, true, PictureType::P)),
+            &mut sink,
+        );
+        b.push(
+            rau(2, Some(13_000), meta(RapClass::None, false, PictureType::B)),
+            &mut sink,
+        );
+        // Discontinuité signalée par le PCR : le RAP suivant ouvre un segment, même en avant.
+        b.discontinuity = true;
+        b.push(
+            rau(3, Some(900_000), meta(RapClass::Idr, true, PictureType::I)),
+            &mut sink,
+        );
+        b.push(
+            rau(
+                4,
+                Some(890_000),
+                meta(RapClass::None, false, PictureType::B),
+            ),
+            &mut sink,
+        );
+        let first = b.publish(false).unwrap();
+        assert_eq!(
+            kinds(&first)[0],
+            (0, RapKind::Recovery { pres_span: 3 }, Leading::None)
+        );
+        assert_eq!(first.by_pres, [0, 2, 1]);
+        let rest = b.publish(true).unwrap();
+        assert_eq!(rest.by_pres, [4, 3]);
+        assert!(!b.discontinuity);
+    }
+
+    #[test]
+    fn pts_segments_through_the_indexer() {
+        const PID: u16 = 0x100;
+        let mut ts = Ts::default();
+        ts.tables(0, PID, PID);
+        let pattern = [1, 2, 2, 1, 2, 2, 1, 2];
+        for (i, t) in pattern.into_iter().enumerate() {
+            ts.pes(PID, 1_000_000 + 3600 * i as u64, &au(t, 3), 184);
+        }
+        // 2e segment : 10 s plus tôt.
+        for (i, t) in pattern.into_iter().enumerate() {
+            ts.pes(PID, 100_000 + 3600 * i as u64, &au(t, 3), 184);
+        }
+        let (idx, sink, r, _) = run(ts.bytes());
+        r.unwrap();
+        let e = all(&idx, PID);
+        assert_eq!(e.len(), 16);
+        assert!(e.iter().all(|(f, _)| f.pres_idx == f.decode_idx));
+        assert_eq!(e[8].0.pts, 100_000);
+        let n = sink
+            .messages
+            .iter()
+            .filter(|m| m.id == "ts-pts-discontinuity")
+            .count();
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn pcr_discontinuity_resets_unwrap_and_segments_video() {
+        const PID: u16 = 0x100;
+        let mut ts = Ts::default();
+        ts.tables(0, PID, PID);
+        for i in 0..4u64 {
+            ts.pes(
+                PID,
+                3600 * (i + 1),
+                &au(if i % 2 == 0 { 1 } else { 2 }, 3),
+                184,
+            );
+        }
+        // Paquet d'adaptation seul sur le PID vidéo (PID de PCR) : discontinuité.
+        let af = AfSpec {
+            discontinuity: true,
+            random_access: false,
+            pcr: Some(Pcr { base: 50, ext: 0 }),
+        };
+        let cc = ts.next_cc(PID, 0);
+        ts.packets.push(packet(PID, false, cc, Some(af), &[]));
+        // Après la discontinuité, PTS en avant : seul l'indicateur ouvre le segment.
+        for i in 0..4u64 {
+            ts.pes(
+                PID,
+                500_000 + 3600 * i,
+                &au(if i % 2 == 0 { 1 } else { 2 }, 3),
+                184,
+            );
+        }
+        let (idx, sink, r, _) = run(ts.bytes());
+        r.unwrap();
+        assert_eq!(all(&idx, PID).len(), 8);
+        assert_eq!(
+            sink.messages
+                .iter()
+                .filter(|m| m.id == "ts-pts-discontinuity")
+                .map(|m| m.decode_idx)
+                .collect::<Vec<_>>(),
+            [Some(4)]
+        );
+        let p = idx.pcrs(PID);
+        assert_eq!(
+            p.last().map(|s| (s.pcr, s.discontinuity)),
+            Some((15_000, true))
+        );
+    }
+
+    /// Paquets bruts → piste (comme l'indexeur, coupe forcée comprise) ; rend les lots forcés.
+    fn feed_track(t: &mut Track, packets: &[[u8; 188]], sink: &mut VecSink) -> Vec<Batch> {
+        let mut forced = Vec::new();
+        for (i, raw) in packets.iter().enumerate() {
+            let sp = ScannedPacket {
+                offset: i as u64 * 188,
+                index: i as u64,
+                packet: crate::packet::parse_packet(raw).unwrap(),
+            };
+            t.push(&sp, sink);
+            forced.extend(t.builder.forced(sink));
+            let [chunks, pes, gaps, pending, unresolved] = t.sizes();
+            assert!(chunks <= MAX_CHUNKS && pes <= MAX_CHUNKS + 1 && gaps <= MAX_GAPS);
+            assert!(pending < MAX_PENDING && unresolved <= pending);
+        }
+        forced
+    }
+
+    #[test]
+    fn empty_pes_and_gaps_are_bounded() {
+        let mut t = Track::new(0x100, Codec::Mpeg2, 0);
+        let mut sink = VecSink::default();
+        // 10 000 PES sans octet d'ES, compteur qui saute de 2 à chaque paquet (un trou chacun).
+        let packets: Vec<[u8; 188]> = (0..10_000u64)
+            .flat_map(|i| pes_packets(0x100, (2 * i) as u8, &pes_bytes(Some(i), None, &[]), 184))
+            .collect();
+        feed_track(&mut t, &packets, &mut sink);
+        let [chunks, pes, gaps, _, _] = t.sizes();
+        assert_eq!((chunks, pes, gaps), (0, 1, 1));
+        assert!(sink.messages.iter().filter(|m| m.id == "ts-cc-gap").count() > 9000);
+    }
+
+    #[test]
+    fn stream_without_rap_is_force_published() {
+        const PID: u16 = 0x100;
+        const N: u64 = 5000;
+        let mut ts = Ts::default();
+        ts.tables(0, PID, PID);
+        let mut frame = au(2, 3);
+        frame.truncate(40);
+        for i in 0..N {
+            ts.pes(PID, 3600 * (i + 1), &frame, 184);
+        }
+        // Piste seule : attente bornée, lots forcés en ordre de décodage.
+        let mut track = Track::new(PID, Codec::Mpeg2, 0);
+        let mut sink = VecSink::default();
+        let forced = feed_track(&mut track, &ts.packets, &mut sink);
+        assert!(!forced.is_empty());
+        assert!(forced.iter().all(|b| {
+            b.records
+                .iter()
+                .enumerate()
+                .all(|(i, r)| b.by_pres[i] == r.pres_idx)
+        }));
+        // Indexeur complet : toutes les images, `pres_idx` = rang de décodage, message.
+        let (idx, sink, r, _) = run(ts.bytes());
+        r.unwrap();
+        let e = all(&idx, PID);
+        assert_eq!(e.len() as u64, N);
+        assert!(e.iter().all(|(f, _)| f.pres_idx == f.decode_idx));
+        let m = sink
+            .messages
+            .iter()
+            .find(|m| m.id == "ts-index-forced-publish")
+            .unwrap();
+        assert_eq!(
+            m.params[1],
+            ("count", ma_core::Param::UInt(MAX_PENDING as u64))
+        );
+    }
+
+    #[test]
+    fn huge_recovery_frame_cnt_is_bounded() {
+        let mut b = EntryBuilder::new(0x100, Codec::H264, 0);
+        let mut sink = VecSink::default();
+        let rec = RapClass::Recovery { frame_cnt: 65_535 };
+        b.push(rau(0, Some(0), meta(rec, true, PictureType::I)), &mut sink);
+        let n = u64::from(MAX_RECOVERY_FRAMES) + 1;
+        for i in 1..=n {
+            b.push(
+                rau(i, Some(i * 10), meta(RapClass::None, true, PictureType::P)),
+                &mut sink,
+            );
+        }
+        // Borné à 256 : R = AU 256, [0, 256) compte 256 AU de référence (RAP compris).
+        assert_eq!(b.unresolved, Vec::<u32>::new());
+        assert_eq!(b.pending[0].recovery.unwrap().r, Some(256));
+        ipppp(&mut b, n + 1, 1_000_000, &mut sink);
+        ipppp(&mut b, n + 6, 1_100_000, &mut sink);
+        let out = b.publish(false).unwrap();
+        assert_eq!(
+            out.records[0].rap_kind(),
+            RapKind::Recovery { pres_span: 256 }
+        );
     }
 }

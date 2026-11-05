@@ -71,6 +71,19 @@ pub(crate) const AU_TOO_LARGE: MsgDef = MsgDef {
     params: &["pid", "size"],
 };
 
+/// Discontinuité de PTS (recul d'un RAP ou `discontinuity_indicator` du PCR) : nouveau
+/// segment de présentation.
+pub(crate) const PTS_DISCONTINUITY: MsgDef = MsgDef {
+    id: "ts-pts-discontinuity",
+    params: &["pid"],
+};
+/// Trop d'images en attente de publication (pas de RAP, point de reprise jamais résolu) :
+/// publication forcée de `count` images.
+pub(crate) const FORCED_PUBLISH: MsgDef = MsgDef {
+    id: "ts-index-forced-publish",
+    params: &["pid", "count"],
+};
+
 /// Tous les messages de la crate (vérifiés contre `locales/{fr,en}/engine.ftl`).
 pub const MESSAGES: &[MsgDef] = &[
     RESYNC,
@@ -86,6 +99,8 @@ pub const MESSAGES: &[MsgDef] = &[
     PES_INVALID,
     AU_NO_PTS,
     AU_TOO_LARGE,
+    PTS_DISCONTINUITY,
+    FORCED_PUBLISH,
 ];
 
 #[cfg(test)]

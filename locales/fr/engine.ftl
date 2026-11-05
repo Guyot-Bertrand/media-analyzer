@@ -22,3 +22,5 @@ ts-pes-invalid = En-tête PES invalide ou incomplet sur le PID { $pid } : PES ig
 # Index vidéo (ma-ts)
 ts-au-no-pts = Image sans PTS sur le PID { $pid } : PTS estimé.
 ts-au-too-large = Image ignorée sur le PID { $pid } : { $size } octets, plus que la taille maximale d'une image.
+ts-pts-discontinuity = Discontinuité de PTS sur le PID { $pid } : nouveau segment de présentation.
+ts-index-forced-publish = Trop d'images en attente sur le PID { $pid } : { $count } images publiées sans attendre de point d'accès.

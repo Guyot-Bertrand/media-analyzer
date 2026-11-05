@@ -450,28 +450,19 @@ fn packets_of(l: &Loaded, pid: u16) -> Vec<u64> {
         .collect()
 }
 
-#[test]
-fn lost_packet_damages_only_its_au() {
-    let l = load("h264_720p_closed");
-    let full = run_full(&l);
+/// Retire le paquet `lost` (188 octets) de `l`, réindexe et vérifie qu'une seule rupture de
+/// continuité est signalée ; rend l'index sans perte et l'index avec perte.
+fn index_without_packet(l: &Loaded, lost: u64) -> (Entries, Entries) {
+    let full = run_full(l);
     let pid = main_video(&full.index);
-    let e = entries(&full.index, pid);
-    let target = &e[100].1;
-    let inside: Vec<u64> = packets_of(&l, pid)
-        .into_iter()
-        .filter(|&o| o > target.start.packet_offset && o < target.end.packet_offset)
-        .collect();
-    assert!(inside.len() > 4);
-    let lost = inside[inside.len() / 2] as usize;
     let mut data = l.data.clone();
-    data.drain(lost..lost + 188);
+    data.drain(lost as usize..lost as usize + 188);
     let cut = Loaded {
         data,
         format: l.format,
         start: l.start,
     };
     let run = run_full(&cut);
-    let got = entries(&run.index, pid);
     let gaps = run
         .sink
         .messages
@@ -479,38 +470,70 @@ fn lost_packet_damages_only_its_au() {
         .filter(|m| m.id == "ts-cc-gap")
         .count();
     assert_eq!(gaps, 1);
-    // Mêmes AU, sauf l'AU 100 : marquée `damaged`, ou oubliée par le découpeur (`gap()` ne
-    // garde pas une AU coupée ; décision du contrôleur). Les voisines sont intactes.
+    (entries(&full.index, pid), entries(&run.index, pid))
+}
+
+/// Seule l'AU `hit` est `damaged` ; toutes les autres entrées sont identiques à l'index sans
+/// perte (`FrameEntry`, taille, PTS, `damaged`). Les positions, elles, glissent d'un paquet.
+fn only_damaged(e: &Entries, got: &Entries, hit: usize) {
+    assert_eq!(got.len(), e.len(), "published() a changé");
     let damaged: Vec<usize> = (0..got.len()).filter(|&d| got[d].1.damaged).collect();
-    let pts = |v: &[(FrameEntry, AuInfo)], d: usize| v[d].0.pts;
-    if got.len() == e.len() {
-        assert_eq!(damaged, [100]);
-        assert!((0..e.len()).all(|d| pts(&got, d) == pts(&e, d)));
-    } else {
-        assert_eq!(got.len(), e.len() - 1);
-        assert_eq!(damaged, Vec::<usize>::new());
-        let kept: Vec<i64> = (0..e.len())
-            .filter(|&d| d != 100)
-            .map(|d| pts(&e, d))
-            .collect();
-        assert_eq!(
-            (0..got.len()).map(|d| pts(&got, d)).collect::<Vec<_>>(),
-            kept
-        );
+    assert_eq!(damaged, [hit]);
+    for d in 0..e.len() {
+        assert_eq!(got[d].0, e[d].0, "FrameEntry {d}");
+        assert_eq!(got[d].1.pts, e[d].1.pts, "PTS {d}");
+        if d != hit {
+            assert_eq!(
+                (got[d].1.size, got[d].1.damaged),
+                (e[d].1.size, e[d].1.damaged),
+                "AU {d}"
+            );
+        }
     }
-    for d in [99, 101] {
-        let d2 = if got.len() == e.len() || d < 100 {
-            d
-        } else {
-            d - 1
-        };
-        let (a, b) = (&e[d].1, &got[d2].1);
-        assert_eq!(
-            (a.size, a.pts, a.damaged),
-            (b.size, b.pts, b.damaged),
-            "AU {d}"
-        );
-    }
+}
+
+/// Paquet perdu au milieu de l'AU 100 (R12) : le découpeur n'est pas réinitialisé, l'AU reste
+/// dans l'index, `damaged`, avec 184 octets de moins.
+///
+/// Compromis de R12 (non exercés ici, voir la doc du module) : un code de début perdu dans le
+/// trou fusionne deux AU (une entrée `damaged`, `published()` − 1) ; un faux `00 00 01` peut
+/// naître des octets recollés de part et d'autre du trou.
+#[test]
+fn lost_packet_damages_only_its_au() {
+    let l = load("h264_720p_closed");
+    let full = run_full(&l);
+    let pid = main_video(&full.index);
+    let e = entries(&full.index, pid);
+    let target = &e[100].1;
+    // Paquet de données plein (sans champ d'adaptation) strictement à l'intérieur de l'AU.
+    let inside: Vec<u64> = packets_of(&l, pid)
+        .into_iter()
+        .filter(|&o| o > target.start.packet_offset && o < target.end.packet_offset)
+        .filter(|&o| l.data[o as usize + 3] & 0x30 == 0x10)
+        .collect();
+    assert!(inside.len() > 4);
+    let (e, got) = index_without_packet(&l, inside[inside.len() / 2]);
+    only_damaged(&e, &got, 100);
+    assert_eq!(got[100].1.size, e[100].1.size - 184);
+}
+
+/// Perte du dernier paquet du PES de l'AU 100 : le trou est à la fin de l'AU (`g == end`),
+/// qui est marquée ; l'AU 101, qui commence juste après le trou, est intacte.
+#[test]
+fn lost_last_packet_of_pes_damages_its_au() {
+    let l = load("h264_720p_closed");
+    let full = run_full(&l);
+    let pid = main_video(&full.index);
+    let e = entries(&full.index, pid);
+    let next = e[101].1.start.packet_offset;
+    let last = packets_of(&l, pid)
+        .into_iter()
+        .filter(|&o| o > e[100].1.start.packet_offset && o < next)
+        .max()
+        .unwrap();
+    let (e, got) = index_without_packet(&l, last);
+    only_damaged(&e, &got, 100);
+    assert!(got[100].1.size < e[100].1.size);
 }
 
 #[test]
