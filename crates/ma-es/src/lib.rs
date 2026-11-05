@@ -125,6 +125,11 @@ pub struct AuMeta {
     /// HEVC seulement.
     pub leading: Option<NalLeading>,
     /// H.264 : `nal_ref_idc != 0` ; HEVC : pas une sous-couche non référence ; MPEG-2 : I ou P.
+    ///
+    /// HEVC : une image `_N` (`TRAIL_N`, `RASL_N`…) n'est non référence que pour sa propre
+    /// sous-couche ; si son `TemporalId` est inférieur au maximum, elle peut servir de référence
+    /// aux sous-couches supérieures. Ce champ est informatif : il ne doit pas servir à sauter des
+    /// images au décodage.
     pub reference: bool,
     pub params: ParamSet,
     pub field: Field,

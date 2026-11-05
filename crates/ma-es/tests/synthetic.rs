@@ -74,7 +74,7 @@ fn h264_sps(s: Sps) -> Vec<u8> {
     w.u(8, 0);
     w.u(8, 40);
     w.ue(s.id);
-    if s.profile == 100 {
+    if matches!(s.profile, 100 | 244) {
         w.ue(s.chroma_format_idc);
         if s.chroma_format_idc == 3 {
             w.u(1, u64::from(s.separate_colour_plane));
@@ -150,8 +150,8 @@ struct Slice {
     /// `slice_type`.
     kind: u32,
     pps_id: u32,
-    /// `colour_plane_id` écrit.
-    colour_plane: bool,
+    /// `colour_plane_id` écrit, si présent.
+    colour_plane: Option<u64>,
     frame_num_bits: u32,
     frame_num: u64,
     coding: Coding,
@@ -174,7 +174,7 @@ const IDR: Slice = Slice {
     first_mb: 0,
     kind: 7,
     pps_id: 0,
-    colour_plane: false,
+    colour_plane: None,
     frame_num_bits: 4,
     frame_num: 0,
     coding: Coding::FrameOnly,
@@ -185,8 +185,8 @@ fn h264_slice(s: Slice) -> Vec<u8> {
     w.ue(s.first_mb);
     w.ue(s.kind);
     w.ue(s.pps_id);
-    if s.colour_plane {
-        w.u(2, 1);
+    if let Some(plane) = s.colour_plane {
+        w.u(2, plane);
     }
     w.u(s.frame_num_bits, s.frame_num);
     match s.coding {
@@ -291,7 +291,7 @@ fn h264_high_profile_sps_is_parsed() {
             nal_type: 1,
             kind: 2,
             pps_id: 200,
-            colour_plane: separate,
+            colour_plane: separate.then_some(0),
             frame_num_bits: 7,
             frame_num: 93,
             ..IDR
@@ -305,6 +305,42 @@ fn h264_high_profile_sps_is_parsed() {
         // I non IDR sans SEI : pas un point d'accès.
         assert_eq!(aus[0].meta.rap, RapClass::None);
     }
+}
+
+#[test]
+fn h264_separate_colour_planes_are_one_au() {
+    // 4:4:4 à plans séparés (§7.4.1.2.4) : chaque plan a sa tranche `first_mb_in_slice = 0` ;
+    // seule celle du plan 0 ouvre une AU.
+    let sps = h264_sps(Sps {
+        profile: 244,
+        chroma_format_idc: 3,
+        separate_colour_plane: true,
+        ..MAIN
+    });
+    let plane = |p, nal_type| {
+        h264_slice(Slice {
+            nal_type,
+            colour_plane: Some(p),
+            frame_num: 2,
+            ..IDR
+        })
+    };
+    let (data, at) = es(&[
+        sps,
+        h264_pps(0, 0),
+        plane(0, 5),
+        plane(1, 5),
+        plane(2, 5),
+        plane(0, 1), // 5 : image suivante
+        plane(1, 1),
+        plane(2, 1),
+    ]);
+    let aus = run(Codec::H264, &data);
+    let spans: Vec<(u64, u64)> = aus.iter().map(|a| (a.start, a.end)).collect();
+    assert_eq!(spans, [(0, at[5]), (at[5], data.len() as u64)]);
+    assert_eq!(aus[0].meta.rap, RapClass::Idr);
+    assert_eq!(aus[0].meta.frame_num, Some(2));
+    assert_eq!(aus[1].meta.first_vcl_type, 1);
 }
 
 #[test]
@@ -522,6 +558,13 @@ fn hevc_slice_type_uses_pps_extra_bits() {
     assert_eq!(run(Codec::Hevc, &data)[0].meta.picture, PictureType::B);
     let (data, _) = es(&[hevc_pps(3, 0), hevc_slice(1, true, 3, 0, 2)]);
     assert_eq!(run(Codec::Hevc, &data)[0].meta.picture, PictureType::I);
+    // IRAP : `no_output_of_prior_pics_flag` précède `slice_pic_parameter_set_id`. Une IRAP ne
+    // porte que des tranches I ; le `slice_type` B ci-dessous est volontairement non conforme,
+    // pour que le test distingue : sans le saut de ce drapeau, `pps_id` se lit 7 (inconnu) et le
+    // type retombe à I.
+    let (data, _) = es(&[hevc_pps(3, 2), hevc_slice(21, true, 3, 2, 0)]);
+    let m = run(Codec::Hevc, &data)[0].meta;
+    assert_eq!((m.picture, m.rap), (PictureType::B, RapClass::Cra));
     // PPS inconnu : P, ou I pour une IRAP.
     let (data, _) = es(&[hevc_slice(1, true, 9, 0, 0)]);
     assert_eq!(run(Codec::Hevc, &data)[0].meta.picture, PictureType::P);

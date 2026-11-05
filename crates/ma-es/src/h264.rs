@@ -1,7 +1,12 @@
 //! H.264 (ISO/CEI 14496-10, Annex B).
 //!
 //! - Nouvelle AU sur un NAL 9, 7, 8, 6 ou 14 à 18 qui suit une tranche de l'AU courante, ou sur
-//!   une tranche (1, 5) dont `first_mb_in_slice` vaut 0 (§7.4.1.2.3).
+//!   une tranche (1, 5) dont `first_mb_in_slice` vaut 0 (§7.4.1.2.3). Avec des plans de couleur
+//!   séparés (4:4:4, `separate_colour_plane_flag = 1`), seule la tranche du plan 0
+//!   (`colour_plane_id = 0`) ouvre une AU (§7.4.1.2.4).
+//! - Le NAL 14 (préfixe SVC/MVC) n'ouvre une AU « après une tranche » que s'il suit la dernière
+//!   tranche de l'image (§7.4.1.2.3) : un NAL 14 précède aussi chaque tranche d'une AU SVC/MVC.
+//!   Ces flux sont hors des profils visés ; ils seraient coupés à tort entre deux tranches.
 //! - SPS lu jusqu'à `frame_mbs_only_flag` (D3) ; PPS : `pps_id` et `sps_id` ; tranche : jusqu'à
 //!   `bottom_field_flag`. SPS ou PPS inconnu ⇒ `Field::Frame`, `frame_num: None`.
 //! - SEI « recovery point » (type 6) ⇒ `Recovery` sur une image I non IDR.
@@ -192,6 +197,24 @@ impl H264 {
         let _ = self.field_and_frame_num(&mut r);
     }
 
+    /// `colour_plane_id` d'une tranche lue jusqu'à `first_mb_in_slice` ; 0 si le SPS n'a pas
+    /// de plans séparés ou est inconnu. Erreur de lecture ⇒ `Err` (traité comme le plan 0).
+    fn colour_plane(&self, r: &mut BitReader<'_>) -> Result<u64, BitError> {
+        r.ue()?; // slice_type
+        let pps_id = r.ue()?;
+        let sps = self
+            .pps
+            .get(pps_id as usize)
+            .copied()
+            .flatten()
+            .and_then(|s| self.sps[usize::from(s)]);
+        if sps.is_some_and(|s| s.separate_colour_plane) {
+            r.u(2)
+        } else {
+            Ok(0)
+        }
+    }
+
     fn field_and_frame_num(&mut self, r: &mut BitReader<'_>) -> Result<(), BitError> {
         let pps_id = r.ue()?;
         let Some(sps) = self
@@ -231,9 +254,14 @@ impl NalParser for H264 {
             6..=9 | 14..=18 => NalKind::Opener,
             1 | 5 => {
                 let data = rbsp(&nal[1..]).data;
-                if BitReader::new(&data).ue() == Ok(0) {
+                let mut r = BitReader::new(&data);
+                if r.ue() != Ok(0) {
+                    NalKind::Slice
+                } else if self.colour_plane(&mut r).unwrap_or(0) == 0 {
                     NalKind::FirstSlice
                 } else {
+                    // Plans de couleur séparés : les tranches Cb et Cr (plans 1 et 2) ont aussi
+                    // `first_mb_in_slice = 0`, mais appartiennent à l'image du plan 0.
                     NalKind::Slice
                 }
             }

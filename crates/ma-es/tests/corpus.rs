@@ -73,13 +73,17 @@ fn es_is_the_concatenation_of_ffprobe_packets() {
 #[ma_trace::covers("DATA.PIC.01")]
 #[test]
 fn au_count_and_sizes_match_ffprobe() {
-    for name in [
-        "h264_720p_closed",
-        "hevc_720p_main10",
-        "mpeg2_576i_closed",
-        "h264_1080i_mbaff",
-        "hevc_720p_open_gop",
-        "h264_720p_recovery",
+    // AU dont la taille brute diffère de ffprobe (octets nuls seulement, voir plus bas). H.264 :
+    // ffprobe commence aussi au `zero_byte`, aucun écart. HEVC : le décalage d'un octet de
+    // chaque début n'est pas compensé à la 1re et à la dernière AU. MPEG-2 : 2 paquets ffprobe
+    // finissent par `00`, ce qui touche chacun 2 AU voisines.
+    for (name, expected_raw_diff) in [
+        ("h264_720p_closed", 0),
+        ("hevc_720p_main10", 2),
+        ("mpeg2_576i_closed", 4),
+        ("h264_1080i_mbaff", 0),
+        ("hevc_720p_open_gop", 2),
+        ("h264_720p_recovery", 0),
     ] {
         let es = es_of(name);
         let packets = ffprobe_packets(&corpus_file(name));
@@ -113,7 +117,10 @@ fn au_count_and_sizes_match_ffprobe() {
             );
             p_start = p_end;
         }
-        eprintln!("{name} : {raw_diff} AU de taille brute différente (octets nuls seulement)");
+        assert_eq!(
+            raw_diff, expected_raw_diff,
+            "{name} : AU de taille brute différente (octets nuls seulement)"
+        );
     }
 }
 
