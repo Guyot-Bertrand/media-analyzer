@@ -871,22 +871,26 @@ impl EntryBuilder {
     }
 
     /// Attente au plafond (`MAX_PENDING` entrées ou `MAX_PENDING_BYTES`) : publie d'abord le
-    /// préfixe normal (`cut`, sans message), qui suffit sur un flux sain quand la publication
-    /// périodique tarde. Seulement s'il n'y en a pas (flux sans RAP, point de reprise jamais
-    /// résolu, entrée hostile) : coupe forcée au dernier RAP vu, ou à défaut tout le lot en
-    /// ordre de décodage (`ts-index-forced-publish`).
+    /// préfixe normal (`cut`, sans message) s'il ramène l'attente sous le seuil bas, ce qui
+    /// suffit sur un flux sain quand la publication périodique tarde. Sinon (flux sans RAP,
+    /// point de reprise jamais résolu, entrée hostile) : coupe forcée au dernier RAP vu s'il
+    /// ramène l'attente sous le seuil bas, à défaut tout le lot en ordre de décodage
+    /// (`ts-index-forced-publish`).
     fn forced(&mut self, sink: &mut dyn MessageSink) -> Option<Batch> {
         if self.pending.len() < MAX_PENDING && self.pending_bytes < MAX_PENDING_BYTES {
             return None;
         }
-        if let Some(k) = self.cut() {
+        // R16 : une coupe qui laisse l'attente au plafond serait relancée à chaque AU (coût
+        // O(MAX_PENDING) par AU) ; elle n'est acceptée que si elle ramène l'attente sous le
+        // seuil bas.
+        if let Some(k) = self.cut().filter(|&k| self.drains(k)) {
             return self.take(k, true);
         }
         let at_rap = self
             .pending
             .iter()
             .rposition(PendingEntry::is_rap)
-            .filter(|&k| k > 0);
+            .filter(|&k| k > 0 && self.drains(k));
         let k = at_rap.unwrap_or(self.pending.len());
         sink.push(
             Message::new(
@@ -901,6 +905,17 @@ impl EntryBuilder {
             .frame(self.base),
         );
         self.take(k, at_rap.is_some())
+    }
+
+    /// Publier les `k` premières entrées ramène l'attente sous le seuil bas (moitié des
+    /// plafonds, en entrées et en octets).
+    fn drains(&self, k: usize) -> bool {
+        let taken: u64 = self.pending[..k]
+            .iter()
+            .map(|e| u64::from(e.rec.size))
+            .sum();
+        self.pending.len() - k < MAX_PENDING / 2
+            && self.pending_bytes - taken < MAX_PENDING_BYTES / 2
     }
 
     /// Publie les `k` premières entrées en attente ; `by_pts` : rang de présentation par
@@ -2674,5 +2689,58 @@ mod tests {
         let p = out.pcrs(PCR_PID);
         assert_eq!(p.len(), n);
         assert!(p.windows(2).all(|w| w[0].pcr < w[1].pcr));
+    }
+
+    // ------------------------------------------------------------ correction 3
+
+    #[test]
+    fn tiny_normal_cut_at_the_ceiling_is_refused() {
+        let mut b = EntryBuilder::new(0x100, Codec::H264, 0);
+        let mut sink = VecSink::default();
+        let (i, p) = (PictureType::I, PictureType::P);
+        // Seul le RAP n° 2 passe la règle du préfixe : l'AU 3 (PTS 100 000) dépasse toutes les
+        // suivantes (PTS 20 000 et plus, moins d'1 s en dessous : pas de nouveau segment).
+        let head = [
+            (0, RapClass::Idr, i),
+            (10, RapClass::None, p),
+            (20, RapClass::Idr, i),
+            (100_000, RapClass::None, p),
+        ];
+        for (n, &(pts, rap, t)) in head.iter().enumerate() {
+            b.push(rau(n as u64, Some(pts), meta(rap, true, t)), &mut sink);
+        }
+        let total = 3 * MAX_PENDING as u64;
+        let mut batches = 0;
+        let mut first = true;
+        for n in 4..total {
+            let rap = if n % 5 == 0 {
+                RapClass::Idr
+            } else {
+                RapClass::None
+            };
+            b.push(rau(n, Some(20_000 + n), meta(rap, true, p)), &mut sink);
+            if first && b.pending.len() == MAX_PENDING {
+                // Au plafond, `cut()` ne rend que le petit préfixe [0, 2).
+                assert_eq!(b.cut(), Some(2));
+            }
+            if b.forced(&mut sink).is_some() {
+                batches += 1;
+                if first {
+                    // Un seul appel ramène l'attente sous le seuil bas.
+                    assert!(b.pending.len() < MAX_PENDING / 2, "{}", b.pending.len());
+                    first = false;
+                }
+            }
+            assert!(b.pending.len() <= MAX_PENDING);
+        }
+        // Une coupe par remplissage du plafond, pas une par AU.
+        assert!(!first);
+        assert!(batches <= 3, "{batches}");
+        let forced = sink
+            .messages
+            .iter()
+            .filter(|m| m.id == "ts-index-forced-publish")
+            .count();
+        assert_eq!(forced, batches);
     }
 }
