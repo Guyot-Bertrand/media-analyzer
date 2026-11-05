@@ -60,6 +60,17 @@ pub(crate) const PES_INVALID: MsgDef = MsgDef {
     params: &["pid"],
 };
 
+/// AU vidéo sans PTS (aucun début de PES ne lui en donne) : PTS estimé.
+pub(crate) const AU_NO_PTS: MsgDef = MsgDef {
+    id: "ts-au-no-pts",
+    params: &["pid"],
+};
+/// AU vidéo plus grande que `MAX_AU_BYTES` : ignorée, absente de l'index.
+pub(crate) const AU_TOO_LARGE: MsgDef = MsgDef {
+    id: "ts-au-too-large",
+    params: &["pid", "size"],
+};
+
 /// Tous les messages de la crate (vérifiés contre `locales/{fr,en}/engine.ftl`).
 pub const MESSAGES: &[MsgDef] = &[
     RESYNC,
@@ -73,6 +84,8 @@ pub const MESSAGES: &[MsgDef] = &[
     CC_GAP,
     SCRAMBLED,
     PES_INVALID,
+    AU_NO_PTS,
+    AU_TOO_LARGE,
 ];
 
 #[cfg(test)]

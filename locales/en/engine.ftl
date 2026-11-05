@@ -18,3 +18,7 @@ ts-psi-invalid = Invalid PSI/SI section ignored (table_id { $table_id }).
 ts-cc-gap = Continuity counter break on PID { $pid }: expected { $expected }, got { $got }.
 ts-scrambled = PID { $pid } is scrambled: its payload is ignored.
 ts-pes-invalid = Invalid or incomplete PES header on PID { $pid }: PES ignored.
+
+# Video index (ma-ts)
+ts-au-no-pts = Picture without PTS on PID { $pid }: PTS estimated.
+ts-au-too-large = Picture ignored on PID { $pid }: { $size } bytes, more than the maximum picture size.

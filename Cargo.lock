@@ -605,7 +605,9 @@ dependencies = [
 name = "ma-ts"
 version = "0.1.0"
 dependencies = [
+ "ma-bits",
  "ma-core",
+ "ma-es",
  "ma-io",
  "ma-testkit",
  "ma-trace",

@@ -3,6 +3,7 @@
 //! blocs avec resynchronisation, messages identifiés par une clé Fluent.
 
 mod es_read;
+mod index;
 mod messages;
 mod packet;
 mod pes;
@@ -14,6 +15,10 @@ mod tables;
 pub mod testutil;
 
 pub use es_read::read_es;
+pub use index::{
+    AuInfo, IndexError, IndexHandle, IndexOptions, PcrSample, Progress, TsIndex, VideoIndex, index,
+    spawn_index,
+};
 pub use messages::MESSAGES;
 pub use packet::{
     AdaptationField, Packet, PacketError, PacketFormat, PacketHeader, detect_format, parse_packet,

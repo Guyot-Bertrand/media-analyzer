@@ -13,6 +13,8 @@ use crate::packet::{
 
 /// Taille des blocs lus par le scanner.
 const BLOCK: usize = 4 << 20;
+/// Plus petit bloc accepté par `with_block` : la recherche de synchronisation doit tenir dedans.
+const MIN_BLOCK: usize = 16 << 10;
 /// Zone lue par `probe` pour détecter le format.
 const PROBE_BYTES: usize = 1 << 20;
 /// Invariant interne rompu (ne doit pas arriver) : erreur explicite, jamais de panique.
@@ -44,6 +46,8 @@ pub struct PacketScanner<'s> {
     buf_start: u64,
     /// La dernière lecture a rendu moins que demandé : rien de plus à attendre dans ce bloc.
     exhausted: bool,
+    /// Taille des lectures.
+    block: usize,
 }
 
 impl<'s> PacketScanner<'s> {
@@ -61,7 +65,15 @@ impl<'s> PacketScanner<'s> {
             buf: Vec::new(),
             buf_start: 0,
             exhausted: false,
+            block: BLOCK,
         }
+    }
+
+    /// Lit par blocs de `block` octets (bornés à [16 Kio, 4 Mio]) au lieu de 4 Mio.
+    #[must_use]
+    pub(crate) fn with_block(mut self, block: usize) -> Self {
+        self.block = block.clamp(MIN_BLOCK, BLOCK);
+        self
     }
 
     fn buf_end(&self) -> u64 {
@@ -70,7 +82,8 @@ impl<'s> PacketScanner<'s> {
 
     /// Charge un bloc à partir de `at`.
     fn load(&mut self, at: u64) -> Result<(), IoError> {
-        let want = usize::try_from(self.limit.saturating_sub(at)).map_or(BLOCK, |n| n.min(BLOCK));
+        let block = self.block;
+        let want = usize::try_from(self.limit.saturating_sub(at)).map_or(block, |n| n.min(block));
         self.buf.clear();
         self.buf.resize(want, 0);
         self.buf_start = at;
@@ -106,7 +119,10 @@ impl<'s> PacketScanner<'s> {
         let span = (SYNC_RUN as u64 - 1) * period + 1;
         let mut q = from;
         while q < self.limit {
-            self.ensure(q, usize::try_from(span).unwrap_or(usize::MAX).min(BLOCK))?;
+            self.ensure(
+                q,
+                usize::try_from(span).unwrap_or(usize::MAX).min(self.block),
+            )?;
             // Dernier candidat dont toute la fenêtre est en mémoire (ou jusqu'à la fin des données).
             let end = if self.exhausted {
                 self.buf_end()
