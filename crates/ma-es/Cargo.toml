@@ -1,0 +1,20 @@
+[package]
+name = "ma-es"
+description = "Découpage d'un flux élémentaire vidéo (H.264, HEVC, MPEG-2) en unités d'accès et classification : RAP, images de tête, champs"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ma-bits = { path = "../ma-bits" }
+ma-core = { path = "../ma-core" }
+
+[dev-dependencies]
+ma-bits = { path = "../ma-bits", features = ["writer"] }
+ma-testkit = { path = "../ma-testkit" }
+ma-trace = { path = "../ma-trace" }
+proptest = "1"

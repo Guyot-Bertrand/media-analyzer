@@ -549,6 +549,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ma-es"
+version = "0.1.0"
+dependencies = [
+ "ma-bits",
+ "ma-core",
+ "ma-testkit",
+ "ma-trace",
+ "proptest",
+]
+
+[[package]]
 name = "ma-ffmpeg"
 version = "0.1.0"
 dependencies = [
