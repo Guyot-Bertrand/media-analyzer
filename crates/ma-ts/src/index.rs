@@ -84,6 +84,8 @@ const MAX_GAPS: usize = 4096;
 /// Entrées en attente de publication au plus, et leurs octets d'ES (au-delà : coupe forcée).
 const MAX_PENDING: usize = 4096;
 const MAX_PENDING_BYTES: u64 = 64 << 20;
+/// PCR en attente de publication au plus (au-delà : versés à l'index sans attendre).
+const MAX_PCR_PENDING: usize = 4096;
 /// `recovery_frame_cnt` pris en compte au plus.
 const MAX_RECOVERY_FRAMES: u32 = 256;
 /// Recul du PTS d'un RAP sous le maximum du segment qui ouvre un nouveau segment (1 s).
@@ -868,12 +870,17 @@ impl EntryBuilder {
         self.take(k, true)
     }
 
-    /// Coupe forcée quand l'attente dépasse `MAX_PENDING` entrées ou `MAX_PENDING_BYTES`
-    /// (flux sans RAP, point de reprise jamais résolu, entrée hostile) : au dernier RAP vu,
-    /// ou à défaut tout le lot en ordre de décodage (`ts-index-forced-publish`).
+    /// Attente au plafond (`MAX_PENDING` entrées ou `MAX_PENDING_BYTES`) : publie d'abord le
+    /// préfixe normal (`cut`, sans message), qui suffit sur un flux sain quand la publication
+    /// périodique tarde. Seulement s'il n'y en a pas (flux sans RAP, point de reprise jamais
+    /// résolu, entrée hostile) : coupe forcée au dernier RAP vu, ou à défaut tout le lot en
+    /// ordre de décodage (`ts-index-forced-publish`).
     fn forced(&mut self, sink: &mut dyn MessageSink) -> Option<Batch> {
         if self.pending.len() < MAX_PENDING && self.pending_bytes < MAX_PENDING_BYTES {
             return None;
+        }
+        if let Some(k) = self.cut() {
+            return self.take(k, true);
         }
         let at_rap = self
             .pending
@@ -1273,6 +1280,15 @@ impl<'o> Indexer<'o> {
                 pcr: base.saturating_mul(300) + i64::from(v.ext),
                 discontinuity: af.discontinuity,
             });
+            // Tampon borné quelle que soit la période de publication.
+            if t.buf.len() >= MAX_PCR_PENDING {
+                self.out
+                    .write()
+                    .pcrs
+                    .entry(p.packet.header.pid)
+                    .or_default()
+                    .append(&mut t.buf);
+            }
         }
         let slot = usize::from(self.slot.get(pid).copied().unwrap_or(0));
         let Some(i) = slot.checked_sub(1) else {
@@ -2596,5 +2612,67 @@ mod tests {
             out.records[0].rap_kind(),
             RapKind::Recovery { pres_span: 256 }
         );
+    }
+
+    // ------------------------------------------------------------ correction 2
+
+    #[test]
+    fn forced_tries_the_normal_cut_first() {
+        // Flux sain (GOP de 5) jamais publié périodiquement : au plafond, préfixe normal, sans
+        // message, rangs de présentation par PTS.
+        let mut b = EntryBuilder::new(0x100, Codec::H264, 0);
+        let mut sink = VecSink::default();
+        let mut published = 0;
+        for g in 0..(MAX_PENDING as u64 / 5 + 2) {
+            ipppp(&mut b, g * 5, g * 18_000, &mut sink);
+            if let Some(batch) = b.forced(&mut sink) {
+                assert!(batch.records.first().is_some_and(|r| r.rap != RapTag::None));
+                published += batch.records.len();
+            }
+            assert!(b.pending.len() <= MAX_PENDING);
+        }
+        assert!(published >= MAX_PENDING - 10, "{published}");
+        assert!(
+            sink.messages
+                .iter()
+                .all(|m| m.id != "ts-index-forced-publish")
+        );
+    }
+
+    #[test]
+    fn pending_pcrs_are_bounded() {
+        const PCR_PID: u16 = 0x1FF0;
+        let mut ts = Ts::default();
+        ts.tables(0, PCR_PID, 0x100);
+        let n = 2 * MAX_PCR_PENDING + 10;
+        for i in 0..n {
+            let af = AfSpec {
+                discontinuity: false,
+                random_access: false,
+                pcr: Some(Pcr {
+                    base: i as u64,
+                    ext: 0,
+                }),
+            };
+            ts.packets.push(packet(PCR_PID, false, 0, Some(af), &[]));
+        }
+        let out = TsIndex::new(PacketFormat::Ts188, 0);
+        let mut ix = Indexer::new(&out);
+        let mut sink = VecSink::default();
+        for (i, raw) in ts.packets.iter().enumerate() {
+            let sp = ScannedPacket {
+                offset: i as u64 * 188,
+                index: i as u64,
+                packet: crate::packet::parse_packet(raw).unwrap(),
+            };
+            ix.packet(&sp, &mut sink);
+            assert!(ix.pcr.values().all(|t| t.buf.len() < MAX_PCR_PENDING));
+        }
+        // Déjà versés sans publication : 2 lots de 4096 ; le reste à la publication.
+        assert_eq!(out.pcrs(PCR_PID).len(), 2 * MAX_PCR_PENDING);
+        ix.publish(true, 0);
+        let p = out.pcrs(PCR_PID);
+        assert_eq!(p.len(), n);
+        assert!(p.windows(2).all(|w| w[0].pcr < w[1].pcr));
     }
 }

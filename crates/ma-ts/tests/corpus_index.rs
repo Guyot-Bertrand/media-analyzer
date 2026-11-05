@@ -725,3 +725,66 @@ fn au_ranges_reread_the_es() {
         assert!(es == ffmpeg_es(&path), "{name} : ES relu différent");
     }
 }
+
+/// Indexe `src` avec une publication périodique très rare (1 h) : seuls les plafonds d'attente
+/// déclenchent une publication avant la fin. Vérifie qu'aucune coupe n'est forcée ni aucune
+/// discontinuité vue, et rend les entrées de chaque vidéo.
+fn rare_publication(
+    src: &dyn ReadAt,
+    format: PacketFormat,
+    start: u64,
+    name: &str,
+) -> Vec<Entries> {
+    let opts = IndexOptions {
+        publish_every: Duration::from_secs(3600),
+        ..IndexOptions::default()
+    };
+    let run = run_on(src, format, start, &opts);
+    run.result.as_ref().unwrap();
+    for id in ["ts-index-forced-publish", "ts-pts-discontinuity"] {
+        let n = run.sink.messages.iter().filter(|m| m.id == id).count();
+        assert_eq!(n, 0, "{name} : {n} × {id}");
+    }
+    run.index
+        .videos()
+        .iter()
+        .map(|&(pid, _)| entries(&run.index, pid))
+        .collect()
+}
+
+fn default_publication(src: &dyn ReadAt, format: PacketFormat, start: u64) -> Vec<Entries> {
+    let run = run_on(src, format, start, &IndexOptions::default());
+    run.result.as_ref().unwrap();
+    run.index
+        .videos()
+        .iter()
+        .map(|&(pid, _)| entries(&run.index, pid))
+        .collect()
+}
+
+/// Flux sains : la coupe normale (`cut`) est tentée avant toute publication forcée, même quand
+/// la publication périodique n'a jamais lieu ; l'index est celui de la publication par défaut.
+#[test]
+fn rare_publication_never_forces_on_sane_corpus() {
+    for name in corpus_names().iter().filter(|n| !manifest(n).big) {
+        let l = load(name);
+        let src = MemSource::new(l.data.clone());
+        let rare = rare_publication(&src, l.format, l.start, name);
+        assert!(
+            rare == default_publication(&src, l.format, l.start),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn rare_publication_never_forces_on_uhd_big() {
+    let Some(path) = corpus_file_if_present("uhd_big") else {
+        eprintln!("uhd_big absent : test non exécuté (cargo xtask corpus gen --big)");
+        return;
+    };
+    let (src, format, start) = probe(&path).unwrap();
+    let rare = rare_publication(&src, format, start, "uhd_big");
+    assert!(rare[0].len() >= 62_000);
+    assert!(rare == default_publication(&src, format, start), "uhd_big");
+}
