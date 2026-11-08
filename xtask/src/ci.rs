@@ -6,7 +6,8 @@ use std::process::Command;
 
 /// Seuil de couverture des lignes pour les crates du moteur (`crates/ma-*`, hors `ma-trace`).
 pub const COVERAGE_THRESHOLD: f64 = 90.0;
-/// Crates exemptées du seuil : macro sans logique exécutable.
+/// Crates exemptées du seuil : `ma-trace` est une proc-macro, exécutée par le compilateur et non
+/// par les tests : sa couverture d'exécution n'est pas représentative.
 const EXEMPT: [&str; 1] = ["ma-trace"];
 
 /// Couverture des lignes (en %) par crate `crates/<nom>`, à partir d'un rapport lcov.
