@@ -168,13 +168,6 @@ pub trait AuFramer: Send {
     /// Pousse les octets suivants du flux ; les AU terminées sont ajoutées à `out`. Une AU est
     /// émise quand le premier NAL de la suivante est complet (au code de début d'après).
     fn push(&mut self, data: &[u8], out: &mut Vec<AuBoundary>);
-    /// Discontinuité : l'AU en cours est oubliée sans être émise et le découpeur se
-    /// resynchronise au prochain code de début qui ouvre une AU. Les offsets restent comptés en
-    /// continu.
-    ///
-    /// Le NAL coupé est jugé sur ce qui en a été reçu : s'il ouvre une AU, l'AU précédente est
-    /// complète ; elle est alors émise au prochain `push` ou `finish`.
-    fn gap(&mut self);
     /// Fin du flux : émet la dernière AU.
     fn finish(&mut self, out: &mut Vec<AuBoundary>);
 }

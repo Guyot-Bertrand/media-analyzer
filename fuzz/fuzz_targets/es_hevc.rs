@@ -13,12 +13,8 @@ fuzz_target!(|data: &[u8]| {
     let chunk = usize::from(sel) % 251 + 1;
     let mut f = framer(Codec::Hevc);
     let mut out = Vec::new();
-    for (i, part) in rest.chunks(chunk).enumerate() {
+    for part in rest.chunks(chunk) {
         f.push(part, &mut out);
-        // Une discontinuité de temps en temps, déterminée par le contenu.
-        if part[0] == 0xFF && i % 7 == 0 {
-            f.gap();
-        }
         if out.len() > 4096 {
             out.clear();
         }

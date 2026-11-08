@@ -1,7 +1,7 @@
 //! Cœur du découpeur : codes de début en flux, NAL en cours, AU ouverte.
 //!
 //! Un NAL est jugé quand il est complet, c'est-à-dire au code de début suivant (ou à la fin du
-//! flux, ou à une discontinuité). Seuls ses premiers octets sont gardés : la décision ne dépend
+//! flux). Seuls ses premiers octets sont gardés : la décision ne dépend
 //! donc que de ces octets, jamais du découpage des `push`.
 
 use crate::startcode::zeros_after;
@@ -65,8 +65,6 @@ pub(crate) struct Framer<P> {
     /// Premiers octets du NAL en cours (capacité fixe `MAX_HEADER_BYTES`).
     buf: Vec<u8>,
     au: Option<OpenAu>,
-    /// AU complète trouvée par `gap`, émise au prochain `push` ou `finish`.
-    held: Option<AuBoundary>,
 }
 
 impl<P: NalParser> Framer<P> {
@@ -78,7 +76,6 @@ impl<P: NalParser> Framer<P> {
             pending: None,
             buf: Vec::with_capacity(MAX_HEADER_BYTES),
             au: None,
-            held: None,
         }
     }
 
@@ -137,15 +134,10 @@ impl<P: NalParser> Framer<P> {
             a.has_slice |= matches!(kind, NalKind::FirstSlice | NalKind::Slice);
         }
     }
-
-    fn flush_held(&mut self, out: &mut Vec<AuBoundary>) {
-        out.extend(self.held.take());
-    }
 }
 
 impl<P: NalParser> AuFramer for Framer<P> {
     fn push(&mut self, data: &[u8], out: &mut Vec<AuBoundary>) {
-        self.flush_held(out);
         let mut rest = data;
         while !rest.is_empty() {
             let Some(k) = rest.iter().position(|&b| b == 1) else {
@@ -179,23 +171,7 @@ impl<P: NalParser> AuFramer for Framer<P> {
         }
     }
 
-    fn gap(&mut self) {
-        // Le NAL coupé est jugé sur ce qui en a été reçu : s'il ouvre une AU, l'AU précédente
-        // est complète et sera émise ; l'AU coupée, elle, est oubliée.
-        let mut out = Vec::new();
-        self.end_nal(&mut out);
-        if let Some(done) = out.pop() {
-            self.held = Some(done);
-        }
-        self.buf.clear();
-        self.zeros = 0;
-        if self.au.take().is_some() {
-            let _ = self.parser.take();
-        }
-    }
-
     fn finish(&mut self, out: &mut Vec<AuBoundary>) {
-        self.flush_held(out);
         self.end_nal(out);
         self.buf.clear();
         self.zeros = 0;

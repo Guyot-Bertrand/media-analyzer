@@ -855,95 +855,6 @@ fn boundaries_follow_start_codes() {
 }
 
 #[test]
-fn gap_drops_partial_au_and_resyncs() {
-    let mut nals = vec![h264_sps(MAIN), h264_pps(0, 0)];
-    nals.extend(h264_au(false)); // AU 0 : 0..
-    nals.extend(h264_au(true)); // AU 1 : at[4]..
-    let (first, at) = es(&nals);
-    // Coupure au milieu de la tranche de l'AU 1.
-    let cut = first.len() - 3;
-    // Après la coupure : fin de tranche, tranche qui n'ouvre pas d'AU, puis AU 2.
-    let mut tail = vec![0x55; 20];
-    let mut more = vec![h264_slice(Slice {
-        nal_type: 1,
-        first_mb: 9,
-        kind: 5,
-        ..IDR
-    })];
-    more.extend(h264_au(true));
-    let (rest, rat) = es(&more);
-    tail.extend(&rest);
-    let mut f = framer(Codec::H264);
-    let mut out = Vec::new();
-    f.push(&first[..cut], &mut out);
-    f.gap();
-    f.push(&tail, &mut out);
-    f.finish(&mut out);
-    let base = cut as u64 + 20;
-    let spans: Vec<(u64, u64)> = out.iter().map(|a| (a.start, a.end)).collect();
-    assert_eq!(
-        spans,
-        [(0, at[4]), (base + rat[1], cut as u64 + tail.len() as u64)]
-    );
-    assert_eq!(out[0].meta.rap, RapClass::Idr);
-    assert_eq!(out[1].meta.picture, PictureType::P);
-}
-
-#[test]
-fn gap_keeps_au_completed_by_the_next_opener() {
-    // La coupure tombe dans le NAL qui ouvre l'AU suivante : l'AU précédente est complète et
-    // émise au prochain appel ; l'AU coupée est oubliée.
-    for (codec, nals, opener) in [
-        (
-            Codec::H264,
-            {
-                let mut v = vec![h264_sps(MAIN), h264_pps(0, 0)];
-                v.extend(h264_au(false));
-                v
-            },
-            vec![0x09, 0xF0],
-        ),
-        (
-            Codec::Mpeg2,
-            vec![SH.to_vec(), picture(1), SLICE.to_vec()],
-            picture(2),
-        ),
-    ] {
-        let (mut first, _) = es(&nals);
-        let opener_at = first.len() as u64;
-        first.extend([0, 0, 0, 1]);
-        first.extend(&opener);
-        let mut f = framer(codec);
-        let mut out = Vec::new();
-        f.push(&first, &mut out);
-        assert_eq!(out, Vec::new());
-        f.gap();
-        f.gap();
-        let (second, _) = es(&nals);
-        f.push(&second, &mut out);
-        f.finish(&mut out);
-        let spans: Vec<(u64, u64)> = out.iter().map(|a| (a.start, a.end)).collect();
-        let total = (first.len() + second.len()) as u64;
-        // MPEG-2 : le code de début fait 3 octets, le zéro de tête (`es` écrit `00 00 00 01`)
-        // finit l'unité précédente.
-        let lead = u64::from(codec == Codec::Mpeg2);
-        assert_eq!(
-            spans,
-            [(lead, opener_at + lead), (first.len() as u64 + lead, total)],
-            "{codec:?}"
-        );
-    }
-    // Coupure, puis fin immédiate.
-    let (data, _) = es(&h264_au(false));
-    let mut f = framer(Codec::H264);
-    let mut out = Vec::new();
-    f.push(&data, &mut out);
-    f.gap();
-    f.finish(&mut out);
-    assert_eq!(out, Vec::<AuBoundary>::new());
-}
-
-#[test]
 fn param_set_api() {
     let mut p = ParamSet::EMPTY;
     assert!(p.contains(ParamSet::EMPTY));
@@ -1020,20 +931,17 @@ proptest! {
     fn framers_never_panic(
         codec in codec(),
         data in proptest::collection::vec(byte(), 0..2000),
-        cuts in proptest::collection::vec((1usize..64, any::<bool>()), 1..40),
+        cuts in proptest::collection::vec(1usize..64, 1..40),
     ) {
         let mut f = framer(codec);
         let mut out = Vec::new();
         let mut pos = 0;
-        for &(n, gap) in cuts.iter().cycle() {
+        for &n in cuts.iter().cycle() {
             if pos >= data.len() {
                 break;
             }
             let end = (pos + n).min(data.len());
             f.push(&data[pos..end], &mut out);
-            if gap {
-                f.gap();
-            }
             pos = end;
         }
         f.finish(&mut out);
