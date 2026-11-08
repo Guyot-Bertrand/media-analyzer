@@ -16,7 +16,7 @@
 - Les 5 parseurs ont tourné 10 min chacun sous `cargo-fuzz`, sans plantage (§5).
 - **Mesure NFS non faite** : le banc `tools/nfs-bench/run.sh` est écrit et vérifié (`bash -n`), mais il demande `sudo`. C'est au porteur de le lancer (§7).
 - **Corpus privé vide** : aucun vrai flux broadcast n'a été mesuré. PAFF n'est donc prouvé que sur des flux synthétiques, pas par le décodeur (§4, §6.2).
-- Par rapport à M1, à protocole égal, le saut et les pas sont **15 à 30 % plus lents** (§2.3). La cause n'est pas établie.
+- Par rapport à M1, à protocole égal, le moteur est **12 à 51 % plus lent selon la mesure** (§2.3). La RSS gagne **+93 à +96 Mo en VA-API** et **+78 à +81 Mo en logiciel**. La cause n'est pas établie.
 
 ## 2. Mesures locales
 
@@ -59,13 +59,29 @@ Octets lus, à la fin de l'indexation (identiques dans les 6 exécutions) :
 
 L'indexeur lit 23 208 octets de plus que le fichier : ce sont les lectures de la détection du format, faites avant l'indexation. Le banc ne relève pas les octets lus par la navigation après l'indexation (pendant les scénarios). L'amplification de lecture de la navigation est mesurée à part (§3).
 
-**Exécutions écartées.** Une machine de bureau partagée : un processus `java` occupait en permanence environ un cœur pendant toutes les mesures. Deux séries ont été perturbées par une charge supplémentaire. Elles sont écartées des tableaux ci-dessus, mais leurs chiffres sont donnés ici :
-- 1re série VA-API, charge moyenne d'environ 12 : 1re image 240–246 ms, indexation 5 177–10 822 ms, saut p95 350–414 ms ;
-- 2e série logiciel, exécutions 2 et 3 (charge de 8 et 13 au lancement) : saut p95 826 et 1 067 ms.
+**Séries écartées.** Les mesures ont été faites sur la machine de bureau du porteur, en service.
+- **Charge permanente.** Un processus `java` y prenait en permanence environ un cœur (106–111 % d'un cœur à chaque relevé), avec PyCharm à environ 34 %. Cette charge pèse sur **toutes** les séries, retenues comme écartées. Elle n'avait pas été relevée en M1.
+- **Critère d'écartement**, fixé et appliqué **a posteriori**, après avoir vu les résultats : une série de 3 exécutions est écartée si, d'une exécution à l'autre, le saut p95 ou la durée d'indexation varie de plus de 10 % (max/min > 1,10). Une série retenue est donc homogène ; ce n'est pas une garantie que la machine était au repos.
 
-Deux exécutions de contrôle, machine calme, donnent les mêmes valeurs que le tableau :
-- VA-API sans `--progressive` (indexation complète avant les mesures) : saut p95 277,6 ms ;
-- une 4e exécution VA-API progressive : 1re image 203,5 ms, indexation 4 044 ms, saut p95 276,2 ms.
+Séries retenues (tableau ci-dessus) :
+
+| Série | Saut p95 max/min | Indexation max/min | Charge relevée (moyenne sur 1 min, `/proc/loadavg`) |
+|---|---|---|---|
+| VA-API, 2e série | 1,02 | 1,05 | 4,12 / 3,24 / 2,38 au lancement des exécutions 1, 2 et 3. Ce chiffre inclut la fin de l'exécution précédente et le processus `java`. |
+| Logiciel, 1re série | 1,04 | 1,01 | Non relevée au lancement. Un seul relevé, pendant l'exécution 1 : 12,01. Il inclut le banc lui-même (environ 494 % CPU, décodage logiciel multi-thread) et `java` (111 %). |
+
+Séries écartées (chiffres publiés) :
+
+| Série | Saut p95 | Indexation | max/min | Charge |
+|---|---|---|---|---|
+| VA-API, 1re série | 413,5 / 387,1 / 350,5 ms | 10 822 / 6 717 / 5 177 ms | 1,18 / 2,09 | Non relevée au lancement. |
+| Logiciel, 2e série | 609,1 / 825,5 / 1 067,0 ms | 4 243 / 6 802 / 4 253 ms | 1,75 / 1,60 | 1,69 / 8,24 / 13,32 au lancement ; `java` à 140 % au 2e relevé. |
+
+L'exécution 1 de la 2e série logicielle (609,1 ms, 4 243 ms) concorde avec la 1re série. Elle est écartée avec sa série, par application du critère.
+
+Deux exécutions de contrôle VA-API, faites entre les deux séries, concordent avec la série retenue :
+- sans `--progressive` (indexation complète avant les mesures) : saut p95 277,6 ms ; charge de 7,32 relevée juste après ;
+- une 4e exécution progressive : 1re image 203,5 ms, indexation 4 044 ms, saut p95 276,2 ms ; charge de 4,78 juste après.
 
 Elles concordent aussi avec la mesure de la Tâche 11 (`f956fc9`) : 1re image 216,8 ms, indexation 4 017 ms, saut p95 284 ms.
 
@@ -88,19 +104,23 @@ Le 2e critère de PERF.OPEN.01 (un saut au-delà de la partie indexée attend au
 
 | Mesure | M1 (06 §2.1, source de test) | M2a (`TsAuSource`) | Écart |
 |---|---|---|---|
-| Saut p50 / p95 | 142,6 / 241,7 ms | 159,7–162,0 / 276–282 ms | +12 % / +15 % |
-| Avant p50 / p95 | 9,3 / 10,2 ms | 10,5–10,7 / 13,4–15,0 ms | +15 % / +30–45 % |
-| Arrière max (1er pas) | 335,7 (362,1) ms | 416–492 (421–548) ms | +25–45 % |
-| RSS max | 296 Mo | 389–392 Mo | +93–96 Mo |
-| Logiciel : saut p95 | 473,5 ms | 592–614 ms | +25–30 % |
-| Logiciel : avant, 1er pas | 136,3 ms | 156–164 ms | +15–20 % |
+| Saut p50 | 142,6 ms | 159,7–162,0 ms | +12,0 à +13,6 % |
+| Saut p95 | 241,7 ms | 276,3–281,8 ms | +14,3 à +16,6 % |
+| Avant p50 | 9,3 ms | 10,5–10,7 ms | +12,9 à +15,1 % |
+| Avant p95 | 10,2 ms | 13,4–15,0 ms | +31,4 à +47,1 % |
+| Arrière max | 335,7 ms | 415,8–491,8 ms | +23,9 à +46,5 % |
+| Arrière, 1er pas | 362,1 ms | 421,1–547,7 ms | +16,3 à +51,3 % |
+| RSS max, VA-API | 296 Mo | 389–392 Mo | +93 à +96 Mo |
+| Logiciel : saut p95 | 473,5 ms | 591,8–614,1 ms | +25,0 à +29,7 % |
+| Logiciel : avant, 1er pas | 136,3 ms | 155,6–164,3 ms | +14,2 à +20,5 % |
+| Logiciel : RSS max | 881 Mo | 959–962 Mo | +78 à +81 Mo |
 
 Les écarts dépassent la dispersion des exécutions. **La cause n'est pas établie** : rien n'a été mesuré pour la trouver. Pistes, sans mesure :
-- la charge permanente de la machine (environ un cœur pris par `java` pendant ces mesures ; elle n'a pas été relevée en M1) ;
+- la charge permanente de la machine (environ un cœur pris par `java` pendant toutes ces mesures ; elle n'a pas été relevée en M1) ;
 - le découpage réel des AU et la lecture par le cache de blocs, au lieu de la lecture directe d'un PES ;
-- la mémoire de l'index (62 000 entrées, environ 4,5 Mio) n'explique qu'une petite part des 93 Mo de RSS en plus.
+- la mémoire de l'index (62 000 entrées, environ 4,5 Mio) n'explique qu'une petite part des 78 à 96 Mo de RSS en plus.
 
-Le saut reste sous le seuil de 500 ms avec une marge de 218 ms au moteur. Une analyse (profil du saut, M1 contre M2a, machine calme) est à faire (§7).
+Saut p95 au moteur, VA-API : 276,3–281,8 ms. Seuil de PERF.SEEK.01 : 500 ms, mesuré côté interface. En M1, l'interface ajoutait 15–20 ms au saut moteur (06 §2.2). Une analyse est à faire (§7) : profil du saut, M1 contre M2a, sans la charge permanente.
 
 ### 2.4 Mémoire de l'indexation (PERF.INDEX.02)
 
@@ -110,7 +130,17 @@ Test `indexing_uhd_big_memory_under_200_mib` (`crates/ma-ts/tests/corpus_index.r
 
 Le spike lisait **770 Ko pour une AU de 65 Ko** en moyenne (04 §4, point 5), soit environ 11,8 fois les octets utiles.
 
-En M2a, la navigation lit par le cache de blocs de `ma-io`. Sur disque local : blocs de 1 Mio, 64 blocs en cache, 1 bloc anticipé. Mesure jetable : un programme hors dépôt lit les AU de `uhd_big` par `TsAuSource::read_au` selon trois motifs, puis rapporte `io_stats()` aux octets d'AU rendus. Il ne décode rien : c'est le motif de lecture du navigateur, sans son préchargement.
+En M2a, la navigation lit par le cache de blocs de `ma-io`. Sur disque local : blocs de 1 Mio, 64 blocs en cache, 1 bloc anticipé. Programme `crates/ma-ts/examples/read_amp.rs` (décision R19) : il lit les AU par `TsAuSource::read_au` selon trois motifs à graine fixe, puis rapporte `io_stats()` aux octets d'AU rendus. Il ne décode rien : c'est le motif de lecture du navigateur, sans son préchargement.
+
+```
+cargo run --release -p ma-ts --example read_amp -- ~/media-analyzer-corpus/generated/uhd_big.ts
+```
+
+Deux lancements, sur disque local, cache chaud, donnent des chiffres identiques à l'octet près (graine fixe) :
+- la mesure d'origine ;
+- la relance par le programme versionné.
+
+Sur les petits fichiers du corpus, tout le fichier tient dans le cache de 64 Mio : l'amplification y est inférieure à 1 et ne dit rien.
 
 | Motif | AU lues | Octets d'AU | Octets lus | Lectures | Lus par AU | Amplification |
 |---|---|---|---|---|---|---|
@@ -123,7 +153,7 @@ En M2a, la navigation lit par le cache de blocs de `ma-io`. Sur disque local : b
 - Au saut, chaque saut lit en moyenne 3,1 Mo pour 1,6 Mo d'AU : le GOP partiel plus le bloc anticipé, arrondis au bloc.
 - Une AU isolée coûte un bloc et un bloc anticipé, soit 2 Mio. Ce motif n'arrive pas en navigation, qui décode toujours depuis un point d'accès. C'est la borne haute.
 
-Sur NFS, les blocs passent à 4 Mio et 2 blocs anticipés : l'amplification au saut sera plus forte. Elle n'est pas mesurée (§7).
+Sur NFS, les blocs passent à 4 Mio et 2 blocs anticipés : l'amplification au saut sera plus forte. Elle n'est pas mesurée (§7). La même commande s'y applique, sur `/mnt/ma-nfs/uhd_big.ts`.
 
 Le test `read_amplification_is_bounded` (`crates/ma-ts/tests/source.rs`) vérifie en CI que l'ouverture ne lit rien par le cache, puis que la lecture séquentielle de toutes les AU lit au plus 1,1 fois la taille du fichier plus un bloc.
 
@@ -216,6 +246,9 @@ Effets visibles de R18 :
 - **`open_progressive`** attend la 1re vidéo de la PMT. Si elle n'a jamais d'image, il attend jusqu'à la fin du fichier. Sur un MPTS à PMT tardive, il peut choisir une autre vidéo qu'`open`.
 - **Paquet perdu dans un code de début** (R12) : deux AU peuvent fusionner en une, marquée `damaged`, au lieu d'une AU perdue.
 - **Discontinuité de PTS** (R14) : l'ordre de présentation est trié par segment, et les segments sont mis bout à bout en ordre de décodage.
+- **Lectures après troncature non prouvées pour les images en cache** : les tests montrent qu'une AU au-delà de la coupure est refusée. Ils ne montrent pas qu'une image déjà décodée, servie depuis le cache d'images du Navigator, reste cohérente après la coupure.
+- **Repli silencieux en cours de flux** : si FFmpeg écarte le hwaccel en cours de session (et non à la 1re image), le décodage passe en logiciel sans événement `FellBackToSoftware`. La réouverture multi-thread ne joue qu'à la 1re image.
+- **`CorruptAu` réémis après une réouverture silencieuse** : la réouverture redécode depuis le RAP de départ. Une AU corrompue de cet intervalle émet donc son événement `CorruptAu` une 2e fois.
 
 ## 7. Mesures restant à faire
 
@@ -225,9 +258,15 @@ Effets visibles de R18 :
   tools/nfs-bench/run.sh --truncate
   ```
 
-  Le script fait 3 exécutions en `auto` et 3 en `sw` de `engine_bench --progressive` sur `uhd_big` monté par NFSv4, avec 5 ms de latence (`tc netem`). Les JSON vont dans `target/bench/nfs/<horodatage>/`, à reporter dans la colonne « NFS 5 ms » du §2.2. Le script n'a pas été exécuté (décision R3) : seuls `bash -n` et l'analyse des options ont été vérifiés, shellcheck n'est pas installé sur la machine.
-- **Troncature côté serveur pendant un parcours** (2e critère de PERF.NET.01) : même commande, option `--truncate`. Elle copie `uhd_big`, tronque la copie de moitié côté serveur pendant les sauts, et vérifie que le banc affiche l'erreur sans planter. Pas encore faite. Le niveau `unit` est couvert en CI par `truncation_during_navigation_is_an_error_not_a_crash`.
-- **Amplification de lecture sur NFS** (blocs de 4 Mio, 2 anticipés) : à mesurer avec le même motif que le §3.
+  À lancer en utilisateur normal, **pas** par `sudo run.sh` : le script s'arrête s'il est lancé en root. Le script fait 3 exécutions en `auto` et 3 en `sw` de `engine_bench --progressive` sur `uhd_big` monté par NFSv4, avec 5 ms de latence (`tc netem`). Les JSON vont dans `target/bench/nfs/<horodatage>/`, à reporter dans la colonne « NFS 5 ms » du §2.2. Le script n'a pas été exécuté (décision R3) : seuls `bash -n` et l'analyse des options ont été vérifiés, shellcheck n'est pas installé sur la machine.
+- **Troncature côté serveur pendant un parcours** (2e critère de PERF.NET.01) : même commande, option `--truncate`. Elle copie `uhd_big` et la lit par un 2e montage sans cache d'attributs (`actimeo=0`). Elle tronque la copie de moitié côté serveur pendant les sauts. Le script vérifie que le banc s'arrête sur l'erreur de lecture du fichier tronqué, sans planter ; un parcours fini sans erreur le fait échouer (« troncature non constatée »). Pas encore faite. Le niveau `unit` est couvert en CI par `truncation_during_navigation_is_an_error_not_a_crash`.
+- **Amplification de lecture sur NFS** (blocs de 4 Mio, 2 anticipés) : pendant que le partage est monté par `tools/nfs-bench/run.sh`, lancer la commande du §3 sur le fichier monté :
+
+  ```bash
+  cargo run --release -p ma-ts --example read_amp -- /mnt/ma-nfs/uhd_big.ts
+  ```
+
+  Le script démonte le partage en fin de parcours : il faut lancer cette commande pendant ses mesures, ou en ajoutant une étape au script.
 - **Corpus privé (D7)** : déposer dans `corpus/private/` au moins un HEVC UHD en GOP ouvert et un H.264 1080i (PAFF si possible), puis :
   - structure des GOP (longueurs, CRA, RASL, BLA, champs) en part des images ;
   - `MA_REQUIRE_GPU=1 cargo nextest run -p ma-ffmpeg --features ma-ffmpeg/ffmpeg6 oracle_framemd5_private` ;

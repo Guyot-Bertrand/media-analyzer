@@ -18,6 +18,11 @@ conteneur local, avec une latence simulée de 5 ms. Le script n'est pas lancé p
 
 ## Lancer
 
+**En utilisateur normal, jamais par `sudo tools/nfs-bench/run.sh`.** Le script demande `sudo`
+lui-même, pour les seules commandes privilégiées (`modprobe`, `tc`, `mount`, `umount`). Le corpus,
+`cargo` et `target/` doivent être ceux de l'utilisateur : sous `sudo`, `HOME` vaut `/root`. Lancé
+en root, le script s'arrête (code 2).
+
 ```bash
 tools/nfs-bench/run.sh               # 3 exécutions en auto, 3 en sw
 tools/nfs-bench/run.sh --truncate    # idem, puis le test de troncature
@@ -30,9 +35,13 @@ Options : `--runs N` (défaut 3), `--delay MS` (défaut 5). Variables : `MA_CORP
 
 ## Ce que fait le script
 
-1. Construit `engine_bench` en release, puis demande `sudo -v`.
+1. Construit `engine_bench` en release, puis demande `sudo -v`. L'horodatage de `sudo` expire
+   par défaut au bout de 15 min, avant la fin des mesures : le script le rafraîchit en fond
+   (`sudo -n -v` toutes les 60 s) et arrête ce rafraîchissement au nettoyage. Si `sudo` est
+   configuré sans horodatage (`timestamp_timeout=0`), il redemandera le mot de passe.
 2. Crée un réseau Docker dédié (pont `ma-nfs0`, pour ne pas toucher `docker0`) et lance le
-   conteneur `ma-nfs-server` (`--privileged`) qui exporte `$MA_CORPUS_DIR` en NFSv4.
+   conteneur `ma-nfs-server` (`--privileged`) qui exporte `$MA_CORPUS_DIR` en NFSv4 (dossier
+   monté en lecture seule dans le conteneur).
 3. `tc qdisc add dev ma-nfs0 root netem delay 5ms` : 5 ms sur les paquets de l'hôte vers le
    serveur.
 4. Monte le partage en lecture seule sur `/mnt/ma-nfs` (`vers=4.2`). `ma-io` le voit comme
@@ -40,13 +49,23 @@ Options : `--runs N` (défaut 3), `--delay MS` (défaut 5). Variables : `MA_CORP
 5. Lance `engine_bench --progressive --view fit:1920x1080 --dwell-ms 0` sur
    `/mnt/ma-nfs/uhd_big.ts`, en `auto` puis en `sw`. Sorties texte et JSON dans
    `target/bench/nfs/<horodatage>/`.
-6. Avec `--truncate` : copie `uhd_big.ts` dans `$MA_CORPUS_DIR/nfs-trunc/`, lance le banc
-   sur la copie à travers le montage, attend la fin de l'indexation (ligne
-   `uhd_big : N images …`), puis tronque la copie de moitié **côté serveur** pendant les
-   sauts. Attendu : le banc affiche une erreur (`engine_bench : …`, code 1) et ne plante pas
-   (aucune panique, aucun signal). Le script échoue sinon.
+6. Avec `--truncate` :
+   - crée `$MA_CORPUS_DIR/nfs-trunc/` et y copie `uhd_big.ts`. Le script refuse si ce dossier
+     existe déjà, et ne le retire au nettoyage que s'il l'a créé ;
+   - monte une 2e fois le partage sur `/mnt/ma-nfs-noac`, **sans cache d'attributs**
+     (`actimeo=0,nosharecache`) : la nouvelle taille est vue dès le contrôle suivant de `ma-io` ;
+   - lance le banc sur la copie à travers ce montage et attend la fin de l'indexation (ligne
+     `uhd_big : N images …`) ;
+   - tronque la copie de moitié **côté serveur** pendant les sauts.
+
+   Attendu : le banc s'arrête sur l'erreur de lecture (code 1, ligne
+   `engine_bench : … lecture de la source : fichier tronqué : …`) et ne plante pas. Le script
+   échoue dans trois cas :
+   - le banc panique ou meurt d'un signal (code > 1) ;
+   - le parcours finit sans erreur (code 0, « troncature non constatée ») ;
+   - le code 1 vient d'une autre erreur.
 7. Démonte, retire la règle `tc`, le conteneur, le réseau et la copie, même en cas d'échec ou
-   d'interruption (`trap`).
+   d'interruption (`trap` ; code 130 sur Ctrl-C, 143 sur `TERM`).
 
 ## Résultats à publier
 

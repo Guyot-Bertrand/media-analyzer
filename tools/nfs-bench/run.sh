@@ -13,6 +13,13 @@
 
 set -euo pipefail
 
+# Lancé par « sudo run.sh », HOME vaut /root : le corpus, cargo et target/ ne seraient pas ceux
+# de l'utilisateur. Le script demande sudo lui-même, pour les seules commandes privilégiées.
+if [[ $EUID -eq 0 ]]; then
+    echo "à lancer sans sudo, en utilisateur normal : le script demande sudo lui-même pour les seules commandes privilégiées (cargo, corpus et target/ sont ceux de l'utilisateur)" >&2
+    exit 2
+fi
+
 usage() {
     cat <<'EOF'
 Usage : tools/nfs-bench/run.sh [--runs N] [--delay MS] [--truncate] [--no-bench]
@@ -45,6 +52,10 @@ done
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CORPUS="${MA_CORPUS_DIR:-$HOME/media-analyzer-corpus/generated}"
+if [[ ! -d "$CORPUS" ]]; then
+    echo "corpus introuvable : $CORPUS (MA_CORPUS_DIR ou cargo xtask corpus gen)" >&2
+    exit 1
+fi
 CORPUS="$(cd "$CORPUS" && pwd)"
 FEATURE="${MA_FFMPEG_FEATURE:-ma-ffmpeg/ffmpeg6}"
 IMAGE="${MA_NFS_IMAGE:-itsthenetwork/nfs-server-alpine:12}"
@@ -52,6 +63,7 @@ CONTAINER=ma-nfs-server
 NETWORK=ma-nfs-net
 BRIDGE=ma-nfs0
 MNT=/mnt/ma-nfs
+MNT_NOAC=/mnt/ma-nfs-noac
 TRUNC_SUB=nfs-trunc
 OUT="$REPO/target/bench/nfs/$(date +%Y%m%d-%H%M%S)"
 BENCH_BIN="$REPO/target/release/examples/engine_bench"
@@ -71,33 +83,52 @@ echo "== construction de engine_bench (release, $FEATURE)"
 
 echo "== droits administrateur : sudo est demandé pour modprobe, tc, mount et umount"
 sudo -v
+# L'horodatage de sudo expire (15 min par défaut) avant la fin des mesures : il est
+# rafraîchi en fond, sans invite (sudo -n), et ce rafraîchissement est arrêté au nettoyage.
+( while true; do sudo -n -v 2>/dev/null; sleep 60; done ) &
+SUDO_KEEPALIVE=$!
 
 MOUNTED=0
+MOUNTED_NOAC=0
 QDISC=0
+TRUNC_CREATED=0
 cleanup() {
-    local status=$?
+    local status=${1:-$?}
+    trap - EXIT INT TERM
     set +e
     echo "== nettoyage"
+    if [[ $MOUNTED_NOAC -eq 1 ]]; then
+        sudo umount -f "$MNT_NOAC" || sudo umount -l "$MNT_NOAC"
+        MOUNTED_NOAC=0
+    fi
     if [[ $MOUNTED -eq 1 ]]; then
         sudo umount -f "$MNT" || sudo umount -l "$MNT"
+        MOUNTED=0
     fi
     if [[ $QDISC -eq 1 ]]; then
         sudo tc qdisc del dev "$BRIDGE" root 2>/dev/null
+        QDISC=0
     fi
     docker rm -f "$CONTAINER" >/dev/null 2>&1
     docker network rm "$NETWORK" >/dev/null 2>&1
-    rm -rf "${CORPUS:?}/$TRUNC_SUB"
+    if [[ $TRUNC_CREATED -eq 1 ]]; then
+        rm -rf "${CORPUS:?}/${TRUNC_SUB:?}"
+        TRUNC_CREATED=0
+    fi
+    kill "$SUDO_KEEPALIVE" 2>/dev/null
     exit "$status"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'cleanup 130' INT
+trap 'cleanup 143' TERM
 
-echo "== serveur NFSv4 ($IMAGE) exportant $CORPUS"
+echo "== serveur NFSv4 ($IMAGE) exportant $CORPUS (lecture seule)"
 sudo modprobe nfsd
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 docker network rm "$NETWORK" >/dev/null 2>&1 || true
 docker network create -o "com.docker.network.bridge.name=$BRIDGE" "$NETWORK" >/dev/null
 docker run -d --name "$CONTAINER" --privileged --network "$NETWORK" \
-    -v "$CORPUS:/export" -e SHARED_DIRECTORY=/export "$IMAGE" >/dev/null
+    -v "$CORPUS:/export:ro" -e SHARED_DIRECTORY=/export "$IMAGE" >/dev/null
 IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CONTAINER")"
 echo "   adresse du serveur : $IP"
 
@@ -105,16 +136,22 @@ echo "== latence : tc netem delay ${DELAY_MS}ms sur $BRIDGE"
 sudo tc qdisc add dev "$BRIDGE" root netem delay "${DELAY_MS}ms"
 QDISC=1
 
+# mount_nfs <point de montage> <options supplémentaires> : 30 essais, le temps que le
+# serveur démarre.
+mount_nfs() {
+    sudo mkdir -p "$1"
+    for _ in $(seq 1 30); do
+        if sudo mount -t nfs4 -o "vers=4.2,proto=tcp,port=2049,ro$2" "$IP:/" "$1" 2>/dev/null; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
 echo "== montage $IP:/ sur $MNT"
-sudo mkdir -p "$MNT"
-for _ in $(seq 1 30); do
-    if sudo mount -t nfs4 -o vers=4.2,proto=tcp,port=2049,ro "$IP:/" "$MNT" 2>/dev/null; then
-        MOUNTED=1
-        break
-    fi
-    sleep 1
-done
-[[ $MOUNTED -eq 1 ]] || { echo "montage NFS impossible" >&2; exit 1; }
+mount_nfs "$MNT" "" || { echo "montage NFS impossible" >&2; exit 1; }
+MOUNTED=1
 grep " $MNT " /proc/mounts
 ping -c 3 -q "$IP" | tail -1 || true
 
@@ -132,11 +169,21 @@ fi
 
 if [[ $TRUNCATE -eq 1 ]]; then
     echo "== troncature côté serveur pendant un parcours"
-    mkdir -p "$CORPUS/$TRUNC_SUB"
+    if ! mkdir "$CORPUS/$TRUNC_SUB"; then
+        echo "$CORPUS/$TRUNC_SUB existe déjà : le retirer à la main avant --truncate" >&2
+        exit 1
+    fi
+    TRUNC_CREATED=1
     cp --reflink=auto "$CORPUS/uhd_big.ts" "$CORPUS/$TRUNC_SUB/uhd_big.ts"
+    # Montage sans cache d'attributs (actimeo=0) : la nouvelle taille est vue au contrôle
+    # suivant de ma-io, pas après l'expiration du cache du client. nosharecache : sinon le
+    # noyau réutilise le superbloc (et les options) du 1er montage.
+    echo "== montage $IP:/ sur $MNT_NOAC (actimeo=0)"
+    mount_nfs "$MNT_NOAC" ",actimeo=0,nosharecache" || { echo "montage NFS impossible" >&2; exit 1; }
+    MOUNTED_NOAC=1
     LOG="$OUT/truncate.txt"
     set +e
-    "$BENCH_BIN" --file "$MNT/$TRUNC_SUB/uhd_big.ts" --mode auto --view fit:1920x1080 \
+    "$BENCH_BIN" --file "$MNT_NOAC/$TRUNC_SUB/uhd_big.ts" --mode auto --view fit:1920x1080 \
         --dwell-ms 0 --progressive >"$LOG" 2>&1 &
     PID=$!
     # Le banc écrit « uhd_big : N images … » quand l'indexation est finie, juste avant
@@ -157,7 +204,17 @@ if [[ $TRUNCATE -eq 1 ]]; then
         echo "ÉCHEC : le banc a planté (code $CODE)" >&2
         exit 1
     fi
-    echo "   code de sortie du banc : $CODE (0 = parcours fini, 1 = erreur affichée, sans plantage)"
+    if [[ $CODE -eq 0 ]]; then
+        echo "ÉCHEC : troncature non constatée (le parcours a fini sans erreur)" >&2
+        exit 1
+    fi
+    # Code 1 : il faut aussi que l'erreur soit celle de la lecture du fichier tronqué
+    # (FrameError::Io ⇒ « lecture de la source : fichier tronqué : … »).
+    if ! grep -qE "^engine_bench : .*(lecture de la source|fichier tronqué)" "$LOG"; then
+        echo "ÉCHEC : le banc s'est arrêté sur une autre erreur que la troncature" >&2
+        exit 1
+    fi
+    echo "   troncature constatée : erreur de lecture affichée, sans plantage (code 1)"
 fi
 
 echo "== résultats : $OUT"
