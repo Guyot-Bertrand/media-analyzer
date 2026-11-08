@@ -62,7 +62,7 @@ fn pts_dts_pos_match_ffprobe() {
         let mut compared = 0;
         for (d, p) in (0..src.len()).zip(&packets) {
             let au = src.au_info(d).unwrap();
-            assert_eq!(Some(au.pts), p.pts, "{name} AU {d} : PTS");
+            assert_eq!(Some(au.pts_raw), p.pts, "{name} AU {d} : PTS");
             assert_eq!(au.dts, p.dts, "{name} AU {d} : DTS");
             assert_eq!(src.entry(d).unwrap().pts, au.pts);
             if !split || d == 0 {
@@ -96,7 +96,7 @@ fn picture_types_and_indices_match_ffprobe() {
         let frames = ffprobe_frames(&path);
         assert_eq!(frames.len(), src.len() as usize, "{name}");
         let by_pts: HashMap<i64, u32> = (0..src.len())
-            .map(|d| (src.entry(d).unwrap().pts, d))
+            .map(|d| (src.au_info(d).unwrap().pts_raw, d))
             .collect();
         for (rank, f) in frames.iter().enumerate() {
             let d = by_pts[&f.pts];
@@ -413,7 +413,9 @@ fn ts_source_matches_ffprobe() {
             .collect();
         assert_eq!(src.len() as usize, oracle.len(), "{name} : nombre d'images");
         assert_eq!(src.len(), manifest(name).frames);
-        let ours: Vec<i64> = (0..src.len()).map(|d| src.entry(d).unwrap().pts).collect();
+        let ours: Vec<i64> = (0..src.len())
+            .map(|d| src.au_info(d).unwrap().pts_raw)
+            .collect();
         assert_eq!(ours, oracle, "{name} : PTS en ordre de décodage");
         let mut previous = i64::MIN;
         for p in 0..src.len() {
@@ -515,15 +517,16 @@ fn classification_matches_ffprobe_frame_by_frame() {
         let mut ours = HashSet::new();
         for d in 0..src.len() {
             let e = src.entry(d).unwrap();
-            let expected = match types[&e.pts] {
+            let raw = src.au_info(d).unwrap().pts_raw;
+            let expected = match types[&raw] {
                 'I' => PictureType::I,
                 'P' => PictureType::P,
                 'B' => PictureType::B,
                 other => panic!("{name} : pict_type {other}"),
             };
-            assert_eq!(e.picture, expected, "{name} AU {d} (PTS {})", e.pts);
+            assert_eq!(e.picture, expected, "{name} AU {d} (PTS {raw})");
             if e.rap != RapKind::None {
-                ours.insert(e.pts);
+                ours.insert(raw);
                 assert_eq!(e.picture, PictureType::I, "{name} AU {d}");
                 assert_eq!(
                     e.pres_idx % gop,

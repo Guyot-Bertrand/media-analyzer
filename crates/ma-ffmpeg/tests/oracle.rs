@@ -240,7 +240,8 @@ fn check_framemd5(path: &Path, count: u32) {
     let mut compared = 0;
     for _ in 0..count {
         let pres = rng.below(len);
-        let pts = src.entry(src.decode_idx_of(pres).unwrap()).unwrap().pts;
+        // PTS du flux (celui de `framemd5`), pas celui de l'index (R20).
+        let pts = src.au_info(src.decode_idx_of(pres).unwrap()).unwrap().pts_raw;
         let frame = match nav.frame(pres, whole(full), &never) {
             Ok(f) => f,
             // Image de tête non décodable (fichier coupé) : ffmpeg ne la sort pas non plus.

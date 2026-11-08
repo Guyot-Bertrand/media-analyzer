@@ -48,6 +48,12 @@ pub enum Leading {
 pub struct FrameEntry {
     pub decode_idx: u32,
     pub pres_idx: u32,
+    /// PTS **de l'index** (90 kHz), clé d'identification d'une image sortie du décodeur.
+    ///
+    /// Contrat (R20) : unique dans une source et strictement croissant avec `pres_idx`. Ce n'est
+    /// pas forcément le PTS du flux : une source peut décaler les segments séparés par une
+    /// discontinuité, ou départager des PTS répétés ou estimés. Le PTS à afficher est celui que
+    /// la source expose à part (pour `ma-ts` : `AuInfo::pts_raw`).
     pub pts: i64,
     pub picture: PictureType,
     pub rap: RapKind,

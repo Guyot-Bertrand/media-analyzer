@@ -6,7 +6,7 @@
 //! point d'accès aléatoire donné par [`start_for`]. Pendant le décodage, seules les images d'une
 //! fenêtre autour de la cible sont converties ; les autres sont jetées sans conversion.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::{
@@ -80,6 +80,10 @@ pub enum FrameError {
     Decoder(DecodeError),
     #[error("viewport invalide : {0}")]
     Viewport(ViewportError),
+    /// Deux AU envoyées au décodeur portent le PTS de l'image demandée : l'image sortie sous ce
+    /// PTS ne peut pas être attribuée (index qui viole l'unicité des PTS, R20).
+    #[error("image {pres_idx} : PTS {pts} porté par plusieurs AU, image non identifiable")]
+    DuplicatePts { pres_idx: u32, pts: i64 },
 }
 
 /// Sens de navigation : choisit la fenêtre d'images converties autour de la cible.
@@ -164,6 +168,11 @@ struct Session {
     /// Une AU corrompue a été envoyée au décodeur matériel, sans image sortie ni RAP envoyé
     /// depuis : une erreur `Gpu` d'envoi est alors une AU corrompue (R18).
     after_corrupt: bool,
+    /// `pts` des AU envoyées dont l'image n'est pas encore sortie (au-delà de `last_out`).
+    in_flight: BTreeSet<i64>,
+    /// `pts` envoyés deux fois sans sortie entre-temps, ou au plus `last_out` : l'image sortie
+    /// sous ce `pts` n'est jamais attribuée (R20).
+    ambiguous: BTreeSet<i64>,
 }
 
 impl Session {
@@ -176,7 +185,32 @@ impl Session {
             last_out: None,
             corrupt: HashMap::new(),
             after_corrupt: false,
+            in_flight: BTreeSet::new(),
+            ambiguous: BTreeSet::new(),
         }
+    }
+
+    /// AU de `pts` envoyée : ambiguë si une image de même `pts` est attendue ou déjà sortie.
+    fn sent(&mut self, pts: i64) {
+        let late = self.last_out.is_some_and(|out| pts <= out);
+        if !self.in_flight.insert(pts) || late {
+            self.ambiguous.insert(pts);
+        }
+    }
+
+    /// L'image `pts` peut être attribuée : `pts` non ambigu et au-delà de la dernière sortie
+    /// (le décodeur sort par `pts` croissant ; une image de même `pts` qu'une image déjà sortie
+    /// est la seconde d'un doublon).
+    fn attributable(&self, pts: i64) -> bool {
+        !self.ambiguous.contains(&pts) && self.last_out.is_none_or(|out| pts > out)
+    }
+
+    /// Image `pts` sortie : oublie les `pts` qu'aucune image à venir ne peut plus porter.
+    fn output(&mut self, pts: i64) {
+        self.last_out = Some(pts);
+        let keep = pts.saturating_add(1);
+        self.in_flight = self.in_flight.split_off(&keep);
+        self.ambiguous = self.ambiguous.split_off(&keep);
     }
 }
 
@@ -404,17 +438,32 @@ impl Navigator {
     }
 
     /// `pts` → image des images à convertir : fenêtre autour de la cible, hors images déjà en
-    /// cache (la cible y est toujours).
+    /// cache (la cible y est toujours). Un `pts` porté par plusieurs images de la fenêtre (index
+    /// qui viole R20) n'y reste que pour la cible ; les autres images de ce `pts` ne sont pas
+    /// converties (une AU de même `pts` effectivement envoyée rend la cible ambiguë : voir
+    /// [`Session::sent`]).
     fn window(&self, target: u32, vp: Viewport, dir: Direction) -> HashMap<i64, u32> {
         let last = self.src.len().saturating_sub(1);
         let (lo, hi) = match dir {
             Direction::Backward => (target.saturating_sub(self.cfg.keep_behind), target),
             Direction::Forward => (target, target.saturating_add(self.cfg.keep_ahead).min(last)),
         };
-        (lo..=hi)
-            .filter(|&p| p == target || !self.cache.contains(&(p, vp)))
-            .filter_map(|p| self.entry_of(p).map(|e| (e.pts, p)))
-            .collect()
+        let mut map = HashMap::new();
+        let mut doubled = HashSet::new();
+        for p in (lo..=hi).filter(|&p| p == target || !self.cache.contains(&(p, vp))) {
+            if let Some(e) = self.entry_of(p)
+                && map.insert(e.pts, p).is_some()
+            {
+                doubled.insert(e.pts);
+            }
+        }
+        for pts in doubled {
+            map.remove(&pts);
+        }
+        if let Some(e) = self.entry_of(target) {
+            map.insert(e.pts, target);
+        }
+        map
     }
 
     /// Image demandée, depuis le cache ou le décodeur, sans validation du viewport.
@@ -610,6 +659,7 @@ impl Navigator {
         if entry.rap != RapKind::None {
             s.after_corrupt = false;
         }
+        s.sent(entry.pts);
         match self.decoder.send(entry.pts, &self.buf) {
             Ok(()) => {}
             Err(e) if e.kind == DecodeErrorKind::InvalidData => {
@@ -646,8 +696,19 @@ impl Navigator {
         let missing = |s: &Session| Outcome::Missing {
             corrupt: s.corrupt.get(&target.decode_idx).cloned(),
         };
+        let ambiguous = |s: &Session| {
+            s.ambiguous
+                .contains(&target.pts)
+                .then_some(FrameError::DuplicatePts {
+                    pres_idx: target.pres_idx,
+                    pts: target.pts,
+                })
+        };
         let mut receive_errors = 0;
         loop {
+            if let Some(e) = ambiguous(s) {
+                return Err(e);
+            }
             loop {
                 let received = match self.decoder.receive(&want) {
                     Ok(r) => {
@@ -692,7 +753,7 @@ impl Navigator {
                         full,
                     } => {
                         self.size.get_or_insert(full);
-                        if let Some(&pres_idx) = wanted.get(&pts) {
+                        if let Some(&pres_idx) = wanted.get(&pts).filter(|_| s.attributable(pts)) {
                             let frame = Arc::new(DecodedFrame {
                                 pres_idx,
                                 viewport: vp,
@@ -703,14 +764,14 @@ impl Navigator {
                             });
                             self.cache.insert((pres_idx, vp), Arc::clone(&frame));
                             if pres_idx == target.pres_idx {
-                                s.last_out = Some(pts);
+                                s.output(pts);
                                 return Ok(Outcome::Found(frame));
                             }
                         }
                         pts
                     }
                 };
-                s.last_out = Some(pts);
+                s.output(pts);
                 if pts > target.pts {
                     // Sortie par pts croissant : la cible a été sautée.
                     return Ok(missing(s));
@@ -873,6 +934,50 @@ mod tests {
                 sent <= 14 + 4,
                 "{sent} AU envoyées pour 14 images suivantes"
             );
+        }
+    }
+
+    #[test]
+    fn duplicate_pts_never_serves_a_wrong_frame() {
+        // R20 : l'AU 3 porte le PTS de l'AU 1. Le décodeur factice (sortie par PTS) rend alors
+        // l'image 3 sous ce PTS : elle ne doit jamais être servie comme image 1 (ni l'inverse).
+        let base = FakeSource::closed_gops(1, 8, 0);
+        let dup = base.entry(1).unwrap().pts;
+        let entries: Vec<FrameEntry> = (0..base.len())
+            .map(|d| {
+                let mut e = base.entry(d).unwrap();
+                if d == 3 {
+                    e.pts = dup;
+                }
+                e
+            })
+            .collect();
+        let src = FakeSource::from_entries(base.codec(), entries);
+        for (pres, dir) in [
+            (1, Direction::Backward),
+            (1, Direction::Forward),
+            (3, Direction::Backward),
+            (3, Direction::Forward),
+        ] {
+            let mut f = FakeFactory::new(&src);
+            f.latency = 4;
+            let mut nav = nav_with(f);
+            match nav.prefetch_frame(pres, small(), dir, &never) {
+                Ok(frame) => assert_eq!(
+                    oracle(&frame.image),
+                    Some(pres),
+                    "image {pres} ({dir:?}) : mauvaise image servie"
+                ),
+                Err(e) => assert!(
+                    matches!(e, FrameError::DuplicatePts { pres_idx, .. } if pres_idx == pres),
+                    "image {pres} ({dir:?}) : erreur inattendue {e:?}"
+                ),
+            }
+            // Les images voisines servies restent exactes.
+            for p in [0, 2, 4, 5] {
+                let frame = nav.frame(p, small(), &never).unwrap();
+                assert_eq!(oracle(&frame.image), Some(p), "image {p}");
+            }
         }
     }
 

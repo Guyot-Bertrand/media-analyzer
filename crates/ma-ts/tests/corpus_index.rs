@@ -98,14 +98,14 @@ fn entries(idx: &TsIndex, pid: u16) -> Entries {
     .unwrap_or_default()
 }
 
-/// PTS en ordre de présentation (vérifie au passage que `pres_idx` est une permutation et que
-/// `decode_idx_of` en est l'inverse).
+/// PTS du flux (`pts_raw`, comparables à ceux de `ffprobe`) en ordre de présentation (vérifie
+/// au passage que `pres_idx` est une permutation et que `decode_idx_of` en est l'inverse).
 fn pres_pts(idx: &TsIndex, pid: u16) -> Vec<i64> {
     let e = entries(idx, pid);
     let mut by_pres = vec![None; e.len()];
-    for (f, _) in &e {
+    for (f, a) in &e {
         assert!(by_pres[f.pres_idx as usize].is_none(), "pres_idx en double");
-        by_pres[f.pres_idx as usize] = Some(f.pts);
+        by_pres[f.pres_idx as usize] = Some(a.pts_raw);
         let back = idx
             .with_video(pid, |v| v.decode_idx_of(f.pres_idx))
             .flatten();
@@ -165,7 +165,7 @@ fn index_matches_ffprobe() {
             let real: Vec<i64> = entries(&run.index, pid)
                 .iter()
                 .filter(|(_, a)| !a.pts_estimated)
-                .map(|(f, _)| f.pts)
+                .map(|(_, a)| a.pts_raw)
                 .collect();
             let theirs: Vec<i64> = packets.iter().filter_map(|p| p.pts).collect();
             assert!(same_modulo_wrap(&real, &theirs), "{name}");

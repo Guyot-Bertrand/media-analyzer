@@ -37,6 +37,13 @@
 //!   alors de zéro (un saut de discontinuité n'est pas pris pour un bouclage). Les segments se
 //!   suivent en ordre de décodage ; `pres_idx` est le rang dans (segment, PTS). Un PID qui
 //!   revient repart dans un nouveau segment.
+//! - **PTS de l'index** (R20) : [`FrameEntry::pts`] est unique dans l'index d'un PID et
+//!   strictement croissant avec `pres_idx`. À la publication, chaque segment est décalé pour que
+//!   sa 1re image (en présentation) suive d'une durée d'image (médiane des écarts, 3600 par
+//!   défaut) le dernier PTS publié ; un PTS qui ne dépasserait pas le précédent (PTS réel répété,
+//!   PTS estimé retombé sur un PTS sorti des 256 récents, lot forcé en ordre de décodage) devient
+//!   ce précédent + 1. Le PTS du flux, déroulé dans son segment, reste dans
+//!   [`AuInfo::pts_raw`] (le DTS est dans le même repère) : c'est lui qu'on affiche.
 //! - **Préfixe publié** : L est le plus grand index de décodage d'un RAP r tel qu'un RAP
 //!   postérieur à r soit vu (ou que r ouvre un segment), que `max(PTS de [début du segment de
 //!   r, r)) < min(PTS de [r, fin du segment de r))` et que les `Recovery` de [0, r) soient
@@ -103,9 +110,13 @@ pub struct AuInfo {
     pub end: EsPos,
     /// Octets d'ES de l'entrée.
     pub size: u32,
-    /// PTS déroulé (90 kHz).
+    /// PTS de l'index (90 kHz), égal à [`FrameEntry::pts`] : unique, croissant avec `pres_idx`
+    /// (voir le module). Ce n'est pas le PTS du flux : à ne pas afficher.
     pub pts: i64,
-    /// DTS déroulé ; égal au PTS quand le PES n'en porte pas ; `None` pour un PTS estimé.
+    /// PTS du flux déroulé dans son segment (estimé si `pts_estimated`) : celui qu'on affiche.
+    pub pts_raw: i64,
+    /// DTS déroulé, dans le repère de `pts_raw` ; égal à `pts_raw` quand le PES n'en porte pas ;
+    /// `None` pour un PTS estimé.
     pub dts: Option<i64>,
     pub pts_estimated: bool,
     /// Des octets de l'entrée ont été perdus (rupture de continuité, TEI, brouillage).
@@ -159,12 +170,15 @@ const FLAG_ESTIMATED: u8 = 1;
 const FLAG_DAMAGED: u8 = 2;
 const FLAG_DTS: u8 = 4;
 
-/// Entrée stockée, compacte (72 octets) ; [`AuInfo`] et [`FrameEntry`] en sont tirés.
+/// Entrée stockée, compacte (80 octets) ; [`AuInfo`] et [`FrameEntry`] en sont tirés.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Record {
     start_packet: u64,
     end_packet: u64,
+    /// PTS de l'index (fixé à la publication ; égal à `pts_raw` en attente).
     pts: i64,
+    /// PTS du flux, déroulé dans son segment.
+    pts_raw: i64,
     dts: i64,
     pes_packet: u64,
     packet_index: u64,
@@ -195,6 +209,7 @@ impl Record {
             },
             size: self.size,
             pts: self.pts,
+            pts_raw: self.pts_raw,
             dts: (self.flags & FLAG_DTS != 0).then_some(self.dts),
             pts_estimated: self.flags & FLAG_ESTIMATED != 0,
             damaged: self.flags & FLAG_DAMAGED != 0,
@@ -281,6 +296,13 @@ impl VideoIndex {
     #[must_use]
     pub fn decode_idx_of(&self, pres_idx: u32) -> Option<u32> {
         self.by_pres.get(usize::try_from(pres_idx).ok()?).copied()
+    }
+
+    /// Plus grand PTS de l'index publié (celui de la dernière image en présentation).
+    #[must_use]
+    pub fn last_pts(&self) -> Option<i64> {
+        let d = *self.by_pres.last()?;
+        self.record(d).map(|r| r.pts)
     }
 
     fn record(&self, decode_idx: u32) -> Option<&Record> {
@@ -537,13 +559,18 @@ struct EntryBuilder {
     seg_max: Option<i64>,
     /// Un `discontinuity_indicator` du PCR attend le prochain RAP.
     discontinuity: bool,
-    /// Segment de la dernière entrée publiée et PTS maximal publié dans ce segment.
+    /// Segment de la dernière entrée publiée et PTS (du flux) maximal publié dans ce segment.
     published_seg: u32,
     published_max: Option<i64>,
+    /// Dernier PTS de l'index publié (R20 : les suivants le dépassent).
+    last_pts: Option<i64>,
+    /// Segment en cours de publication et son décalage (PTS de l'index − PTS du flux).
+    offset: Option<(u32, i64)>,
 }
 
 impl EntryBuilder {
-    fn new(pid: u16, codec: Codec, base: u32) -> Self {
+    /// `last_pts` : dernier PTS de l'index déjà publié pour ce PID (PID qui revient).
+    fn new(pid: u16, codec: Codec, base: u32, last_pts: Option<i64>) -> Self {
         EntryBuilder {
             pid,
             codec,
@@ -562,6 +589,8 @@ impl EntryBuilder {
             discontinuity: false,
             published_seg: 0,
             published_max: None,
+            last_pts,
+            offset: None,
         }
     }
 
@@ -598,14 +627,19 @@ impl EntryBuilder {
         opposite && same_frame && a.es_end == b.es_start
     }
 
-    fn estimate_pts(&self) -> i64 {
-        let step = if self.diffs.is_empty() {
+    /// Durée d'image : médiane des derniers écarts positifs de PTS, 3600 à défaut.
+    fn step(&self) -> i64 {
+        if self.diffs.is_empty() {
             DEFAULT_PTS_STEP
         } else {
             let mut d: Vec<i64> = self.diffs.iter().copied().collect();
             d.sort_unstable();
             d[d.len() / 2]
-        };
+        }
+    }
+
+    fn estimate_pts(&self) -> i64 {
+        let step = self.step();
         let mut pts = self.prev_pts.map_or(0, |(p, _)| p.saturating_add(step));
         while self.recent.contains(pts) {
             pts += 1;
@@ -788,6 +822,7 @@ impl EntryBuilder {
             start_packet: first.start.packet_offset,
             end_packet: last.end.packet_offset,
             pts,
+            pts_raw: pts,
             dts: dts.unwrap_or(0),
             pes_packet: first.pes_packet,
             packet_index: first.packet_index,
@@ -830,7 +865,7 @@ impl EntryBuilder {
             if p.get(i + 1).is_some_and(|n| n.seg != p[i].seg) {
                 cur = i64::MAX;
             }
-            cur = cur.min(p[i].rec.pts);
+            cur = cur.min(p[i].rec.pts_raw);
             suffix_min[i] = cur;
         }
         let mut prefix_max = match p.first() {
@@ -850,7 +885,7 @@ impl EntryBuilder {
             if k > 0 && need <= k && p[k].is_rap() && later_rap && prefix_max < suffix_min[k] {
                 best = Some(k);
             }
-            prefix_max = prefix_max.max(p[k].rec.pts);
+            prefix_max = prefix_max.max(p[k].rec.pts_raw);
             if let Some(rc) = p[k].recovery {
                 match rc.r {
                     Some(r) => {
@@ -918,6 +953,30 @@ impl EntryBuilder {
             && self.pending_bytes - taken < MAX_PENDING_BYTES / 2
     }
 
+    /// PTS de l'index (R20) des entrées d'un lot, parcourues dans l'ordre de présentation
+    /// `order` : décalage du segment, puis au moins le PTS précédent + 1.
+    fn index_pts(&mut self, batch: &mut [PendingEntry], order: &[usize]) {
+        let step = self.step();
+        for &i in order {
+            let e = &mut batch[i];
+            let offset = match self.offset {
+                Some((seg, off)) if seg == e.seg => off,
+                _ => {
+                    // 1re image d'un segment : une durée d'image après le dernier PTS publié.
+                    let off = self.last_pts.map_or(0, |m| {
+                        m.saturating_add(step).saturating_sub(e.rec.pts_raw)
+                    });
+                    self.offset = Some((e.seg, off));
+                    off
+                }
+            };
+            let pts = e.rec.pts_raw.saturating_add(offset);
+            let pts = self.last_pts.map_or(pts, |m| pts.max(m.saturating_add(1)));
+            e.rec.pts = pts;
+            self.last_pts = Some(pts);
+        }
+    }
+
     /// Publie les `k` premières entrées en attente ; `by_pts` : rang de présentation par
     /// (segment, PTS), sinon rang de décodage.
     fn take(&mut self, k: usize, by_pts: bool) -> Option<Batch> {
@@ -927,7 +986,7 @@ impl EntryBuilder {
         let mut batch: Vec<PendingEntry> = self.pending.drain(..k).collect();
         let mut order: Vec<usize> = (0..k).collect();
         if by_pts {
-            order.sort_by_key(|&i| (batch[i].seg, batch[i].rec.pts, i));
+            order.sort_by_key(|&i| (batch[i].seg, batch[i].rec.pts_raw, i));
         }
         let base = self.base;
         let to_u32 = |i: usize| base + u32::try_from(i).unwrap_or(u32::MAX);
@@ -936,6 +995,7 @@ impl EntryBuilder {
             batch[i].rec.pres_idx = to_u32(rank);
             by_pres.push(to_u32(i));
         }
+        self.index_pts(&mut batch, &order);
         let end = to_u32(k);
         for i in 0..k {
             if let Some(rc) = batch[i].recovery {
@@ -957,7 +1017,7 @@ impl EntryBuilder {
             let max = batch
                 .iter()
                 .filter(|e| e.seg == seg)
-                .map(|e| e.rec.pts)
+                .map(|e| e.rec.pts_raw)
                 .max();
             self.published_max = if seg == self.published_seg {
                 self.published_max.max(max)
@@ -1031,7 +1091,7 @@ struct Track {
 }
 
 impl Track {
-    fn new(pid: u16, codec: Codec, base: u32) -> Self {
+    fn new(pid: u16, codec: Codec, base: u32, last_pts: Option<i64>) -> Self {
         Track {
             pid,
             codec,
@@ -1044,7 +1104,7 @@ impl Track {
             gaps: VecDeque::new(),
             out: Vec::new(),
             last_end: 0,
-            builder: EntryBuilder::new(pid, codec, base),
+            builder: EntryBuilder::new(pid, codec, base, last_pts),
         }
     }
 
@@ -1355,6 +1415,7 @@ impl<'o> Indexer<'o> {
                 // PTS (`ts-pts-discontinuity`).
                 Some(i) if sh.videos[i].codec == codec && self.tracks[i].is_none() => {
                     let base = sh.videos[i].published();
+                    let last_pts = sh.videos[i].last_pts();
                     sink.push(
                         Message::new(
                             &PTS_DISCONTINUITY,
@@ -1366,14 +1427,14 @@ impl<'o> Indexer<'o> {
                         .pid(pid)
                         .frame(base),
                     );
-                    self.tracks[i] = Some(Track::new(pid, codec, base));
+                    self.tracks[i] = Some(Track::new(pid, codec, base, last_pts));
                     self.slot[p] = u16::try_from(i + 1).unwrap_or(0);
                 }
                 // Même PID, autre codec : non indexé (un PID n'a qu'un index).
                 Some(_) => {}
                 None => {
                     sh.videos.push(VideoIndex::new(pid, codec));
-                    self.tracks.push(Some(Track::new(pid, codec, 0)));
+                    self.tracks.push(Some(Track::new(pid, codec, 0, None)));
                     self.slot[p] = u16::try_from(self.tracks.len()).unwrap_or(0);
                 }
             }
@@ -1768,6 +1829,9 @@ mod tests {
         assert!(size_of::<AuInfo>() <= 96, "{}", size_of::<AuInfo>());
         // Entrée stockée (AuInfo + FrameEntry compactés) : sous 96 octets aussi.
         assert!(size_of::<Record>() <= 96, "{}", size_of::<Record>());
+        // Tailles citées par 07 §6.5 (croissance de l'index avec la durée).
+        assert_eq!(size_of::<Record>(), 80);
+        assert_eq!(size_of::<PcrSample>(), 32);
     }
 
     #[test]
@@ -1985,7 +2049,7 @@ mod tests {
             (27, RapClass::None, true, P),
             (30, RapClass::Idr, true, I),
         ];
-        let mut b = EntryBuilder::new(0x100, Codec::H264, 0);
+        let mut b = EntryBuilder::new(0x100, Codec::H264, 0, None);
         let mut sink = VecSink::default();
         let mut feed = |b: &mut EntryBuilder, range: std::ops::Range<usize>| {
             for i in range {
@@ -2022,7 +2086,7 @@ mod tests {
 
     #[test]
     fn unresolved_recovery_spans_to_the_end() {
-        let mut b = EntryBuilder::new(0x100, Codec::H264, 0);
+        let mut b = EntryBuilder::new(0x100, Codec::H264, 0, None);
         let mut sink = VecSink::default();
         let rec = RapClass::Recovery { frame_cnt: 100 };
         b.push(rau(0, Some(0), meta(rec, true, PictureType::I)), &mut sink);
@@ -2084,7 +2148,7 @@ mod tests {
             (Codec::Hevc, RapClass::Bla, RapKind::Bla, Leading::None),
         ];
         for (codec, class, kind, leading) in cases {
-            let mut b = EntryBuilder::new(0x100, codec, 0);
+            let mut b = EntryBuilder::new(0x100, codec, 0, None);
             let mut sink = VecSink::default();
             b.push(rau(0, Some(100), meta(class, true, I)), &mut sink);
             b.push(rau(1, Some(50), meta(RapClass::None, false, B)), &mut sink);
@@ -2101,7 +2165,7 @@ mod tests {
             );
         }
         // HEVC : d'après le type de NAL.
-        let mut b = EntryBuilder::new(0x100, Codec::Hevc, 0);
+        let mut b = EntryBuilder::new(0x100, Codec::Hevc, 0, None);
         let mut sink = VecSink::default();
         b.push(rau(0, Some(100), meta(RapClass::Cra, true, I)), &mut sink);
         for (i, l) in [NalLeading::Skippable, NalLeading::Decodable]
@@ -2122,7 +2186,7 @@ mod tests {
 
     #[test]
     fn estimated_pts_use_the_median_step_and_stay_unique() {
-        let mut b = EntryBuilder::new(0x100, Codec::H264, 0);
+        let mut b = EntryBuilder::new(0x100, Codec::H264, 0, None);
         let mut sink = VecSink::default();
         let p = |rap| meta(rap, true, PictureType::P);
         // Écarts positifs entre PTS réels consécutifs : 3000, 3000, 6000 ⇒ médiane 3000.
@@ -2146,14 +2210,14 @@ mod tests {
         assert_eq!(sink.messages.len(), 2);
         assert_eq!(sink.messages[0].decode_idx, Some(5));
         // Sans AU précédente : 0.
-        let mut b = EntryBuilder::new(0x100, Codec::H264, 0);
+        let mut b = EntryBuilder::new(0x100, Codec::H264, 0, None);
         b.push(rau(0, None, p(RapClass::None)), &mut sink);
         assert_eq!(b.publish(true).unwrap().records[0].pts, 0);
     }
 
     #[test]
     fn dts_follows_pts_across_the_wrap() {
-        let mut b = EntryBuilder::new(0x100, Codec::H264, 0);
+        let mut b = EntryBuilder::new(0x100, Codec::H264, 0, None);
         let mut sink = VecSink::default();
         let top = (1u64 << 33) - 1000;
         let mut a = rau(0, Some(top), meta(RapClass::Idr, true, PictureType::I));
@@ -2177,7 +2241,7 @@ mod tests {
 
     #[test]
     fn h264_fields_pair_on_the_same_frame_num() {
-        let mut b = EntryBuilder::new(0x100, Codec::H264, 0);
+        let mut b = EntryBuilder::new(0x100, Codec::H264, 0, None);
         let mut sink = VecSink::default();
         let field = |f, n, rap| AuMeta {
             field: f,
@@ -2390,7 +2454,7 @@ mod tests {
 
     #[test]
     fn pts_discontinuity_opens_a_segment() {
-        let mut b = EntryBuilder::new(0x100, Codec::H264, 0);
+        let mut b = EntryBuilder::new(0x100, Codec::H264, 0, None);
         let mut sink = VecSink::default();
         let a0 = 1_000_000;
         for g in 0..3 {
@@ -2410,7 +2474,9 @@ mod tests {
         let more = b.publish(false).unwrap();
         let pres: Vec<u32> = more.records.iter().map(|r| r.pres_idx).collect();
         assert_eq!(pres, (15..20).collect::<Vec<_>>());
-        assert_eq!(more.records[0].pts, b0 as i64);
+        // R20 : PTS du flux gardé ; PTS de l'index une image après la fin de A.
+        assert_eq!(more.records[0].pts_raw, b0 as i64);
+        assert_eq!(more.records[0].pts, a0 as i64 + 2 * 18_000 + 4 * 3600 + 3600);
         let rest = b.publish(true).unwrap();
         assert_eq!(rest.by_pres, (20..30).collect::<Vec<_>>());
         let n = sink
@@ -2424,7 +2490,7 @@ mod tests {
 
     #[test]
     fn segment_closes_unresolved_recovery() {
-        let mut b = EntryBuilder::new(0x100, Codec::H264, 0);
+        let mut b = EntryBuilder::new(0x100, Codec::H264, 0, None);
         let mut sink = VecSink::default();
         let rec = RapClass::Recovery { frame_cnt: 50 };
         b.push(
@@ -2482,7 +2548,8 @@ mod tests {
         let e = all(&idx, PID);
         assert_eq!(e.len(), 16);
         assert!(e.iter().all(|(f, _)| f.pres_idx == f.decode_idx));
-        assert_eq!(e[8].0.pts, 100_000);
+        assert_eq!(e[8].1.pts_raw, 100_000);
+        assert_eq!(e[8].0.pts, 1_000_000 + 3600 * 8);
         let n = sink
             .messages
             .iter()
@@ -2539,6 +2606,83 @@ mod tests {
         );
     }
 
+    /// PTS des entrées en ordre de présentation.
+    fn pts_by_pres(records: &[Record]) -> Vec<i64> {
+        let mut r: Vec<&Record> = records.iter().collect();
+        r.sort_by_key(|r| r.pres_idx);
+        r.iter().map(|r| r.pts).collect()
+    }
+
+    #[test]
+    fn published_pts_are_unique_and_increasing() {
+        // R20 : un PTS réel répété et un PTS estimé qui retombe sur un PTS sorti des 256 récents.
+        let mut b = EntryBuilder::new(0x100, Codec::H264, 0, None);
+        let mut sink = VecSink::default();
+        let n = 300;
+        b.push(
+            rau(0, Some(0), meta(RapClass::Idr, true, PictureType::I)),
+            &mut sink,
+        );
+        for i in 1..n {
+            b.push(
+                rau(i, Some(3600 * i), meta(RapClass::None, true, PictureType::P)),
+                &mut sink,
+            );
+        }
+        // PTS de l'AU 1, puis une AU sans PTS estimée à 3600 + 3600 (PTS de l'AU 2).
+        b.push(
+            rau(n, Some(3600), meta(RapClass::None, true, PictureType::P)),
+            &mut sink,
+        );
+        b.push(
+            rau(n + 1, None, meta(RapClass::None, true, PictureType::P)),
+            &mut sink,
+        );
+        let all = b.publish(true).unwrap();
+        let pts = pts_by_pres(&all.records);
+        assert!(
+            pts.windows(2).all(|w| w[0] < w[1]),
+            "PTS non strictement croissants en présentation"
+        );
+    }
+
+    #[test]
+    fn segments_get_unique_pts() {
+        // R20 : après une discontinuité (PCR), le flux reprend les mêmes PTS ; l'index les
+        // décale au-delà du segment précédent et garde le PTS du flux à part.
+        const PID: u16 = 0x100;
+        let mut ts = Ts::default();
+        ts.tables(0, PID, PID);
+        let stream_pts = |i: u64| 3600 * (i % 4 + 1);
+        for i in 0..4u64 {
+            ts.pes(PID, stream_pts(i), &au(if i % 2 == 0 { 1 } else { 2 }, 3), 184);
+        }
+        let af = AfSpec {
+            discontinuity: true,
+            random_access: false,
+            pcr: Some(Pcr { base: 50, ext: 0 }),
+        };
+        let cc = ts.next_cc(PID, 0);
+        ts.packets.push(packet(PID, false, cc, Some(af), &[]));
+        for i in 4..8u64 {
+            ts.pes(PID, stream_pts(i), &au(if i % 2 == 0 { 1 } else { 2 }, 3), 184);
+        }
+        let (idx, _, r, _) = run(ts.bytes());
+        r.unwrap();
+        let e = all(&idx, PID);
+        assert_eq!(e.len(), 8);
+        let mut by_pres: Vec<(u32, i64)> = e.iter().map(|(f, _)| (f.pres_idx, f.pts)).collect();
+        by_pres.sort_unstable();
+        assert!(
+            by_pres.windows(2).all(|w| w[0].1 < w[1].1),
+            "PTS non uniques ou non croissants : {by_pres:?}"
+        );
+        let raw: Vec<i64> = e.iter().map(|(_, a)| a.pts_raw).collect();
+        let expected: Vec<i64> = (0..8u64).map(|i| stream_pts(i) as i64).collect();
+        assert_eq!(raw, expected, "PTS du flux");
+        assert!(e.iter().all(|(f, a)| f.pts == a.pts));
+    }
+
     /// Paquets bruts → piste (comme l'indexeur, coupe forcée comprise) ; rend les lots forcés.
     fn feed_track(t: &mut Track, packets: &[[u8; 188]], sink: &mut VecSink) -> Vec<Batch> {
         let mut forced = Vec::new();
@@ -2559,7 +2703,7 @@ mod tests {
 
     #[test]
     fn empty_pes_and_gaps_are_bounded() {
-        let mut t = Track::new(0x100, Codec::Mpeg2, 0);
+        let mut t = Track::new(0x100, Codec::Mpeg2, 0, None);
         let mut sink = VecSink::default();
         // 10 000 PES sans octet d'ES, compteur qui saute de 2 à chaque paquet (un trou chacun).
         let packets: Vec<[u8; 188]> = (0..10_000u64)
@@ -2583,7 +2727,7 @@ mod tests {
             ts.pes(PID, 3600 * (i + 1), &frame, 184);
         }
         // Piste seule : attente bornée, lots forcés en ordre de décodage.
-        let mut track = Track::new(PID, Codec::Mpeg2, 0);
+        let mut track = Track::new(PID, Codec::Mpeg2, 0, None);
         let mut sink = VecSink::default();
         let forced = feed_track(&mut track, &ts.packets, &mut sink);
         assert!(!forced.is_empty());
@@ -2612,7 +2756,7 @@ mod tests {
 
     #[test]
     fn huge_recovery_frame_cnt_is_bounded() {
-        let mut b = EntryBuilder::new(0x100, Codec::H264, 0);
+        let mut b = EntryBuilder::new(0x100, Codec::H264, 0, None);
         let mut sink = VecSink::default();
         let rec = RapClass::Recovery { frame_cnt: 65_535 };
         b.push(rau(0, Some(0), meta(rec, true, PictureType::I)), &mut sink);
@@ -2641,7 +2785,7 @@ mod tests {
     fn forced_tries_the_normal_cut_first() {
         // Flux sain (GOP de 5) jamais publié périodiquement : au plafond, préfixe normal, sans
         // message, rangs de présentation par PTS.
-        let mut b = EntryBuilder::new(0x100, Codec::H264, 0);
+        let mut b = EntryBuilder::new(0x100, Codec::H264, 0, None);
         let mut sink = VecSink::default();
         let mut published = 0;
         for g in 0..(MAX_PENDING as u64 / 5 + 2) {
@@ -2701,7 +2845,7 @@ mod tests {
 
     #[test]
     fn tiny_normal_cut_at_the_ceiling_is_refused() {
-        let mut b = EntryBuilder::new(0x100, Codec::H264, 0);
+        let mut b = EntryBuilder::new(0x100, Codec::H264, 0, None);
         let mut sink = VecSink::default();
         let (i, p) = (PictureType::I, PictureType::P);
         // Seul le RAP n° 2 passe la règle du préfixe : l'AU 3 (PTS 100 000) dépasse toutes les
