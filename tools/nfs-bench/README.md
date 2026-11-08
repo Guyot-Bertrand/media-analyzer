@@ -56,14 +56,21 @@ Options : `--runs N` (défaut 3), `--delay MS` (défaut 5). Variables : `MA_CORP
      (`actimeo=0,nosharecache`) : la nouvelle taille est vue dès le contrôle suivant de `ma-io` ;
    - lance le banc sur la copie à travers ce montage et attend la fin de l'indexation (ligne
      `uhd_big : N images …`) ;
-   - tronque la copie de moitié **côté serveur** pendant les sauts.
+   - tronque la copie de moitié **côté serveur** pendant les sauts. Si l'indexation n'est pas
+     finie au bout de 300 s, le script l'annonce (« indexation non finie en 300 s ») et tronque
+     quand même, donc pendant l'indexation.
 
    Attendu : le banc s'arrête sur l'erreur de lecture (code 1, ligne
    `engine_bench : … lecture de la source : fichier tronqué : …`) et ne plante pas. Le script
    échoue dans trois cas :
    - le banc panique ou meurt d'un signal (code > 1) ;
    - le parcours finit sans erreur (code 0, « troncature non constatée ») ;
-   - le code 1 vient d'une autre erreur.
+   - le code 1 vient d'une autre erreur d'E/S (EIO, ESTALE…) : le script cite la ligne
+     d'erreur.
+
+   Une erreur `fichier modifié` (`IoError::Modified`) est acceptée, car PERF.NET.01 n'exige
+   qu'une erreur sans plantage. Le script l'annonce à part : « modification constatée,
+   acceptée par PERF.NET.01 ».
 7. Démonte, retire la règle `tc`, le conteneur, le réseau et la copie, même en cas d'échec ou
    d'interruption (`trap` ; code 130 sur Ctrl-C, 143 sur `TERM`).
 

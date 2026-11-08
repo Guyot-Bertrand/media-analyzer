@@ -120,7 +120,9 @@ Les écarts dépassent la dispersion des exécutions. **La cause n'est pas étab
 - le découpage réel des AU et la lecture par le cache de blocs, au lieu de la lecture directe d'un PES ;
 - la mémoire de l'index (62 000 entrées, environ 4,5 Mio) n'explique qu'une petite part des 78 à 96 Mo de RSS en plus.
 
-Saut p95 au moteur, VA-API : 276,3–281,8 ms. Seuil de PERF.SEEK.01 : 500 ms, mesuré côté interface. En M1, l'interface ajoutait 15–20 ms au saut moteur (06 §2.2). Une analyse est à faire (§7) : profil du saut, M1 contre M2a, sans la charge permanente.
+Saut p95 au moteur, VA-API : 276,3–281,8 ms. Seuil de PERF.SEEK.01 : 500 ms, mesuré côté interface. En M1, l'interface ajoutait au saut moteur :
+- 15–20 ms au p50 ;
+- au p95, à intervalle 0 (06 §2.1 et §2.2) : +21 à +24 ms sous Wayland (263–266 ms contre 241,7 ms) et +28 à +31 ms sous Xvfb (270–273 ms). Une analyse est à faire (§7) : profil du saut, M1 contre M2a, sans la charge permanente.
 
 ### 2.4 Mémoire de l'indexation (PERF.INDEX.02)
 
@@ -259,7 +261,7 @@ Effets visibles de R18 :
   ```
 
   À lancer en utilisateur normal, **pas** par `sudo run.sh` : le script s'arrête s'il est lancé en root. Le script fait 3 exécutions en `auto` et 3 en `sw` de `engine_bench --progressive` sur `uhd_big` monté par NFSv4, avec 5 ms de latence (`tc netem`). Les JSON vont dans `target/bench/nfs/<horodatage>/`, à reporter dans la colonne « NFS 5 ms » du §2.2. Le script n'a pas été exécuté (décision R3) : seuls `bash -n` et l'analyse des options ont été vérifiés, shellcheck n'est pas installé sur la machine.
-- **Troncature côté serveur pendant un parcours** (2e critère de PERF.NET.01) : même commande, option `--truncate`. Elle copie `uhd_big` et la lit par un 2e montage sans cache d'attributs (`actimeo=0`). Elle tronque la copie de moitié côté serveur pendant les sauts. Le script vérifie que le banc s'arrête sur l'erreur de lecture du fichier tronqué, sans planter ; un parcours fini sans erreur le fait échouer (« troncature non constatée »). Pas encore faite. Le niveau `unit` est couvert en CI par `truncation_during_navigation_is_an_error_not_a_crash`.
+- **Troncature côté serveur pendant un parcours** (2e critère de PERF.NET.01) : même commande, option `--truncate`. Elle copie `uhd_big` et la lit par un 2e montage sans cache d'attributs (`actimeo=0`). Elle tronque la copie de moitié côté serveur pendant les sauts. Le script vérifie que le banc s'arrête sur l'erreur `fichier tronqué`, sans planter. Il accepte aussi `fichier modifié`, que PERF.NET.01 admet, et l'annonce par un message distinct. Il échoue si le parcours finit sans erreur (« troncature non constatée ») ou sur toute autre erreur d'E/S (EIO, ESTALE…), qu'il cite. Pas encore faite. Le niveau `unit` est couvert en CI par `truncation_during_navigation_is_an_error_not_a_crash`.
 - **Amplification de lecture sur NFS** (blocs de 4 Mio, 2 anticipés) : pendant que le partage est monté par `tools/nfs-bench/run.sh`, lancer la commande du §3 sur le fichier monté :
 
   ```bash

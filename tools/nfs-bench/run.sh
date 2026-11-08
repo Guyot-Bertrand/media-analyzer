@@ -83,11 +83,8 @@ echo "== construction de engine_bench (release, $FEATURE)"
 
 echo "== droits administrateur : sudo est demandé pour modprobe, tc, mount et umount"
 sudo -v
-# L'horodatage de sudo expire (15 min par défaut) avant la fin des mesures : il est
-# rafraîchi en fond, sans invite (sudo -n), et ce rafraîchissement est arrêté au nettoyage.
-( while true; do sudo -n -v 2>/dev/null; sleep 60; done ) &
-SUDO_KEEPALIVE=$!
 
+SUDO_KEEPALIVE=""
 MOUNTED=0
 MOUNTED_NOAC=0
 QDISC=0
@@ -115,12 +112,31 @@ cleanup() {
         rm -rf "${CORPUS:?}/${TRUNC_SUB:?}"
         TRUNC_CREATED=0
     fi
-    kill "$SUDO_KEEPALIVE" 2>/dev/null
+    if [[ -n $SUDO_KEEPALIVE ]]; then
+        kill "$SUDO_KEEPALIVE" 2>/dev/null
+        wait "$SUDO_KEEPALIVE" 2>/dev/null
+        SUDO_KEEPALIVE=""
+    fi
     exit "$status"
 }
 trap cleanup EXIT
 trap 'cleanup 130' INT
 trap 'cleanup 143' TERM
+
+# L'horodatage de sudo expire (15 min par défaut) avant la fin des mesures : il est
+# rafraîchi en fond, sans invite (sudo -n), après la pose du trap. Le sous-shell attend son
+# `sleep` par `wait`, que le signal interrompt : son trap tue alors ce `sleep`, sans orphelin.
+(
+    trap 'kill "$nap" 2>/dev/null; exit 0' TERM
+    nap=""
+    while true; do
+        sudo -n -v 2>/dev/null || true
+        sleep 60 &
+        nap=$!
+        wait "$nap" || true
+    done
+) &
+SUDO_KEEPALIVE=$!
 
 echo "== serveur NFSv4 ($IMAGE) exportant $CORPUS (lecture seule)"
 sudo modprobe nfsd
@@ -169,8 +185,12 @@ fi
 
 if [[ $TRUNCATE -eq 1 ]]; then
     echo "== troncature côté serveur pendant un parcours"
-    if ! mkdir "$CORPUS/$TRUNC_SUB"; then
+    if [[ -e "$CORPUS/$TRUNC_SUB" ]]; then
         echo "$CORPUS/$TRUNC_SUB existe déjà : le retirer à la main avant --truncate" >&2
+        exit 1
+    fi
+    if ! ERR="$(mkdir "$CORPUS/$TRUNC_SUB" 2>&1)"; then
+        echo "création de $CORPUS/$TRUNC_SUB impossible : $ERR" >&2
         exit 1
     fi
     TRUNC_CREATED=1
@@ -188,11 +208,22 @@ if [[ $TRUNCATE -eq 1 ]]; then
     PID=$!
     # Le banc écrit « uhd_big : N images … » quand l'indexation est finie, juste avant
     # les sauts : la troncature tombe donc pendant le parcours.
+    INDEXED=0
     for _ in $(seq 1 600); do
-        grep -q "^uhd_big : " "$LOG" && break
+        if grep -q "^uhd_big : " "$LOG"; then
+            INDEXED=1
+            break
+        fi
         kill -0 "$PID" 2>/dev/null || break
         sleep 0.5
     done
+    if [[ $INDEXED -eq 0 ]]; then
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "   indexation non finie en 300 s : troncature pendant l'indexation"
+        else
+            echo "   le banc s'est arrêté avant la fin de l'indexation"
+        fi
+    fi
     SIZE="$(stat -c %s "$CORPUS/$TRUNC_SUB/uhd_big.ts")"
     truncate -s "$((SIZE / 2))" "$CORPUS/$TRUNC_SUB/uhd_big.ts"
     echo "   tronqué côté serveur à $((SIZE / 2)) octets"
@@ -208,13 +239,18 @@ if [[ $TRUNCATE -eq 1 ]]; then
         echo "ÉCHEC : troncature non constatée (le parcours a fini sans erreur)" >&2
         exit 1
     fi
-    # Code 1 : il faut aussi que l'erreur soit celle de la lecture du fichier tronqué
-    # (FrameError::Io ⇒ « lecture de la source : fichier tronqué : … »).
-    if ! grep -qE "^engine_bench : .*(lecture de la source|fichier tronqué)" "$LOG"; then
-        echo "ÉCHEC : le banc s'est arrêté sur une autre erreur que la troncature" >&2
+    # Code 1 : l'erreur doit venir de la troncature (IoError::Truncated, « fichier tronqué : … »),
+    # ou d'une modification constatée (IoError::Modified, « fichier modifié … »), que
+    # PERF.NET.01 accepte aussi. Toute autre erreur (EIO, ESTALE…) est un échec.
+    ERRLINE="$(grep "^engine_bench : " "$LOG" | tail -1 || true)"
+    if [[ $ERRLINE == *"fichier tronqué"* ]]; then
+        echo "   troncature constatée : erreur affichée, sans plantage (code 1)"
+    elif [[ $ERRLINE == *"fichier modifié"* ]]; then
+        echo "   modification constatée, acceptée par PERF.NET.01 : erreur affichée, sans plantage (code 1)"
+    else
+        echo "ÉCHEC : le banc s'est arrêté sur une autre erreur que la troncature : ${ERRLINE:-aucune ligne « engine_bench : »}" >&2
         exit 1
     fi
-    echo "   troncature constatée : erreur de lecture affichée, sans plantage (code 1)"
 fi
 
 echo "== résultats : $OUT"
