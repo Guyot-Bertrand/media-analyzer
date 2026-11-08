@@ -19,6 +19,7 @@ mod gpu_scale;
 mod hw;
 mod packet;
 mod planes;
+mod refusal;
 
 pub use decoder::{FfmpegDecoder, FfmpegFactory};
 pub use hw::{vaapi_available, vaapi_has_vpp};

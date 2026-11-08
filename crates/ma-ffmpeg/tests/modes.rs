@@ -4,13 +4,13 @@ mod common;
 
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use common::{band, check, navigator, never, quiet_ffmpeg, require_vpp, source, whole};
 use ma_decode::{
-    AuSource, Codec, ConvertPath, DecodeErrorKind, DecodeEvent, DecodeMode, Decoder,
-    DecoderFactory, FrameError, FrameService, ModePref, PictureType, PixelLayout, PrefetchConfig,
-    Received, Rect, Size, Viewport,
+    AuSource, Codec, ConvertPath, DecodeError, DecodeErrorKind, DecodeEvent, DecodeMode, Decoder,
+    DecoderFactory, FrameError, FrameService, ModePref, NavConfig, Navigator, PictureType,
+    PixelLayout, PrefetchConfig, Received, Rect, Size, Viewport,
 };
 use ma_ffmpeg::{FfmpegFactory, MAX_AU_BYTES, vaapi_available};
 use ma_testkit::{CorruptingSource, corpus_file, manifest, require_vaapi};
@@ -45,20 +45,107 @@ fn first_output(
     d.receive(want).unwrap()
 }
 
+/// Fabrique qui note, pour chaque décodeur ouvert, la préférence demandée et la latence
+/// annoncée ([`Decoder::latency`] : images de retard, soit le nombre de threads d'images).
+struct Recording {
+    inner: FfmpegFactory,
+    opened: Mutex<Vec<(ModePref, u32)>>,
+}
+
+impl DecoderFactory for Recording {
+    fn open(&self, codec: Codec, pref: ModePref) -> Result<Box<dyn Decoder>, DecodeError> {
+        let d = self.inner.open(codec, pref)?;
+        self.opened.lock().unwrap().push((pref, d.latency()));
+        Ok(d)
+    }
+}
+
+/// Profil refusé par VA-API (H.264 High 10) : `FFmpeg` repasse en silence en logiciel sur un
+/// seul thread ; le navigateur rouvre une fois un décodeur logiciel multi-thread, sans
+/// `FellBackToSoftware`.
 #[ma_trace::covers("PERF.HW.01")]
 #[test]
-fn unsupported_profile_reports_software() {
+fn unsupported_profile_reopens_multithread() {
     if !require_vaapi() {
         return;
     }
     let name = "h264_720p_high10";
-    let mut nav = navigator(source(name), ModePref::Auto);
+    let factory = Arc::new(Recording {
+        inner: factory(),
+        opened: Mutex::new(Vec::new()),
+    });
+    let mut nav = Navigator::new(
+        source(name),
+        factory.clone(),
+        ModePref::Auto,
+        NavConfig::default(),
+    )
+    .unwrap();
+    assert_eq!(nav.mode(), DecodeMode::Unknown, "périphérique attaché");
     let vp = whole(manifest(name).dims());
     for p in [0, 1, 30, 29] {
         check(&mut nav, name, p, vp, 0);
     }
     assert_eq!(nav.mode(), DecodeMode::Software);
+    assert_eq!(nav.stats().software_reopens, 1);
     assert_eq!(nav.stats().decoder.full_res_transfers, 0);
+    let events = nav.take_events();
+    assert!(
+        events
+            .iter()
+            .all(|e| !matches!(e, DecodeEvent::FellBackToSoftware { .. })),
+        "{events:?}"
+    );
+    let opened = factory.opened.lock().unwrap().clone();
+    assert_eq!(opened.len(), 2, "{opened:?}");
+    assert_eq!(opened[0], (ModePref::Auto, 1), "VA-API : un seul thread");
+    let (pref, latency) = opened[1];
+    assert_eq!(pref, ModePref::SoftwareOnly);
+    if std::thread::available_parallelism().is_ok_and(|n| n.get() > 1) {
+        assert!(
+            latency > 1,
+            "décodeur rouvert multi-thread : latence {latency}"
+        );
+    }
+}
+
+/// Sans périphérique, le décodeur est logiciel dès l'ouverture : aucune erreur avant la 1re
+/// image ne peut passer pour une panne matérielle (pas de `FellBackToSoftware` parasite).
+#[ma_trace::covers("PERF.HW.01")]
+#[test]
+fn no_device_reports_software_from_open() {
+    quiet_ffmpeg();
+    let f = FfmpegFactory {
+        render_node: Some("/dev/dri/absent".into()),
+    };
+    for codec in [Codec::H264, Codec::Hevc, Codec::Mpeg2] {
+        let d = f.open_decoder(codec, ModePref::Auto).unwrap();
+        assert!(d.hw_unavailable().is_some());
+        assert_eq!(d.mode(), DecodeMode::Software, "{codec:?}");
+        assert!(!d.silent_software());
+    }
+    let name = "h264_720p_closed";
+    let mut nav = Navigator::new(
+        source(name),
+        Arc::new(f),
+        ModePref::Auto,
+        NavConfig::default(),
+    )
+    .unwrap();
+    assert_eq!(nav.mode(), DecodeMode::Software, "avant toute image");
+    let vp = band(manifest(name).dims());
+    for p in [0, 1, 30, 29, 100] {
+        check(&mut nav, name, p, vp, 0);
+    }
+    assert_eq!(nav.mode(), DecodeMode::Software);
+    assert_eq!(nav.stats().software_reopens, 0);
+    let events = nav.take_events();
+    assert!(
+        events
+            .iter()
+            .all(|e| !matches!(e, DecodeEvent::FellBackToSoftware { .. })),
+        "{events:?}"
+    );
 }
 
 #[test]
@@ -70,7 +157,14 @@ fn mode_is_unknown_before_the_first_frame_then_detected() {
     }
     for (pref, mode) in prefs {
         let mut d = open(Codec::Hevc, pref);
-        assert_eq!(d.mode(), DecodeMode::Unknown);
+        // `Unknown` : périphérique attaché, mode pas encore confirmé ; sans périphérique, logiciel
+        // dès l'ouverture.
+        let at_open = if pref == ModePref::Auto {
+            DecodeMode::Unknown
+        } else {
+            DecodeMode::Software
+        };
+        assert_eq!(d.mode(), at_open);
         assert!(d.latency() >= 1);
         if pref == ModePref::Auto {
             assert_eq!(d.latency(), 1, "un seul thread en VA-API");
@@ -247,7 +341,8 @@ fn eof_drain_and_reset() {
 fn every_codec_opens_in_software() {
     for codec in [Codec::H264, Codec::Hevc, Codec::Mpeg2] {
         let d = open(codec, ModePref::SoftwareOnly);
-        assert_eq!(d.mode(), DecodeMode::Unknown);
+        assert_eq!(d.mode(), DecodeMode::Software);
+        assert!(!d.silent_software());
     }
 }
 
@@ -365,6 +460,51 @@ fn corrupted_au_real_decoder() {
         let next_gop = (bad_pres / m.gop + 1) * m.gop;
         check(&mut nav, name, next_gop + 1, vp, 0);
     }
+}
+
+/// AU corrompue (P au milieu d'un GOP de `hevc_720p_main10`) décodée en VA-API : aucune bascule
+/// en logiciel, le décodage reste matériel, et les images décodées avant elle sont correctes.
+#[test]
+fn corrupted_au_vaapi_does_not_fall_back() {
+    if !require_vaapi() {
+        return;
+    }
+    let name = "hevc_720p_main10";
+    let inner = TsAuSource::open(&corpus_file(name)).unwrap();
+    let bad = mid_gop_p(&inner);
+    let bad_pres = inner.entry(bad).unwrap().pres_idx;
+    let len = inner.len();
+    let src = Arc::new(CorruptingSource {
+        inner,
+        corrupt: HashSet::from([bad]),
+    });
+    let m = manifest(name);
+    let vp = band(m.dims());
+    let mut nav = navigator(src.clone(), ModePref::Auto);
+    for d in 0..bad {
+        check(&mut nav, name, src.entry(d).unwrap().pres_idx, vp, 0);
+    }
+    assert_eq!(nav.mode(), DecodeMode::Hardware);
+    for p in bad_pres..(bad_pres + m.gop).min(len) {
+        match nav.frame(p, vp, &never) {
+            Ok(f) => assert_eq!(f.pres_idx, p),
+            Err(FrameError::NotDecodable { .. } | FrameError::Decoder(_)) => {}
+            Err(e) => panic!("{name} : image {p} : {e}"),
+        }
+    }
+    let events = nav.take_events();
+    assert!(
+        events
+            .iter()
+            .all(|e| !matches!(e, DecodeEvent::FellBackToSoftware { .. })),
+        "{events:?}"
+    );
+    assert_eq!(nav.mode(), DecodeMode::Hardware);
+    // Le GOP suivant redevient correct, toujours en matériel.
+    let next_gop = (bad_pres / m.gop + 1) * m.gop;
+    check(&mut nav, name, next_gop + 1, vp, 0);
+    assert_eq!(nav.mode(), DecodeMode::Hardware);
+    assert_eq!(nav.take_events(), vec![]);
 }
 
 /// Review Focus 2 : fichier tronqué à 50 % pendant la navigation (enregistrement coupé, NFS).

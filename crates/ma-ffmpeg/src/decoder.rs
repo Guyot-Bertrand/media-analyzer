@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use ma_decode::{
     Codec, ConvertPath, DecodeError, DecodeErrorKind, DecodeMode, Decoder, DecoderFactory,
-    DecoderStats, ModePref, Planes, Received, Size, Viewport,
+    DecoderStats, ModePref, Planes, Received, Viewport,
 };
 use rsmpeg::avcodec::{AVCodec, AVCodecContext};
 use rsmpeg::avutil::{AVFrame, AVHWDeviceContext};
@@ -13,7 +13,8 @@ use rsmpeg::error::RsmpegError;
 use rsmpeg::ffi;
 
 use crate::cpu_scale::CpuScaler;
-use crate::gpu_scale::GpuScaler;
+use crate::gpu_scale::{self, GpuScaler};
+use crate::refusal::RefusalMemo;
 use crate::{hw, packet};
 
 /// Fabrique de [`FfmpegDecoder`].
@@ -25,8 +26,6 @@ pub struct FfmpegFactory {
 
 /// Côté minimal (sortie ou région) accepté par la VPP VA-API (16 à 16384 pixels sur iHD).
 const VPP_MIN_SIDE: u32 = 16;
-/// Nombre de viewports refusés par la VPP que l'on retient.
-const MAX_REFUSED: usize = 16;
 
 impl FfmpegFactory {
     /// Ouvre un décodeur, sous son type concret (pour lire [`FfmpegDecoder::hw_unavailable`]).
@@ -98,8 +97,9 @@ pub struct FfmpegDecoder {
     vaapi_path: ConvertPath,
     /// Réduction et recadrage des images VA-API (VPP).
     gpu: GpuScaler,
-    /// Viewports (normalisés) que la VPP a refusés : convertis sans VPP, sans réessayer le graphe.
-    vpp_refused: Vec<Viewport>,
+    /// Viewports (normalisés) que la VPP a refusés deux fois de suite : convertis sans VPP, puis
+    /// réessayés après 250 conversions.
+    vpp_refused: RefusalMemo,
     /// Réduction et recadrage des images logicielles (libswscale).
     cpu: CpuScaler,
 }
@@ -108,6 +108,9 @@ impl FfmpegDecoder {
     /// Contexte ouvert, avec le périphérique VA-API `device` s'il est donné (un seul thread :
     /// les threads d'images recyclent les surfaces pendant le transfert et n'apportent rien en
     /// VA-API), sinon en logiciel avec un nombre de threads automatique.
+    ///
+    /// Sans périphérique, le mode est [`DecodeMode::Software`] dès l'ouverture ; avec,
+    /// [`DecodeMode::Unknown`] jusqu'à la première image (`FFmpeg` peut repasser en logiciel).
     fn open(dec: &AVCodec, device: Option<AVHWDeviceContext>) -> Result<Self, DecodeError> {
         let mut ctx = AVCodecContext::new(dec);
         let hw_device = device.is_some();
@@ -135,13 +138,17 @@ impl FfmpegDecoder {
         Ok(FfmpegDecoder {
             ctx,
             hw_device,
-            mode: DecodeMode::Unknown,
+            mode: if hw_device {
+                DecodeMode::Unknown
+            } else {
+                DecodeMode::Software
+            },
             threads,
             stats: DecoderStats::default(),
             hw_unavailable: None,
             vaapi_path,
             gpu: GpuScaler::default(),
-            vpp_refused: Vec::new(),
+            vpp_refused: RefusalMemo::default(),
             cpu: CpuScaler::default(),
         })
     }
@@ -208,39 +215,61 @@ impl FfmpegDecoder {
             (sw, ConvertPath::VaapiTransfer)
         };
         self.stats.full_res_transfers += 1;
-        Ok((self.cpu.scale(&ram, vp)?, path))
+        // La surface en RAM a la taille codée : la région se décale du rognage gauche et haut que
+        // `FFmpeg` laisse aux images matérielles.
+        let (x, y) = gpu_scale::crop_origin(frame);
+        let mut coded = *vp;
+        coded.region.x += x;
+        coded.region.y += y;
+        Ok((self.cpu.scale(&ram, &coded)?, path))
     }
 
     /// Conversion d'une image VA-API : VPP si elle est offerte et accepte `vp`, sinon projection
-    /// et conversion CPU (`convert_without_vpp`).
+    /// et conversion CPU (`convert_without_vpp`). Un viewport refusé par la VPP est annoncé
+    /// [`ConvertPath::VaapiVppRefused`].
     fn convert_vaapi(
         &mut self,
         frame: &AVFrame,
         vp: &Viewport,
     ) -> Result<(Planes, ConvertPath), DecodeError> {
-        if self.vaapi_path != ConvertPath::VaapiVpp || self.vpp_refuses(vp) {
+        if self.vaapi_path != ConvertPath::VaapiVpp {
             return self.convert_without_vpp(frame, vp);
+        }
+        self.vpp_refused.tick();
+        if self.vpp_refuses(vp) {
+            return self.refused(frame, vp);
         }
         let image = self.gpu.scale(frame, vp);
         self.stats.full_res_transfers += std::mem::take(&mut self.gpu.full_res_transfers);
         if let Ok(image) = image {
+            self.vpp_refused.succeeded(vp);
             return Ok((image, ConvertPath::VaapiVpp));
         }
-        // Viewport valide que la VPP ne sait pas produire : projection et conversion CPU pour lui,
-        // sans repli logiciel ni nouvel essai du graphe. Une vraie panne du GPU échoue aussi dans
-        // la conversion CPU et remonte alors en `Gpu`.
-        self.vpp_refused.truncate(MAX_REFUSED - 1);
-        self.vpp_refused.insert(0, *vp);
-        self.convert_without_vpp(frame, vp)
+        // Viewport valide que la VPP ne sait pas produire (ou erreur passagère) : projection et
+        // conversion CPU pour cette image, sans repli logiciel. Après deux échecs consécutifs, le
+        // graphe n'est plus essayé pendant 250 conversions. Une vraie panne du GPU échoue aussi
+        // dans la conversion CPU et remonte alors en `Gpu`.
+        self.vpp_refused.failed(*vp);
+        self.refused(frame, vp)
+    }
+
+    /// Conversion sans VPP d'un viewport que la VPP refuse.
+    fn refused(
+        &mut self,
+        frame: &AVFrame,
+        vp: &Viewport,
+    ) -> Result<(Planes, ConvertPath), DecodeError> {
+        let (image, _) = self.convert_without_vpp(frame, vp)?;
+        Ok((image, ConvertPath::VaapiVppRefused))
     }
 
     /// La VPP ne peut pas produire `vp` : sortie ou région sous sa taille minimale, ou viewport
-    /// déjà refusé.
+    /// refusé par le mémo.
     fn vpp_refuses(&self, vp: &Viewport) -> bool {
         [vp.out.w, vp.out.h, vp.region.w, vp.region.h]
             .iter()
             .any(|&side| side < VPP_MIN_SIDE)
-            || self.vpp_refused.contains(vp)
+            || self.vpp_refused.refuses(vp)
     }
 
     /// Le décodage est matériel, ou peut l'être (aucune image encore vue).
@@ -282,10 +311,9 @@ impl FfmpegDecoder {
         let Some(vp) = want(pts) else {
             return Ok(Received::Discarded { pts });
         };
-        let full = Size {
-            w: u32::try_from(frame.width).unwrap_or(0),
-            h: u32::try_from(frame.height).unwrap_or(0),
-        };
+        // Taille d'affichage : `FFmpeg` rogne les images logicielles, mais n'applique aux images
+        // matérielles que le rognage droit et bas (le gauche et le haut restent dans `crop_*`).
+        let full = gpu_scale::display_size(frame);
         let vp = vp.normalized(full).map_err(|e| DecodeError {
             kind: DecodeErrorKind::Unsupported,
             detail: format!(
@@ -318,6 +346,12 @@ impl Decoder for FfmpegDecoder {
 
     fn latency(&self) -> u32 {
         self.threads
+    }
+
+    /// Périphérique attaché, mais images logicielles reçues : `FFmpeg` est repassé en logiciel
+    /// (profil refusé par le GPU) sur le contexte ouvert avec un seul thread.
+    fn silent_software(&self) -> bool {
+        self.hw_device && self.mode == DecodeMode::Software
     }
 
     fn send(&mut self, pts: i64, au: &[u8]) -> Result<(), DecodeError> {
@@ -394,17 +428,23 @@ mod tests {
     fn hardware_flag_follows_the_detected_mode() {
         let dec = AVCodec::find_decoder(ffi::AV_CODEC_ID_H264).unwrap();
         let mut d = FfmpegDecoder::open(&dec, None).unwrap();
-        assert!(!d.hardware());
+        assert_eq!(d.mode(), DecodeMode::Software, "sans périphérique");
+        assert!(!d.hardware() && !d.silent_software());
         d.hw_device = true;
+        d.mode = DecodeMode::Unknown;
         assert!(d.hardware(), "mode inconnu : peut-être matériel");
+        assert!(!d.silent_software());
         d.mode = DecodeMode::Software;
         assert!(!d.hardware(), "repli silencieux de FFmpeg détecté");
+        assert!(d.silent_software());
         let e = d.error(
             "op",
             &RsmpegError::ReceiveFrameError(ffi::AVERROR(ffi::EIO)),
         );
         assert_eq!(e.kind, DecodeErrorKind::Internal);
         assert!(e.detail.starts_with("op : "));
+        d.mode = DecodeMode::Hardware;
+        assert!(d.hardware() && !d.silent_software());
     }
 
     #[test]

@@ -253,6 +253,7 @@ pub fn oracle(image: &Planes) -> Option<u32> {
 ///
 /// Le jeu d'AU corrompues est celui de la source au moment de la création de la fabrique.
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)] // simulateur : un drapeau par comportement injecté
 pub struct FakeFactory {
     pub source: FakeSource,
     /// Décodage matériel disponible : `ModePref::Auto` ouvre alors un décodeur `Hardware`.
@@ -269,6 +270,15 @@ pub struct FakeFactory {
     /// L'erreur `InvalidData` d'une AU corrompue est renvoyée par le `receive` suivant au lieu de
     /// `send` (erreur différée, comme avec les threads d'images de libavcodec).
     pub deferred_corruption: bool,
+    /// Repli silencieux : en `ModePref::Auto` avec matériel disponible, le décodeur est ouvert
+    /// « avec périphérique » mais sort des images logicielles ([`Decoder::silent_software`]).
+    pub silent_sw: bool,
+    /// Comme le pilote iHD : après une AU corrompue, un décodeur matériel renvoie une erreur `Gpu`
+    /// (`EIO`) à chaque envoi d'AU jusqu'au RAP suivant, qu'il décode normalement.
+    pub eio_after_corrupt: bool,
+    /// Avec `eio_after_corrupt` : le RAP suivant échoue aussi, et le matériel reste perdu (vraie
+    /// panne du GPU).
+    pub eio_on_next_rap: bool,
 }
 
 impl FakeFactory {
@@ -283,6 +293,9 @@ impl FakeFactory {
             latency: 1,
             au_delay: Duration::ZERO,
             deferred_corruption: false,
+            silent_sw: false,
+            eio_after_corrupt: false,
+            eio_on_next_rap: false,
         }
     }
 }
@@ -373,7 +386,10 @@ struct Pending {
 #[allow(clippy::struct_excessive_bools)] // simulateur : un drapeau par comportement injecté
 pub struct FakeDecoder {
     src: FakeSource,
+    /// Décodage matériel effectif.
     hw: bool,
+    /// Ouvert « avec périphérique » mais sortie logicielle (repli silencieux).
+    silent: bool,
     fail_after: Option<u32>,
     size: Size,
     latency: u32,
@@ -384,7 +400,13 @@ pub struct FakeDecoder {
     deferred: bool,
     /// Erreur différée, rendue par le prochain `receive`.
     pending_error: Option<DecodeError>,
-    /// Mode effectif, connu à la première image sortie.
+    /// Voir [`FakeFactory::eio_after_corrupt`] et [`FakeFactory::eio_on_next_rap`].
+    eio_after_corrupt: bool,
+    eio_on_next_rap: bool,
+    /// Envois en échec `Gpu` jusqu'au prochain RAP (après une AU corrompue).
+    eio_until_rap: bool,
+    /// Mode effectif : logiciel dès l'ouverture sans périphérique, sinon connu à la première
+    /// image sortie.
     mode: DecodeMode,
     eof: bool,
     buffer: BTreeMap<i64, Pending>,
@@ -394,10 +416,14 @@ pub struct FakeDecoder {
 }
 
 impl FakeDecoder {
-    fn new(f: &FakeFactory, hw: bool) -> FakeDecoder {
+    /// Décodeur `hw_attached` (ouvert avec un périphérique) ou logiciel. Avec `silent_sw`, un
+    /// décodeur attaché sort des images logicielles.
+    fn new(f: &FakeFactory, hw_attached: bool) -> FakeDecoder {
+        let silent = hw_attached && f.silent_sw;
         FakeDecoder {
             src: f.source.clone(),
-            hw,
+            hw: hw_attached && !silent,
+            silent,
             fail_after: f.hw_fail_after_receives,
             size: f.size,
             latency: f.latency,
@@ -407,7 +433,15 @@ impl FakeDecoder {
             failed: false,
             deferred: f.deferred_corruption,
             pending_error: None,
-            mode: DecodeMode::Unknown,
+            eio_after_corrupt: f.eio_after_corrupt,
+            eio_on_next_rap: f.eio_on_next_rap,
+            eio_until_rap: false,
+            // Sans périphérique : logiciel dès l'ouverture ; avec : inconnu jusqu'à la 1re image.
+            mode: if hw_attached {
+                DecodeMode::Unknown
+            } else {
+                DecodeMode::Software
+            },
             eof: false,
             buffer: BTreeMap::new(),
             gop: None,
@@ -488,6 +522,10 @@ impl Decoder for FakeDecoder {
         self.latency
     }
 
+    fn silent_software(&self) -> bool {
+        self.silent && self.mode == DecodeMode::Software
+    }
+
     fn send(&mut self, pts: i64, au: &[u8]) -> Result<(), DecodeError> {
         if !self.delay.is_zero() {
             std::thread::sleep(self.delay);
@@ -510,7 +548,18 @@ impl Decoder for FakeDecoder {
                 "pts différent de celui de l'AU",
             ));
         }
+        if self.eio_until_rap {
+            if entry.rap == RapKind::None {
+                return Err(error(DecodeErrorKind::Gpu, "EIO après une AU corrompue"));
+            }
+            self.eio_until_rap = false;
+            if self.eio_on_next_rap {
+                self.failed = true;
+                self.check_failed()?;
+            }
+        }
         if self.src.is_corrupt(entry.decode_idx) {
+            self.eio_until_rap = self.hw && self.eio_after_corrupt;
             if entry.rap == RapKind::None {
                 if let Some(gop) = &mut self.gop {
                     gop.corrupt = true;
@@ -596,6 +645,7 @@ impl Decoder for FakeDecoder {
         self.gop = None;
         self.prev_gop = None;
         self.pending_error = None;
+        self.eio_until_rap = false;
     }
 
     fn stats(&self) -> DecoderStats {

@@ -242,7 +242,8 @@ fn path_name(p: ConvertPath) -> &'static str {
         ConvertPath::Unknown => "inconnu",
         ConvertPath::Software => "logiciel",
         ConvertPath::VaapiVpp => "VPP",
-        ConvertPath::VaapiMapped => "projection",
+        ConvertPath::VaapiVppRefused => "VPP refusée (projection)",
+        ConvertPath::VaapiMapped => "projection (sans VPP)",
         ConvertPath::VaapiTransfer => "transfert",
     }
 }

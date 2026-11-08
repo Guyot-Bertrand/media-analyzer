@@ -107,6 +107,8 @@ pub struct NavStats {
     pub cache_hits: u64,
     /// Compteurs du décodeur courant.
     pub decoder: DecoderStats,
+    /// Réouvertures en logiciel après un repli silencieux ([`Decoder::silent_software`]) : 0 ou 1.
+    pub software_reopens: u32,
 }
 
 type Key = (u32, Viewport);
@@ -159,6 +161,9 @@ struct Session {
     last_out: Option<i64>,
     /// AU corrompues envoyées (`decode_idx` → erreur).
     corrupt: HashMap<u32, DecodeError>,
+    /// Une AU corrompue a été envoyée au décodeur matériel, sans image sortie ni RAP envoyé
+    /// depuis : une erreur `Gpu` d'envoi est alors une AU corrompue (R18).
+    after_corrupt: bool,
 }
 
 impl Session {
@@ -170,6 +175,7 @@ impl Session {
             drained: false,
             last_out: None,
             corrupt: HashMap::new(),
+            after_corrupt: false,
         }
     }
 }
@@ -192,6 +198,10 @@ pub struct Navigator {
     decoder: Box<dyn Decoder>,
     /// Vrai une fois le repli logiciel effectué : il n'a lieu qu'une fois par session.
     fell_back: bool,
+    /// Vrai une fois le repli silencieux traité (décodeur rouvert, ou réouverture impossible).
+    silent_handled: bool,
+    /// Réouvertures en logiciel après un repli silencieux.
+    software_reopens: u32,
     session: Option<Session>,
     cache: Cache,
     /// Dernière demande de premier plan ([`Navigator::frame`]).
@@ -219,6 +229,8 @@ impl Navigator {
             cfg,
             decoder,
             fell_back: false,
+            silent_handled: false,
+            software_reopens: 0,
             session: None,
             cache: Cache {
                 cap: cfg.cache_frames,
@@ -329,6 +341,7 @@ impl Navigator {
             aus_sent: self.aus_sent,
             cache_hits: self.cache_hits,
             decoder: self.decoder.stats(),
+            software_reopens: self.software_reopens,
         }
     }
 
@@ -410,6 +423,11 @@ impl Navigator {
     /// une seule fois par navigateur, la réouverture d'un décodeur logiciel puis un nouvel essai
     /// de la demande depuis son point d'accès aléatoire. `InvalidData` et `Unsupported` ne
     /// déclenchent jamais le repli. Une erreur du décodeur logiciel remonte telle quelle.
+    ///
+    /// Exception (R18) : après une AU corrompue envoyée au décodeur matériel, une erreur `Gpu`
+    /// d'envoi d'une AU qui n'est pas un RAP compte comme une AU corrompue, jusqu'à la prochaine
+    /// image sortie, au prochain `reset` ou au premier RAP envoyé (pilote iHD : `EIO` jusqu'au
+    /// RAP suivant). Une vraie panne du GPU est ainsi détectée au plus un GOP plus tard.
     fn fetch(
         &mut self,
         pres_idx: u32,
@@ -431,10 +449,9 @@ impl Navigator {
     /// Vrai si `e` doit faire basculer en logiciel.
     ///
     /// Le décodeur est considéré matériel s'il l'est (`Hardware`) ou si son mode n'est pas encore
-    /// connu (`Unknown`, aucune image sortie) alors que le matériel a été demandé
-    /// ([`ModePref::Auto`]). Dans ce dernier cas, un décodeur en réalité logiciel (matériel
-    /// indisponible) est rouvert en logiciel pour rien : le repli est alors sans effet et l'erreur
-    /// du second décodeur remonte.
+    /// connu (`Unknown` : périphérique attaché, aucune image sortie) alors que le matériel a été
+    /// demandé ([`ModePref::Auto`]). Un décodeur ouvert sans périphérique est `Software` dès
+    /// l'ouverture : il ne déclenche jamais le repli.
     fn falls_back_on(&self, e: &DecodeError) -> bool {
         let hardware = match self.decoder.mode() {
             DecodeMode::Hardware => true,
@@ -463,6 +480,24 @@ impl Navigator {
             reason: cause.to_string(),
             at_pres: Some(pres_idx),
         });
+        true
+    }
+
+    /// Repli silencieux ([`Decoder::silent_software`]) : le décodeur, ouvert avec un périphérique,
+    /// sort des images logicielles sur un seul thread. Une seule fois par navigateur, il est
+    /// remplacé par un décodeur [`ModePref::SoftwareOnly`] (multi-thread). Aucun
+    /// [`DecodeEvent::FellBackToSoftware`] : le mode réel était déjà logiciel. Rend vrai si le
+    /// décodeur a été remplacé ; s'il ne peut pas l'être, le décodeur courant est gardé.
+    fn reopen_if_silent(&mut self) -> bool {
+        if self.silent_handled || !self.decoder.silent_software() {
+            return false;
+        }
+        self.silent_handled = true;
+        let Ok(decoder) = self.factory.open(self.src.codec(), ModePref::SoftwareOnly) else {
+            return false;
+        };
+        self.decoder = decoder;
+        self.software_reopens += 1;
         true
     }
 
@@ -512,10 +547,7 @@ impl Navigator {
         cancel: &dyn Fn() -> bool,
     ) -> Result<(Outcome, bool), FrameError> {
         let len = self.src.len();
-        let limit = target
-            .decode_idx
-            .saturating_add(self.cfg.reorder_margin)
-            .saturating_add(self.decoder.latency());
+        let limit = self.limit_for(target);
         let reusable = |s: &Session| {
             s.start <= start
                 && (start..=limit).contains(&s.next)
@@ -538,6 +570,14 @@ impl Navigator {
         r.map(|outcome| (outcome, reused))
     }
 
+    /// Dernière AU envoyée pour atteindre `target` : `reorder_margin + latency` AU au-delà.
+    fn limit_for(&self, target: &FrameEntry) -> u32 {
+        target
+            .decode_idx
+            .saturating_add(self.cfg.reorder_margin)
+            .saturating_add(self.decoder.latency())
+    }
+
     /// AU `decode_idx` corrompue : événement [`DecodeEvent::CorruptAu`], puis le décodage
     /// continue.
     ///
@@ -553,11 +593,49 @@ impl Navigator {
         s.corrupt.insert(decode_idx, e);
     }
 
+    /// Envoie l'AU `s.next` au décodeur. Une AU corrompue (`InvalidData`, ou `Gpu` toléré après
+    /// une AU corrompue, R18) est notée et le décodage continue.
+    fn send_next(&mut self, s: &mut Session) -> Result<(), FrameError> {
+        let d = s.next;
+        let entry = self
+            .src
+            .entry(d)
+            .ok_or_else(|| FrameError::Io(format!("entrée {d} absente de l'index")))?;
+        self.src
+            .read_au(d, &mut self.buf)
+            .map_err(|e| FrameError::Io(e.to_string()))?;
+        self.aus_sent += 1;
+        s.next += 1;
+        if entry.rap != RapKind::None {
+            s.after_corrupt = false;
+        }
+        match self.decoder.send(entry.pts, &self.buf) {
+            Ok(()) => {}
+            Err(e) if e.kind == DecodeErrorKind::InvalidData => {
+                s.after_corrupt |= self.decoder.mode() != DecodeMode::Software;
+                self.record_corrupt(s, d, e);
+            }
+            // Pilote iHD : après une AU corrompue, `EIO` à chaque envoi jusqu'au RAP
+            // suivant (R18). Sur un RAP, l'erreur redevient `Gpu` et déclenche le repli.
+            Err(e) if e.kind == DecodeErrorKind::Gpu && s.after_corrupt => {
+                let e = DecodeError {
+                    kind: DecodeErrorKind::InvalidData,
+                    detail: format!("après une AU corrompue : {}", e.detail),
+                };
+                self.record_corrupt(s, d, e);
+            }
+            Err(e) => return Err(FrameError::Decoder(e)),
+        }
+        Ok(())
+    }
+
+    /// Décode jusqu'à la cible. À la première image d'un repli silencieux, le décodeur est
+    /// rouvert en logiciel ([`Self::reopen_if_silent`]) et le décodage repart du RAP de départ.
     fn run(
         &mut self,
         s: &mut Session,
         target: &FrameEntry,
-        limit: u32,
+        mut limit: u32,
         vp: Viewport,
         wanted: &HashMap<i64, u32>,
         cancel: &dyn Fn() -> bool,
@@ -586,6 +664,22 @@ impl Navigator {
                     }
                     Err(e) => return Err(FrameError::Decoder(e)),
                 };
+                if matches!(
+                    received,
+                    Received::Discarded { .. } | Received::Frame { .. }
+                ) && self.reopen_if_silent()
+                {
+                    // Décodeur neuf : nouvelle session depuis le RAP, avec sa propre latence.
+                    *s = Session::new(s.start);
+                    limit = self.limit_for(target);
+                    break;
+                }
+                if matches!(
+                    received,
+                    Received::Discarded { .. } | Received::Frame { .. }
+                ) {
+                    s.after_corrupt = false;
+                }
                 let pts = match received {
                     Received::NeedInput => break,
                     Received::Drained => {
@@ -631,23 +725,7 @@ impl Navigator {
                 if cancel() {
                     return Err(FrameError::Preempted);
                 }
-                let d = s.next;
-                let entry = self
-                    .src
-                    .entry(d)
-                    .ok_or_else(|| FrameError::Io(format!("entrée {d} absente de l'index")))?;
-                self.src
-                    .read_au(d, &mut self.buf)
-                    .map_err(|e| FrameError::Io(e.to_string()))?;
-                self.aus_sent += 1;
-                s.next += 1;
-                match self.decoder.send(entry.pts, &self.buf) {
-                    Ok(()) => {}
-                    Err(e) if e.kind == DecodeErrorKind::InvalidData => {
-                        self.record_corrupt(s, d, e);
-                    }
-                    Err(e) => return Err(FrameError::Decoder(e)),
-                }
+                self.send_next(s)?;
             } else if !s.eof_sent {
                 self.decoder.send_eof().map_err(FrameError::Decoder)?;
                 s.eof_sent = true;
@@ -1174,6 +1252,102 @@ mod tests {
         assert_eq!(nav.take_events(), []);
     }
 
+    /// Repli silencieux de `FFmpeg` (profil refusé par le GPU) : le décodeur ouvert avec un
+    /// périphérique sort des images logicielles, sur un seul thread. Le navigateur le rouvre une
+    /// seule fois en logiciel, sans `FellBackToSoftware` (le mode réel était déjà logiciel).
+    #[test]
+    fn silent_software_fallback_reopens_once_without_event() {
+        let src = FakeSource::closed_gops(4, 24, 2);
+        let mut nav = nav_with(FakeFactory {
+            silent_sw: true,
+            ..FakeFactory::new(&src)
+        });
+        assert_eq!(nav.mode(), DecodeMode::Unknown, "périphérique attaché");
+        for p in 0..20 {
+            get(&mut nav, p);
+        }
+        assert_eq!(nav.stats().software_reopens, 1);
+        assert_eq!(nav.mode(), DecodeMode::Software);
+        // Sauts en avant et en arrière : pas de seconde réouverture.
+        get(&mut nav, 70);
+        get(&mut nav, 5);
+        assert_eq!(nav.stats().software_reopens, 1);
+        let events = nav.take_events();
+        assert!(
+            events
+                .iter()
+                .all(|e| !matches!(e, DecodeEvent::FellBackToSoftware { .. })),
+            "{events:?}"
+        );
+        // Sans repli silencieux, aucune réouverture.
+        let mut plain = self::nav(&src);
+        get(&mut plain, 3);
+        assert_eq!(plain.stats().software_reopens, 0);
+    }
+
+    /// Pilote iHD (R18) : après une AU corrompue, `EIO` (`Gpu`) à chaque envoi jusqu'au RAP
+    /// suivant. Ces erreurs sont des AU corrompues, sans repli ; le matériel reprend au RAP.
+    #[test]
+    fn gpu_error_after_corrupt_au_is_tolerated_until_next_rap() {
+        let src = FakeSource::closed_gops(3, 24, 0).with_corrupt(HashSet::from([5]));
+        let mut nav = nav_with(FakeFactory {
+            eio_after_corrupt: true,
+            ..FakeFactory::new(&src)
+        });
+        for p in 0..5 {
+            get(&mut nav, p);
+        }
+        // Image du GOP abîmé : refusée en `InvalidData` ; les envois suivants passent le RAP 24.
+        let err = nav.frame(20, small(), &never).unwrap_err();
+        assert!(
+            matches!(&err, FrameError::Decoder(e) if e.kind == DecodeErrorKind::InvalidData),
+            "{err:?}"
+        );
+        for p in 24..30 {
+            get(&mut nav, p);
+        }
+        assert_eq!(nav.mode(), DecodeMode::Hardware);
+        let events = nav.take_events();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, DecodeEvent::CorruptAu { decode_idx: 6, .. })),
+            "{events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .all(|e| !matches!(e, DecodeEvent::FellBackToSoftware { .. })),
+            "{events:?}"
+        );
+    }
+
+    /// Même cas, mais le RAP suivant échoue aussi (vraie panne du GPU) : l'erreur `Gpu` sur un RAP
+    /// n'est plus tolérée, un seul repli logiciel a lieu, et l'image est servie.
+    #[test]
+    fn gpu_error_on_rap_after_corrupt_au_falls_back_once() {
+        let src = FakeSource::closed_gops(3, 24, 0).with_corrupt(HashSet::from([5]));
+        let mut nav = nav_with(FakeFactory {
+            eio_after_corrupt: true,
+            eio_on_next_rap: true,
+            ..FakeFactory::new(&src)
+        });
+        for p in 0..5 {
+            get(&mut nav, p);
+        }
+        let f = nav.frame(20, small(), &never).unwrap();
+        assert_eq!(oracle(&f.image), Some(20));
+        assert!(f.corrupt, "image du GOP de l'AU corrompue");
+        get(&mut nav, 30);
+        assert_eq!(nav.mode(), DecodeMode::Software);
+        let falls: Vec<_> = nav
+            .take_events()
+            .into_iter()
+            .filter(|e| matches!(e, DecodeEvent::FellBackToSoftware { .. }))
+            .collect();
+        assert_eq!(falls.len(), 1, "{falls:?}");
+    }
+
     #[test]
     fn fallback_clears_cache_and_restarts_from_rap() {
         let src = FakeSource::closed_gops(4, 24, 0);
@@ -1299,8 +1473,8 @@ mod tests {
         get(&mut nav, 3);
         assert_eq!(nav.take_events(), []);
 
-        // Mode jamais connu (aucune image sortie) : le décodeur logiciel rouvert est encore
-        // `Unknown`, donc seule la garde `fell_back` empêche un second repli.
+        // Mode jamais confirmé par une image : le décodeur logiciel rouvert est `Software` dès
+        // l'ouverture, et la garde `fell_back` empêche de toute façon un second repli.
         let mut nav = patched(
             &src,
             Patched {
@@ -1313,7 +1487,7 @@ mod tests {
             matches!(&err, FrameError::Decoder(e) if e.kind == DecodeErrorKind::Internal),
             "{err:?}"
         );
-        assert_eq!(nav.mode(), DecodeMode::Unknown);
+        assert_eq!(nav.mode(), DecodeMode::Software);
         // La demande suivante échoue encore : l'erreur remonte, sans second repli.
         assert!(nav.frame(3, small(), &never).is_err());
         let events = nav.take_events();
@@ -1392,7 +1566,8 @@ mod tests {
             nav.prefetch_frame(10, small(), Direction::Forward, &pending),
             Err(FrameError::Preempted)
         );
-        assert_eq!(nav.mode(), DecodeMode::Unknown, "aucune image n'est sortie");
+        // Aucune image n'est sortie, mais le décodeur rouvert est logiciel dès l'ouverture.
+        assert_eq!(nav.mode(), DecodeMode::Software);
         let events = nav.take_events();
         assert!(
             matches!(events.as_slice(), [DecodeEvent::FellBackToSoftware { reason, .. }] if reason.contains("Gpu")),

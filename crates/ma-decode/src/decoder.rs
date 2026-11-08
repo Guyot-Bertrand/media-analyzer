@@ -6,6 +6,8 @@ use crate::types::{Planes, Size, Viewport};
 /// Mode de décodage effectif, déduit des images produites.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DecodeMode {
+    /// Matériel attaché, pas encore confirmé (aucune image sortie). Un décodeur ouvert sans
+    /// périphérique est [`DecodeMode::Software`] dès l'ouverture.
     Unknown,
     Hardware,
     Software,
@@ -65,6 +67,9 @@ pub enum ConvertPath {
     /// VA-API avec traitement vidéo (VPP) : réduction et recadrage sur le GPU, seule l'image
     /// affichée est transférée en RAM.
     VaapiVpp,
+    /// VA-API avec VPP, mais la VPP a refusé ce viewport : surface entière projetée en lecture
+    /// (ou transférée), puis réduite ou recadrée par le CPU.
+    VaapiVppRefused,
     /// VA-API sans VPP (pilote qui ne l'offre pas) : surface entière projetée en lecture
     /// (`av_hwframe_map`), réduite ou recadrée par le CPU. Mode dégradé : pas de repli logiciel.
     VaapiMapped,
@@ -89,6 +94,12 @@ pub trait Decoder: Send {
     fn mode(&self) -> DecodeMode;
     /// Nombre d'images de retard du pipeline.
     fn latency(&self) -> u32;
+    /// Repli silencieux : le décodeur a été ouvert avec un périphérique matériel mais sort des
+    /// images logicielles (`FFmpeg` repasse seul en logiciel, sur un seul thread, pour un profil
+    /// que le GPU refuse). Faux par défaut.
+    fn silent_software(&self) -> bool {
+        false
+    }
     /// Soumet une unité d'accès.
     fn send(&mut self, pts: i64, au: &[u8]) -> Result<(), DecodeError>;
     /// Signale la fin du flux pour vider le pipeline.

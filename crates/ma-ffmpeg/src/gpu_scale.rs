@@ -2,7 +2,9 @@
 //! `buffersink`). Seule l'image de sortie (taille affichée) est transférée en RAM.
 //!
 //! La région passe par les champs `crop_*` de l'image d'entrée : la VPP de `FFmpeg` en fait sa
-//! `input_region`. Les graphes sont gardés en cache (au plus [`MAX_GRAPHS`], le moins récemment
+//! `input_region`. `FFmpeg` n'applique aux images matérielles que le rognage droit et bas du flux
+//! (fenêtre de conformité) ; le rognage gauche et haut reste dans `crop_left` / `crop_top`, et
+//! s'ajoute à l'origine de la région ([`crop_origin`], [`display_size`]). Les graphes sont gardés en cache (au plus [`MAX_GRAPHS`], le moins récemment
 //! utilisé est libéré), indexés par le contexte de surfaces d'entrée, son format, la taille
 //! d'entrée, la taille et le format de sortie : un changement de résolution en cours de flux
 //! (nouveau contexte de surfaces, nouvelle taille) construit un nouveau graphe.
@@ -144,21 +146,31 @@ impl GpuScaler {
     /// Image VA-API `frame` (décodée et synchronisée) rendue pour `vp` (normalisé) : réduction en
     /// NV12, ou région 1:1 au format natif des surfaces (NV12 ou P010). Toute erreur est imputée
     /// au GPU.
+    ///
+    /// `vp` est exprimé dans l'image affichée ([`display_size`]) ; le rognage gauche et haut du
+    /// décodeur ([`crop_origin`]) y est ajouté.
     pub(crate) fn scale(&mut self, frame: &AVFrame, vp: &Viewport) -> Result<Planes, DecodeError> {
         let input = Size {
             w: u32::try_from(frame.width).unwrap_or(0),
             h: u32::try_from(frame.height).unwrap_or(0),
         };
+        let shown = display_size(frame);
+        let (cx, cy) = crop_origin(frame);
+        let r = Rect {
+            x: vp.region.x + cx,
+            y: vp.region.y + cy,
+            ..vp.region
+        };
         let whole = Rect {
             x: 0,
             y: 0,
-            w: input.w,
-            h: input.h,
+            w: shown.w,
+            h: shown.h,
         };
         if !vp.is_reduced() && vp.region == whole {
             // Image entière en 1:1 : la VPP n'apporterait rien.
-            let sw = self.transfer(frame, input)?;
-            return planes::extract(&sw, whole);
+            let sw = self.transfer(frame, shown)?;
+            return planes::extract(&sw, r);
         }
         let sw_format = sw_format(frame)?;
         let out_format = if vp.is_reduced() {
@@ -179,10 +191,10 @@ impl GpuScaler {
             reduced: vp.is_reduced(),
         };
         let mut cropped = frame.clone();
-        let r = vp.region;
         // SAFETY: `cropped` est une nouvelle référence (`av_frame_clone`) possédée ici ; les champs
-        // `crop_*` sont de simples entiers. La région est incluse dans l'image (viewport normalisé),
-        // les soustractions ne débordent pas.
+        // `crop_*` sont de simples entiers. La région est incluse dans l'image affichée (viewport
+        // normalisé), elle-même incluse dans la surface décalée du rognage : les soustractions ne
+        // débordent pas.
         unsafe {
             let f = cropped.as_mut_ptr();
             (*f).crop_left = r.x as usize;
@@ -198,7 +210,7 @@ impl GpuScaler {
                 return Err(e);
             }
         };
-        let sw = self.transfer(&scaled, input)?;
+        let sw = self.transfer(&scaled, shown)?;
         planes::extract(
             &sw,
             Rect {
@@ -237,6 +249,27 @@ impl GpuScaler {
             self.full_res_transfers += 1;
         }
         Ok(sw)
+    }
+}
+
+/// Rognage gauche et haut (`crop_left`, `crop_top`) laissé par `FFmpeg` dans l'image `frame` :
+/// origine de l'image affichée dans la surface. Nul pour une image logicielle (déjà rognée).
+pub(crate) fn crop_origin(frame: &AVFrame) -> (u32, u32) {
+    let at = |v: usize| u32::try_from(v).unwrap_or(0);
+    (at(frame.crop_left), at(frame.crop_top))
+}
+
+/// Taille affichée de l'image `frame` : sa taille, moins les rognages encore présents dans
+/// `crop_*`.
+pub(crate) fn display_size(frame: &AVFrame) -> Size {
+    let side = |v: i32, a: usize, b: usize| {
+        u32::try_from(v)
+            .unwrap_or(0)
+            .saturating_sub(u32::try_from(a.saturating_add(b)).unwrap_or(u32::MAX))
+    };
+    Size {
+        w: side(frame.width, frame.crop_left, frame.crop_right),
+        h: side(frame.height, frame.crop_top, frame.crop_bottom),
     }
 }
 

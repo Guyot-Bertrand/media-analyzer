@@ -362,10 +362,7 @@ fn vpp_refused_viewports_degrade_without_fallback() {
     }
     check_codes(&wholes, whole_of(full), m.code_modulo, "entière");
     assert_eq!(d.mode(), DecodeMode::Hardware);
-    assert!(matches!(
-        d.stats().path,
-        ConvertPath::VaapiMapped | ConvertPath::VaapiTransfer
-    ));
+    assert_eq!(d.stats().path, ConvertPath::VaapiVppRefused);
     assert_eq!(d.gpu_graphs(), 0, "aucun graphe VPP pour 8×8");
     // Réduction à 8×8 : proche de libswscale.
     let small = Viewport {
@@ -401,6 +398,128 @@ fn vpp_refused_viewports_degrade_without_fallback() {
     assert_eq!(nav.stats().decoder.path, ConvertPath::VaapiVpp);
     assert_eq!(nav.take_events(), vec![]);
     assert_eq!(nav.mode(), DecodeMode::Hardware);
+}
+
+/// Viewport refusé par la VPP (8×8) : chemin `VaapiVppRefused`, distinct de `VaapiMapped`
+/// (pilote sans VPP) ; le chemin du périphérique reste la VPP, qui reprend au viewport suivant.
+#[test]
+fn vpp_refused_path_is_distinct() {
+    if !require_vpp() {
+        return;
+    }
+    let src = TsAuSource::open(&corpus_file(MAIN10)).unwrap();
+    let full = manifest(MAIN10).dims();
+    let tiny = Viewport::region_1to1(
+        full,
+        Rect {
+            x: 0,
+            y: 0,
+            w: 8,
+            h: 8,
+        },
+    );
+    let mut d = open(&src, ModePref::Auto);
+    assert_eq!(d.vaapi_path(), ConvertPath::VaapiVpp);
+    let frames = decode(&mut d, &src, 1, &|_| tiny);
+    assert_eq!(frames[0].image.size, Size { w: 8, h: 8 });
+    assert_eq!(d.stats().path, ConvertPath::VaapiVppRefused);
+    assert_eq!(d.vaapi_path(), ConvertPath::VaapiVpp);
+    assert_eq!(d.mode(), DecodeMode::Hardware);
+    // La VPP reprend sur un viewport qu'elle accepte.
+    let mut d = open(&src, ModePref::Auto);
+    let region = Viewport::region_1to1(full, REGION);
+    decode(&mut d, &src, 2, &|i| if i == 0 { tiny } else { region });
+    assert_eq!(d.stats().path, ConvertPath::VaapiVpp);
+}
+
+/// `h264_1080p_crop_top` : 1920×1088 codé, 8 lignes rognées en haut par le SPS. En VA-API, le
+/// rognage haut reste dans `crop_top` de l'image décodée (`FFmpeg` n'applique que la droite et
+/// le bas aux images matérielles) : il doit être appliqué comme en logiciel.
+#[test]
+fn crop_top_1080p_vaapi_matches_software() {
+    if !require_vpp() {
+        return;
+    }
+    let name = "h264_1080p_crop_top";
+    let m = manifest(name);
+    let full = Size { w: 1920, h: 1080 };
+    assert_eq!(m.dims(), full);
+    let src = TsAuSource::open(&corpus_file(name)).unwrap();
+    let vp = Viewport::region_1to1(full, whole_of(full));
+    let mut hw = open(&src, ModePref::Auto);
+    let hard = decode(&mut hw, &src, 5, &|_| vp);
+    assert_eq!(hw.mode(), DecodeMode::Hardware);
+    let mut sw = open(&src, ModePref::SoftwareOnly);
+    let soft = decode(&mut sw, &src, 5, &|_| vp);
+    let luma = |p: &Planes| -> Vec<u8> {
+        (0..p.size.h as usize)
+            .flat_map(|y| {
+                let at = y * p.strides[0] as usize;
+                p.planes[0][at..at + p.size.w as usize].to_vec()
+            })
+            .collect()
+    };
+    for (a, b) in hard.iter().zip(&soft) {
+        assert_eq!(a.pres, b.pres);
+        assert_eq!(
+            (a.full, a.image.size),
+            (full, full),
+            "VA-API : image {}",
+            a.pres
+        );
+        assert_eq!(
+            (b.full, b.image.size),
+            (full, full),
+            "logiciel : image {}",
+            b.pres
+        );
+        assert!(
+            luma(&a.image) == luma(&b.image),
+            "image {} : plan de luma différent entre VA-API et logiciel",
+            a.pres
+        );
+    }
+    check_codes(&hard, whole_of(full), m.code_modulo, "VA-API");
+    check_codes(&soft, whole_of(full), m.code_modulo, "logiciel");
+    // Région 1:1 et réduction par la VPP : même rognage.
+    let region = Rect {
+        x: 0,
+        y: 0,
+        w: 1920,
+        h: 270,
+    };
+    let rvp = Viewport::region_1to1(full, region);
+    let mut hw = open(&src, ModePref::Auto);
+    let hard = decode(&mut hw, &src, 2, &|_| rvp);
+    assert_eq!(hw.stats().path, ConvertPath::VaapiVpp);
+    for (a, b) in hard.iter().zip(&soft) {
+        assert!(
+            luma(&a.image) == luma(&crop(&b.image, region)),
+            "région : image {}",
+            a.pres
+        );
+    }
+    let fit = Viewport::fit(full, Size { w: 960, h: 540 });
+    let mut hw = open(&src, ModePref::Auto);
+    let hard = decode(&mut hw, &src, 3, &|_| fit);
+    assert_eq!(hw.stats().path, ConvertPath::VaapiVpp);
+    check_codes(&hard, whole_of(full), m.code_modulo, "Ajusté (VPP)");
+    // Sans VPP (projection, puis transfert) : la surface en RAM a la taille codée, la région se
+    // décale du même rognage.
+    for path in [ConvertPath::VaapiMapped, ConvertPath::VaapiTransfer] {
+        let mut hw = open(&src, ModePref::Auto);
+        hw.force_vaapi_path(path);
+        let hard = decode(&mut hw, &src, 2, &|_| vp);
+        assert_eq!(hw.stats().path, path);
+        for (a, b) in hard.iter().zip(&soft) {
+            assert_eq!((a.full, a.image.size), (full, full), "{path:?}");
+            assert!(
+                luma(&a.image) == luma(&b.image),
+                "{path:?} : image {}",
+                a.pres
+            );
+        }
+    }
 }
 
 /// Sans VPP (forcé : la machine de référence l'a), le décodage reste matériel : projection (ou
