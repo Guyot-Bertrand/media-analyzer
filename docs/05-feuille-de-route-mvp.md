@@ -36,6 +36,17 @@
 | **M2a** | Implémenté (branche `mvp/m2-socle-ts`) ; mesures dans `07-mesures-m2a.md`. Mesure NFS et corpus privé restant à faire (07 §7). |
 | M2b à M7 | À faire. M3 et M4 ne dépendent que de M2a. |
 
+## Reports de M2a vers les sous-plans suivants
+
+Décidés à la revue finale de M2a (détail dans `07-mesures-m2a.md` §5, §6.5 et §6.6) :
+
+- **M2b** : index persistant (SQLite) pour borner la mémoire de l'index, qui croît avec la durée et le nombre de programmes (entrées d'images et PCR de tous les programmes, environ 320 Mo par 24 h pour un SPTS à 25 i/s ; 07 §6.5).
+- **M3 et M6** : afficher le PTS du flux (`AuInfo::pts_raw`), jamais `FrameEntry::pts`, qui est le PTS de l'index, unique et décalé après une discontinuité (R20).
+- **M5** (API du Navigator) :
+  - `FrameError::Io` typé (`Truncated`, `Modified`) au lieu d'un texte, pour que l'interface distingue un fichier tronqué d'un fichier remplacé ;
+  - `TsAuSource` d'une autre vidéo du même fichier (`other_video`) qui partage le cache de blocs et l'identité du fichier contrôlée, au lieu de `for_video` avec un cache fourni par l'appelant.
+- **Outillage** : les cibles de fuzzing (`fuzz/`, hors workspace) ne sont compilées que si nightly est installé ; une casse d'API ne se voit pas en CI stable.
+
 ## Points de passage avec le porteur du projet
 
 1. **Fin de M0** : validation du **référentiel d'exigences MVP** (liste, critères d'acceptation, niveaux de test).

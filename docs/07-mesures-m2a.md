@@ -16,7 +16,7 @@
 - Les 5 parseurs ont tourné 10 min chacun sous `cargo-fuzz`, sans plantage (§5).
 - **Mesure NFS non faite** : le banc `tools/nfs-bench/run.sh` est écrit et vérifié (`bash -n`), mais il demande `sudo`. C'est au porteur de le lancer (§7).
 - **Corpus privé vide** : aucun vrai flux broadcast n'a été mesuré. PAFF n'est donc prouvé que sur des flux synthétiques, pas par le décodeur (§4, §6.2).
-- Par rapport à M1, à protocole égal, le moteur est **12 à 51 % plus lent selon la mesure** (§2.3). La RSS gagne **+93 à +96 Mo en VA-API** et **+78 à +81 Mo en logiciel**. La cause n'est pas établie.
+- Par rapport à M1, à protocole égal, le moteur est **12 à 51 % plus lent selon la mesure** (§2.3). La cause de cet écart de temps n'est pas établie. La RSS gagne **+93 à +96 Mo en VA-API** et **+78 à +81 Mo en logiciel** ; environ 70 Mo s'expliquent par le code (cache de blocs plein, tampon de l'indexeur, entrées d'index), le reste n'est pas établi (§2.3).
 
 ## 2. Mesures locales
 
@@ -115,10 +115,22 @@ Le 2e critère de PERF.OPEN.01 (un saut au-delà de la partie indexée attend au
 | Logiciel : avant, 1er pas | 136,3 ms | 155,6–164,3 ms | +14,2 à +20,5 % |
 | Logiciel : RSS max | 881 Mo | 959–962 Mo | +78 à +81 Mo |
 
-Les écarts dépassent la dispersion des exécutions. **La cause n'est pas établie** : rien n'a été mesuré pour la trouver. Pistes, sans mesure :
+Les écarts dépassent la dispersion des exécutions.
+
+**RSS : la majeure partie s'explique par le code** (valeurs relues dans le code, non mesurées séparément) :
+
+| Poste | M1 (source de test) | M2a (`TsAuSource`) | Écart |
+|---|---|---|---|
+| Cache de blocs de la navigation (`CacheConfig::for_locality(Local)`, `crates/ma-io/src/cache.rs`) | aucun : lecture directe de chaque AU (`read_exact_at`) | 64 blocs de 1 Mio, **plein** après les 100 sauts (chaque saut lit environ 3 Mio, §3) | **+64 Mio** |
+| Tampon de lecture de l'indexation | `BufReader` de 1 Mio | bloc du scanner de 4 Mio (`IndexOptions::chunk_size`, `BLOCK` de `scan.rs`) | **+3 Mio** |
+| Entrées d'index (62 000 images) | `FrameEntry` et position d'un PES | 80 octets par entrée (`Record`) + 4 octets (`by_pres`), soit environ 5 Mio | **+2 à +3 Mio** |
+| Total expliqué | | | **≈ 70 Mio** |
+
+Il reste environ **23 à 26 Mo en VA-API** et **8 à 11 Mo en logiciel** dont la cause **n'est pas établie** (fragmentation de l'allocateur, tampons de la table des chunks et de l'attente de l'indexeur, piste non mesurée).
+
+**Temps : la cause n'est pas établie** ; rien n'a été mesuré pour la trouver. Pistes, sans mesure :
 - la charge permanente de la machine (environ un cœur pris par `java` pendant toutes ces mesures ; elle n'a pas été relevée en M1) ;
-- le découpage réel des AU et la lecture par le cache de blocs, au lieu de la lecture directe d'un PES ;
-- la mémoire de l'index (62 000 entrées, environ 4,5 Mio) n'explique qu'une petite part des 78 à 96 Mo de RSS en plus.
+- le découpage réel des AU et la lecture par le cache de blocs, au lieu de la lecture directe d'un PES.
 
 Saut p95 au moteur, VA-API : 276,3–281,8 ms. Seuil de PERF.SEEK.01 : 500 ms, mesuré côté interface. En M1, l'interface ajoutait au saut moteur :
 - 15–20 ms au p50 ;
@@ -126,7 +138,10 @@ Saut p95 au moteur, VA-API : 276,3–281,8 ms. Seuil de PERF.SEEK.01 : 500 ms, m
 
 ### 2.4 Mémoire de l'indexation (PERF.INDEX.02)
 
-Test `indexing_uhd_big_memory_under_200_mib` (`crates/ma-ts/tests/corpus_index.rs`), en processus dédié sous nextest, profil `dev` (Tâche 10) : `uhd_big : 62000 images, VmHWM 4 → 14 Mio (+10 Mio)`, pour un seuil de 200 Mo. L'écart comprend le tampon du scanner (4 Mio), la table des chunks et 62 000 entrées d'index d'environ 76 octets.
+Test `indexing_uhd_big_memory_under_200_mib` (`crates/ma-ts/tests/corpus_index.rs`), en processus dédié sous nextest, profil `dev` (Tâche 10) : `uhd_big : 62000 images, VmHWM 4 → 14 Mio (+10 Mio)`, pour un seuil de 200 Mo. L'écart comprend le tampon du scanner (4 Mio), la table des chunks et 62 000 entrées d'index.
+
+- **Date de la mesure.** Ce chiffre a été relevé **avant** les bornes R15 et R16 (attente bornée, coupe forcée) et avant R20 (PTS brut gardé : l'entrée stockée passe de 72 à 80 octets, plus 4 octets de `by_pres`). Le test a été relancé par la revue finale de branche, après R15 et R16 : il passe.
+- **Ce que le test ne dit pas** : `uhd_big` dure 20 min (62 000 images à 50 i/s), en SPTS. La mémoire de l'index croît avec la durée et le nombre de programmes : voir le chiffrage au §6.5.
 
 ## 3. Amplification de lecture face au spike
 
@@ -157,6 +172,8 @@ Sur les petits fichiers du corpus, tout le fichier tient dans le cache de 64 Mio
 
 Sur NFS, les blocs passent à 4 Mio et 2 blocs anticipés : l'amplification au saut sera plus forte. Elle n'est pas mesurée (§7). La même commande s'y applique, sur `/mnt/ma-nfs/uhd_big.ts`.
 
+La lecture anticipée est **synchrone** : un bloc absent du cache est lu en **un seul appel** avec ses blocs anticipés (`BlockCache::fetch`). Sur disque local, cela fait 2 Mio par défaut de cache ; sur NFS, **12 Mio** (3 blocs de 4 Mio), lus avant que l'AU demandée soit rendue. À 5 ms de latence et au débit du lien, ce temps s'ajoute au saut. Le cache NFS occupe aussi jusqu'à 128 Mio (32 blocs de 4 Mio), contre 64 Mio en local (§2.3).
+
 Le test `read_amplification_is_bounded` (`crates/ma-ts/tests/source.rs`) vérifie en CI que l'ouverture ne lit rien par le cache, puis que la lecture séquentielle de toutes les AU lit au plus 1,1 fois la taille du fichier plus un bloc.
 
 ## 4. Flux réels
@@ -184,6 +201,8 @@ Session `cargo xtask fuzz --time 600`, NUC i7-10710U, `cargo-fuzz` 0.13.2 sur ni
 **Aucune panique, aucun artefact, ni dépassement de mémoire ni délai dépassé.** `cargo xtask ci` refait 20 s par cible si nightly est présent.
 
 Réserves :
+- **Ce qui n'est pas fuzzé.** Les entrées font 64 Kio au plus, soit environ 350 paquets : les bornes anti-fichier hostile de l'indexeur (R15 : 4 096 entrées ou 64 Mio d'ES en attente, coupe forcée ; R16 : coupe au plafond) ne sont **jamais atteintes** par le fuzzing ; elles sont couvertes par des tests unitaires (`stream_without_rap_is_force_published`, `empty_pes_and_gaps_are_bounded`…). `read_es` (relecture d'une AU par rejeu des paquets) n'est **pas** fuzzé non plus : la cible `ts_index` relit les entrées publiées (`entry`, `au`), pas leurs octets.
+- **Cibles non compilées sans nightly** (M-9) : `fuzz/` est hors du workspace, et `cargo xtask ci` ne fait la session courte que si nightly est installé. Sans nightly, une modification d'API qui casse une cible ne se voit pas en CI stable.
 - **Amorces ES pauvres** : 1 seule amorce MPEG-2 (un seul fichier `mpeg2_*` au corpus) et 4 HEVC. La couverture ES vient surtout des mutations.
 - **1er octet des amorces ES mangé par le sélecteur** : les cibles `es_*` lisent la taille de bloc dans le 1er octet de l'entrée. Celui d'une amorce est donc un octet d'ES, qui est perdu, et sa valeur fixe un bloc souvent minuscule (1 octet ⇒ environ 200 exécutions par seconde).
 - `ts_scan` n'exerce que le format détecté. Les formats 192, 204 et 208 ne sont atteints que si l'entrée les fait détecter. `ts_scan` à format forcé n'est pas fuzzé.
@@ -193,9 +212,9 @@ Réserves :
 
 ### 6.1 AU sans PTS : PTS estimé (D2)
 
-Quand un PES porte plusieurs AU (rare, non conforme en DVB), seule la 1re a un PTS. Les autres reçoivent un PTS **estimé** : PTS de l'AU précédente en décodage plus la durée d'image médiane, rendu unique. L'AU est marquée `pts_estimated`, avec un message `ts-au-no-pts`. L'ordre de présentation de ces AU est donc supposé égal à l'ordre de décodage. Avec des images B dans un tel PES, l'ordre serait faux. Le tri par POC (SPS, M4) remplacera l'estimation. Test : `au_without_pts_gets_estimated_pts` sur `h264_720p_pes_grouped` (50 AU estimées sur 100, sans B).
+Quand un PES porte plusieurs AU (rare, non conforme en DVB), seule la 1re a un PTS. Les autres reçoivent un PTS **estimé** : PTS de l'AU précédente en décodage plus la durée d'image médiane, augmenté de 1 tant qu'il égale un des 256 PTS récents. L'AU est marquée `pts_estimated`, avec un message `ts-au-no-pts`. L'ordre de présentation de ces AU est donc supposé égal à l'ordre de décodage. Avec des images B dans un tel PES, l'ordre serait faux. Le tri par POC (SPS, M4) remplacera l'estimation. Test : `au_without_pts_gets_estimated_pts` sur `h264_720p_pes_grouped` (50 AU estimées sur 100, sans B).
 
-Un PTS estimé peut égaler le PTS réel d'une AU future : c'est une réserve de la revue de la Tâche 10.
+Un PTS estimé peut encore égaler un PTS réel plus ancien que les 256 récents, ou celui d'une AU future. Depuis R20, cela ne casse plus l'unicité : le PTS **de l'index** (`FrameEntry::pts`) est rendu unique et croissant à la publication (§6.6, « Unicité des PTS »). Seul l'ordre de présentation entre ces deux AU reste approximatif (égalité départagée par l'ordre de décodage).
 
 ### 6.2 H.264 PAFF et champs MPEG-2 (D3) : non prouvés par le décodeur
 
@@ -237,7 +256,20 @@ Effets visibles de R18 :
 
 - **Messages d'indexation jetés** : `TsAuSource::open` et `open_progressive` passent un puits `Discard` à l'indexeur. Les messages (`ts-cc-gap`, `ts-au-no-pts`, `ts-pts-discontinuity`…) sont produits et testés, mais aucun consommateur ne les reçoit encore. RF1 reste invisible pour l'utilisateur tant que le rapport (M2b) ne les reçoit pas.
 - **Fichier qui grossit** (enregistrement en cours) : vu comme `Modified`. `open` échoue, ou la source se bloque. À décider en M2b.
-- **`sh.pcrs` croît avec la durée** : les échantillons de PCR sont gardés en entier, environ 11 Mo pour 2 h et par programme, et `pcrs()` les clone. C'est la seule part de l'index qui ne soit pas une entrée par image. À revoir avec M2b et M3.
+- **La mémoire de l'index croît avec la durée et le nombre de programmes** (R21), à rattacher à l'index SQLite de M2b. Tailles relues dans le code (`size_of`) :
+  - par image : entrée stockée `Record` de **80 octets** + 4 octets de `by_pres`, soit **84 octets** ;
+  - par échantillon de PCR : `PcrSample` de **32 octets** ; un PCR toutes les 20 à 40 ms (ETSI TR 101 290 : 40 ms au plus), soit 25 à 50 par seconde ;
+  - `follow_structure` indexe **toutes** les vidéos analysées de la structure, et garde les PCR de **tous** les programmes : un MPTS se paie par programme.
+
+  | Cas | Par seconde | Par heure | Par 24 h |
+  |---|---|---|---|
+  | 1 vidéo à 25 i/s | 2,1 Ko | 7,6 Mo | 181 Mo |
+  | 1 vidéo à 50 i/s | 4,2 Ko | 15,1 Mo | 363 Mo |
+  | PCR d'un programme, 25 à 50 par seconde | 0,8 à 1,6 Ko | 2,9 à 5,8 Mo | 69 à 138 Mo |
+  | SPTS, 1 programme à 25 i/s, PCR à 50/s | 3,7 Ko | 13,3 Mo | **320 Mo** |
+  | MPTS de 6 programmes à 25 i/s, PCR à 50/s | 22,2 Ko | 80 Mo | **1,9 Go** |
+
+  Les `Vec` doublent leur capacité en croissant : la mémoire réservée peut atteindre le double de ces chiffres au moment d'une réallocation. `pcrs()` clone en plus tout le vecteur d'un programme à chaque appel. Les PCR sont **conservés** (décision R21) : M3 en a besoin pour l'analyse de cadence. Sur un fichier de 20 min (`uhd_big`), c'est négligeable (§2.4) ; sur une capture de 24 h, c'est la limite de l'index en mémoire.
 - **GOP sain de plus de 2 048 AU (ou 32 Mio)** : au plafond de l'attente de l'indexeur (R15, R16), le lot est publié en **ordre de décodage** (message `ts-index-forced-publish`). L'ordre de présentation de ces images est alors approximatif. Les flux broadcast courants (GOP de 0,5 à 2 s) sont loin de ce plafond.
 
 ### 6.6 Autres limites connues
@@ -248,6 +280,11 @@ Effets visibles de R18 :
 - **`open_progressive`** attend la 1re vidéo de la PMT. Si elle n'a jamais d'image, il attend jusqu'à la fin du fichier. Sur un MPTS à PMT tardive, il peut choisir une autre vidéo qu'`open`.
 - **Paquet perdu dans un code de début** (R12) : deux AU peuvent fusionner en une, marquée `damaged`, au lieu d'une AU perdue.
 - **Discontinuité de PTS** (R14) : l'ordre de présentation est trié par segment, et les segments sont mis bout à bout en ordre de décodage.
+- **Unicité des PTS de l'index** (R20) : le Navigator identifie l'image sortie du décodeur par son PTS. Avant R20, deux segments R14 (épissure, `discontinuity_indicator`) ou un PTS estimé pouvaient porter le même PTS, et le Navigator pouvait servir **une autre image** sans erreur. Désormais :
+  - `ma-ts` garantit que `FrameEntry::pts` est **unique dans l'index d'un PID et strictement croissant avec `pres_idx`** (contrat écrit sur `ma_core::FrameEntry`). Chaque segment est décalé une durée d'image après le dernier PTS publié ; un PTS qui ne dépasse pas le précédent (PTS réel répété, PTS estimé, lot forcé R15) devient ce précédent + 1. Tests : `segments_get_unique_pts`, `published_pts_are_unique_and_increasing` (`crates/ma-ts/src/index.rs`).
+  - Le **PTS du flux** reste dans `AuInfo::pts_raw` (DTS dans le même repère). Le PTS de l'index n'est pas celui du flux dès le 2e segment : **les PTS affichés (M3, M6) doivent venir de `pts_raw`**.
+  - Le Navigator est défensif : une AU envoyée avec un PTS déjà en attente de sortie (ou déjà sorti) rend ce PTS ambigu ; l'image sortie sous un PTS ambigu n'est jamais attribuée, et la cible elle-même échoue en `FrameError::DuplicatePts`. Test : `duplicate_pts_never_serves_a_wrong_frame` (`crates/ma-decode/src/navigator.rs`).
+- **L'indexeur ne revalide pas le fichier pendant l'indexation** : ses lectures directes ne passent pas par les contrôles de `TsAuSource` (R17). Une lecture courte donne `Truncated` ; un contenu remplacé sans changement de taille n'est vu qu'**en fin d'indexation**, par `check_unchanged`, dans `open` comme dans `open_progressive` (erreur `Io(Modified)` au `join` du handle, l'index publié restant lisible).
 - **Lectures après troncature non prouvées pour les images en cache** : les tests montrent qu'une AU au-delà de la coupure est refusée. Ils ne montrent pas qu'une image déjà décodée, servie depuis le cache d'images du Navigator, reste cohérente après la coupure.
 - **Repli silencieux en cours de flux** : si FFmpeg écarte le hwaccel en cours de session (et non à la 1re image), le décodage passe en logiciel sans événement `FellBackToSoftware`. La réouverture multi-thread ne joue qu'à la 1re image.
 - **`CorruptAu` réémis après une réouverture silencieuse** : la réouverture redécode depuis le RAP de départ. Une AU corrompue de cet intervalle émet donc son événement `CorruptAu` une 2e fois.
@@ -262,7 +299,7 @@ Effets visibles de R18 :
 
   À lancer en utilisateur normal, **pas** par `sudo run.sh` : le script s'arrête s'il est lancé en root. Le script fait 3 exécutions en `auto` et 3 en `sw` de `engine_bench --progressive` sur `uhd_big` monté par NFSv4, avec 5 ms de latence (`tc netem`). Les JSON vont dans `target/bench/nfs/<horodatage>/`, à reporter dans la colonne « NFS 5 ms » du §2.2. Le script n'a pas été exécuté (décision R3) : seuls `bash -n` et l'analyse des options ont été vérifiés, shellcheck n'est pas installé sur la machine.
 - **Troncature côté serveur pendant un parcours** (2e critère de PERF.NET.01) : même commande, option `--truncate`. Elle copie `uhd_big` et la lit par un 2e montage sans cache d'attributs (`actimeo=0`). Elle tronque la copie de moitié côté serveur pendant les sauts. Le script vérifie que le banc s'arrête sur l'erreur `fichier tronqué`, sans planter. Il accepte aussi `fichier modifié`, que PERF.NET.01 admet, et l'annonce par un message distinct. Il échoue si le parcours finit sans erreur (« troncature non constatée ») ou sur toute autre erreur d'E/S (EIO, ESTALE…), qu'il cite. Pas encore faite. Le niveau `unit` est couvert en CI par `truncation_during_navigation_is_an_error_not_a_crash`.
-- **Amplification de lecture sur NFS** (blocs de 4 Mio, 2 anticipés) : pendant que le partage est monté par `tools/nfs-bench/run.sh`, lancer la commande du §3 sur le fichier monté :
+- **Amplification de lecture sur NFS** (blocs de 4 Mio, 2 anticipés, lus de façon synchrone : 12 Mio par défaut de cache, §3) : pendant que le partage est monté par `tools/nfs-bench/run.sh`, lancer la commande du §3 sur le fichier monté :
 
   ```bash
   cargo run --release -p ma-ts --example read_amp -- /mnt/ma-nfs/uhd_big.ts
