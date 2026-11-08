@@ -276,9 +276,11 @@ pub struct FakeFactory {
     /// Comme le pilote iHD : après une AU corrompue, un décodeur matériel renvoie une erreur `Gpu`
     /// (`EIO`) à chaque envoi d'AU jusqu'au RAP suivant, qu'il décode normalement.
     pub eio_after_corrupt: bool,
-    /// Avec `eio_after_corrupt` : le RAP suivant échoue aussi, et le matériel reste perdu (vraie
-    /// panne du GPU).
+    /// Avec `eio_after_corrupt` : le RAP suivant échoue aussi, et tout envoi suivant au décodeur
+    /// matériel échoue (`Gpu`, à l'envoi seulement : `receive` n'échoue pas à sa place).
     pub eio_on_next_rap: bool,
+    /// L'envoi de l'AU de ce `decode_idx` à un décodeur matériel échoue toujours (`Gpu`).
+    pub hw_fail_on_send: Option<u32>,
 }
 
 impl FakeFactory {
@@ -296,6 +298,7 @@ impl FakeFactory {
             silent_sw: false,
             eio_after_corrupt: false,
             eio_on_next_rap: false,
+            hw_fail_on_send: None,
         }
     }
 }
@@ -405,6 +408,9 @@ pub struct FakeDecoder {
     eio_on_next_rap: bool,
     /// Envois en échec `Gpu` jusqu'au prochain RAP (après une AU corrompue).
     eio_until_rap: bool,
+    /// Tout envoi échoue (`Gpu`) : panne simulée à l'envoi.
+    send_dead: bool,
+    fail_on_send: Option<u32>,
     /// Mode effectif : logiciel dès l'ouverture sans périphérique, sinon connu à la première
     /// image sortie.
     mode: DecodeMode,
@@ -436,6 +442,8 @@ impl FakeDecoder {
             eio_after_corrupt: f.eio_after_corrupt,
             eio_on_next_rap: f.eio_on_next_rap,
             eio_until_rap: false,
+            send_dead: false,
+            fail_on_send: f.hw_fail_on_send,
             // Sans périphérique : logiciel dès l'ouverture ; avec : inconnu jusqu'à la 1re image.
             mode: if hw_attached {
                 DecodeMode::Unknown
@@ -553,10 +561,10 @@ impl Decoder for FakeDecoder {
                 return Err(error(DecodeErrorKind::Gpu, "EIO après une AU corrompue"));
             }
             self.eio_until_rap = false;
-            if self.eio_on_next_rap {
-                self.failed = true;
-                self.check_failed()?;
-            }
+            self.send_dead = self.eio_on_next_rap;
+        }
+        if self.send_dead || (self.hw && self.fail_on_send == Some(entry.decode_idx)) {
+            return Err(error(DecodeErrorKind::Gpu, "EIO à l'envoi"));
         }
         if self.src.is_corrupt(entry.decode_idx) {
             self.eio_until_rap = self.hw && self.eio_after_corrupt;

@@ -427,7 +427,8 @@ impl Navigator {
     /// Exception (R18) : après une AU corrompue envoyée au décodeur matériel, une erreur `Gpu`
     /// d'envoi d'une AU qui n'est pas un RAP compte comme une AU corrompue, jusqu'à la prochaine
     /// image sortie, au prochain `reset` ou au premier RAP envoyé (pilote iHD : `EIO` jusqu'au
-    /// RAP suivant). Une vraie panne du GPU est ainsi détectée au plus un GOP plus tard.
+    /// RAP suivant). Une vraie panne du GPU est ainsi détectée au plus tard au premier envoi de la
+    /// session suivante.
     fn fetch(
         &mut self,
         pres_idx: u32,
@@ -664,20 +665,17 @@ impl Navigator {
                     }
                     Err(e) => return Err(FrameError::Decoder(e)),
                 };
-                if matches!(
+                let output = matches!(
                     received,
                     Received::Discarded { .. } | Received::Frame { .. }
-                ) && self.reopen_if_silent()
-                {
+                );
+                if output && self.reopen_if_silent() {
                     // Décodeur neuf : nouvelle session depuis le RAP, avec sa propre latence.
                     *s = Session::new(s.start);
                     limit = self.limit_for(target);
                     break;
                 }
-                if matches!(
-                    received,
-                    Received::Discarded { .. } | Received::Frame { .. }
-                ) {
+                if output {
                     s.after_corrupt = false;
                 }
                 let pts = match received {
@@ -1340,12 +1338,50 @@ mod tests {
         assert!(f.corrupt, "image du GOP de l'AU corrompue");
         get(&mut nav, 30);
         assert_eq!(nav.mode(), DecodeMode::Software);
-        let falls: Vec<_> = nav
-            .take_events()
-            .into_iter()
+        let events = nav.take_events();
+        // L'erreur du RAP 24 n'est pas prise pour une AU corrompue : c'est elle qui fait basculer.
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, DecodeEvent::CorruptAu { decode_idx: 24, .. })),
+            "{events:?}"
+        );
+        let falls: Vec<_> = events
+            .iter()
             .filter(|e| matches!(e, DecodeEvent::FellBackToSoftware { .. }))
             .collect();
-        assert_eq!(falls.len(), 1, "{falls:?}");
+        assert_eq!(falls.len(), 1, "{events:?}");
+        assert!(
+            matches!(falls[0], DecodeEvent::FellBackToSoftware { reason, .. } if reason.contains("EIO")),
+            "{falls:?}"
+        );
+    }
+
+    /// R18 : une image sortie après l'AU corrompue met fin à la tolérance ; une erreur `Gpu`
+    /// d'envoi d'une AU qui n'est pas un RAP fait alors basculer, une seule fois.
+    #[test]
+    fn gpu_error_after_frame_output_falls_back() {
+        let src = FakeSource::closed_gops(2, 24, 0).with_corrupt(HashSet::from([5]));
+        let mut nav = nav_with(FakeFactory {
+            hw_fail_on_send: Some(10),
+            ..FakeFactory::new(&src)
+        });
+        // AU 5 corrompue, images 6 et suivantes sorties, puis `Gpu` à l'envoi de l'AU 10.
+        let f = nav.frame(12, small(), &never).unwrap();
+        assert_eq!(oracle(&f.image), Some(12));
+        assert_eq!(nav.mode(), DecodeMode::Software);
+        let events = nav.take_events();
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, DecodeEvent::CorruptAu { decode_idx: 10, .. })),
+            "{events:?}"
+        );
+        let falls = events
+            .iter()
+            .filter(|e| matches!(e, DecodeEvent::FellBackToSoftware { .. }))
+            .count();
+        assert_eq!(falls, 1, "{events:?}");
     }
 
     #[test]
