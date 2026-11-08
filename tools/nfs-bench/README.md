@@ -58,7 +58,13 @@ Options : `--runs N` (défaut 3), `--delay MS` (défaut 5). Variables : `MA_CORP
      `uhd_big : N images …`) ;
    - tronque la copie de moitié **côté serveur** pendant les sauts. Si l'indexation n'est pas
      finie au bout de 300 s, le script l'annonce (« indexation non finie en 300 s ») et tronque
-     quand même, donc pendant l'indexation.
+     quand même, donc pendant l'indexation. La troncature passe par `truncate(2)` (Python
+     `os.truncate`) et non par `truncate` de coreutils : le serveur a accordé au client une
+     délégation NFSv4 de lecture, protégée par un bail noyau, et coreutils ouvre le fichier en
+     `O_NONBLOCK`, ce qui échoue en `EAGAIN` au lieu d'attendre le rappel de la délégation. Un
+     échec de la troncature arrête le script ;
+   - affiche la taille vue par le client à +0, +2 et +10 s, les options effectives du montage
+     et les compteurs `OPEN`, `GETATTR` et `DELEGRETURN` (diagnostic) ;
 
    Attendu : le banc s'arrête sur l'erreur de lecture (code 1, ligne
    `engine_bench : … lecture de la source : fichier tronqué : …`) et ne plante pas. Le script

@@ -225,8 +225,25 @@ if [[ $TRUNCATE -eq 1 ]]; then
         fi
     fi
     SIZE="$(stat -c %s "$CORPUS/$TRUNC_SUB/uhd_big.ts")"
-    truncate -s "$((SIZE / 2))" "$CORPUS/$TRUNC_SUB/uhd_big.ts"
-    echo "   tronqué côté serveur à $((SIZE / 2)) octets"
+    # Le serveur NFS a accordé au client une délégation de lecture (bail noyau) sur ce fichier :
+    # `truncate` (coreutils) ouvre en O_NONBLOCK et échoue alors en EAGAIN. truncate(2) par
+    # chemin, lui, attend que le bail soit rompu (rappel de la délégation par le serveur).
+    if ! ERR="$(python3 -I -c 'import os, sys; os.truncate(sys.argv[1], int(sys.argv[2]))' \
+        "$CORPUS/$TRUNC_SUB/uhd_big.ts" "$((SIZE / 2))" 2>&1)"; then
+        echo "ÉCHEC : troncature côté serveur impossible : $ERR" >&2
+        kill "$PID" 2>/dev/null
+        exit 1
+    fi
+    echo "   tronqué côté serveur à $((SIZE / 2)) octets ($(stat -c %s "$CORPUS/$TRUNC_SUB/uhd_big.ts") sur le serveur)"
+    # Diagnostic : taille vue par le client NFS (attendue : la nouvelle) et options effectives.
+    for delay in 0 2 10; do
+        sleep "$delay"
+        echo "   client après +${delay} s : $(stat -c %s "$MNT_NOAC/$TRUNC_SUB/uhd_big.ts" 2>&1) octets"
+    done
+    echo "   options du montage : $(grep " $MNT_NOAC " /proc/mounts || echo absent)"
+    echo "   rappels de délégation (DELEGRETURN) sur ce montage :"
+    awk -v m="$MNT_NOAC" '$1 == "device" { on = ($5 == m) } on && /^[[:space:]]*(DELEGRETURN|OPEN|GETATTR):/' \
+        /proc/self/mountstats | sed 's/^/     /'
     wait "$PID"
     CODE=$?
     set -e
