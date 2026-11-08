@@ -2,6 +2,7 @@
 
 mod ci;
 mod corpus;
+mod fuzz;
 mod matrix;
 mod requirements;
 mod results;
@@ -27,6 +28,15 @@ enum Cmd {
     Corpus {
         #[command(subcommand)]
         cmd: CorpusCmd,
+    },
+    /// Fuzzing des parseurs TS et ES (nightly + cargo-fuzz, cibles dans `fuzz/`).
+    Fuzz {
+        /// Durée par cible, en secondes.
+        #[arg(long, default_value_t = fuzz::DEFAULT_SECS)]
+        time: u64,
+        /// Une seule cible (défaut : toutes).
+        #[arg(long)]
+        target: Option<String>,
     },
     /// Enchaîne toutes les vérifications de la CI.
     Ci {
@@ -138,6 +148,7 @@ fn main() -> anyhow::Result<ExitCode> {
             corpus::generate(&repo_root(), big, out)?;
             true
         }
+        Cmd::Fuzz { time, target } => fuzz::run(&repo_root(), time, target.as_deref())?,
         Cmd::Ci { release } => ci::run(&repo_root(), release)?,
     };
     Ok(if ok {

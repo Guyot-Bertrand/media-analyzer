@@ -1,0 +1,55 @@
+[package]
+name = "ma-fuzz"
+description = "Cibles cargo-fuzz des parseurs TS et ES (hors workspace, nightly)"
+edition = "2024"
+license = "GPL-3.0-or-later"
+version = "0.0.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ma-core = { path = "../crates/ma-core" }
+ma-es = { path = "../crates/ma-es" }
+ma-io = { path = "../crates/ma-io", features = ["testing"] }
+ma-ts = { path = "../crates/ma-ts" }
+
+# Hors du workspace racine (D5) : nightly et sanitizers.
+[workspace]
+
+[[bin]]
+name = "ts_scan"
+path = "fuzz_targets/ts_scan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ts_index"
+path = "fuzz_targets/ts_index.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "es_h264"
+path = "fuzz_targets/es_h264.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "es_hevc"
+path = "fuzz_targets/es_hevc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "es_mpeg2"
+path = "fuzz_targets/es_mpeg2.rs"
+test = false
+doc = false
+bench = false

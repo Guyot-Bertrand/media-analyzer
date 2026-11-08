@@ -35,6 +35,20 @@ curl https://sh.rustup.rs -sSf | sh -s -- -y      # la version est fixée par ru
 cargo install cargo-nextest cargo-llvm-cov cargo-deny --locked
 ```
 
+Fuzzing des parseurs (facultatif ; sans nightly, `cargo xtask ci` affiche `nightly absent : fuzzing
+court non exécuté` et continue) : `cargo-fuzz` demande la chaîne nightly, installée à côté de la
+stable, sans changer la version par défaut du dépôt.
+
+```bash
+rustup toolchain install nightly --profile minimal
+cargo install cargo-fuzz --locked
+```
+
+`cargo xtask fuzz [--time <s>] [--target <nom>]` lance les cibles de `fuzz/` (600 s chacune par
+défaut) ; `cargo xtask ci` en lance 20 s chacune. Un plantage laisse l'entrée dans
+`fuzz/artifacts/<cible>/` (ignoré par git) : la corriger dans la crate, ajouter un test qui rejoue
+l'entrée.
+
 ## 3. Construire et vérifier
 
 ```bash

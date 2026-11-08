@@ -249,6 +249,10 @@ pub fn run(root: &Path, release: bool) -> anyhow::Result<bool> {
         return Ok(false);
     }
 
+    if !crate::fuzz::short_run(root)? {
+        return Ok(false);
+    }
+
     let junit = root.join("target/nextest/ci/junit.xml");
     let junit_arg = format!("unit={}", junit.to_string_lossy());
     let mut trace = vec!["xtask", "trace", "--results", &junit_arg];
