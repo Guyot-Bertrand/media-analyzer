@@ -9,10 +9,12 @@ use std::sync::Arc;
 use common::{band, check, navigator, never, quiet_ffmpeg, require_vpp, source, whole};
 use ma_decode::{
     AuSource, Codec, ConvertPath, DecodeErrorKind, DecodeEvent, DecodeMode, Decoder,
-    DecoderFactory, FrameError, ModePref, PictureType, PixelLayout, Received, Rect, Size, Viewport,
+    DecoderFactory, FrameError, FrameService, ModePref, PictureType, PixelLayout, PrefetchConfig,
+    Received, Rect, Size, Viewport,
 };
 use ma_ffmpeg::{FfmpegFactory, MAX_AU_BYTES, vaapi_available};
-use ma_testkit::{CorruptingSource, TsAuSource, corpus_file, manifest, require_vaapi};
+use ma_testkit::{CorruptingSource, corpus_file, manifest, require_vaapi};
+use ma_ts::TsAuSource;
 
 fn factory() -> FfmpegFactory {
     quiet_ffmpeg();
@@ -282,7 +284,7 @@ fn vaapi_detection() {
 
 #[test]
 fn oversized_au_rejected() {
-    assert_eq!(MAX_AU_BYTES, ma_testkit::MAX_AU_BYTES);
+    assert_eq!(MAX_AU_BYTES, ma_ts::MAX_AU_BYTES);
     let mut d = open(Codec::H264, ModePref::SoftwareOnly);
     let big = vec![0u8; MAX_AU_BYTES + 1];
     let err = d.send(0, &big).unwrap_err();
@@ -363,4 +365,52 @@ fn corrupted_au_real_decoder() {
         let next_gop = (bad_pres / m.gop + 1) * m.gop;
         check(&mut nav, name, next_gop + 1, vp, 0);
     }
+}
+
+/// Review Focus 2 : fichier tronqué à 50 % pendant la navigation (enregistrement coupé, NFS).
+/// Une image au-delà de la coupure est une erreur `Io`, une image avant reste servie, et le
+/// service répond encore.
+#[ma_trace::covers("PERF.NET.01")]
+#[test]
+fn truncation_during_navigation_is_an_error_not_a_crash() {
+    quiet_ffmpeg();
+    let name = "h264_720p_closed";
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("copie.ts");
+    std::fs::copy(corpus_file(name), &path).unwrap();
+    let src = Arc::new(TsAuSource::open(&path).unwrap());
+    let len = src.len();
+    let vp = band(manifest(name).dims());
+    let service = FrameService::start(
+        navigator(src, ModePref::SoftwareOnly),
+        PrefetchConfig::default(),
+    );
+    let code = |f: &ma_decode::DecodedFrame| common::code_of(f, vp);
+    let f = service.get(3, vp).unwrap();
+    assert_eq!(code(&f), Some(3));
+    let size = std::fs::metadata(&path).unwrap().len();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(size / 2)
+        .unwrap();
+    // Au-delà de la coupure (dernier GOP) : erreur d'E/S, sans panique.
+    let beyond = len - 10;
+    match service.get(beyond, vp).map(|f| f.pres_idx) {
+        Err(FrameError::Io(e)) => assert_ne!(e.len(), 0),
+        other => panic!("image {beyond} : FrameError::Io attendu, obtenu {other:?}"),
+    }
+    // Avant la coupure : servie, et le service répond toujours.
+    for p in [30, 31, 12] {
+        let f = service
+            .get(p, vp)
+            .unwrap_or_else(|e| panic!("image {p} : {e}"));
+        assert_eq!(code(&f), Some(p), "image {p}");
+    }
+    assert!(matches!(
+        service.get(beyond + 1, vp),
+        Err(FrameError::Io(_))
+    ));
+    assert_eq!(code(&service.get(50, vp).unwrap()), Some(50));
 }

@@ -1,6 +1,6 @@
 [package]
 name = "ma-testkit"
-description = "Outils de test et de banc : source d'AU sur TS, classification des NAL, numéro d'image incrusté, accès au corpus"
+description = "Outils de test et de banc : oracles, numéro d'image incrusté, accès au corpus, source d'AU corruptrice"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 ma-core = { path = "../ma-core" }
 ma-decode = { path = "../ma-decode" }
+ma-es = { path = "../ma-es" }
 fluent-syntax = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

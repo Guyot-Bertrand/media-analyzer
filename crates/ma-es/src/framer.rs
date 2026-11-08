@@ -31,11 +31,17 @@ pub(crate) trait NalParser: Send {
     /// Métadonnées de l'AU courante ; l'état de l'AU est remis à zéro (pas les jeux de
     /// paramètres).
     fn take(&mut self) -> AuMeta;
+    /// Vrai si un zéro qui précède `00 00 01` est le `zero_byte` d'un code de 4 octets
+    /// (H.264, HEVC : il appartient au NAL qui suit). Faux en MPEG-2, où le code fait toujours
+    /// 3 octets : les zéros d'avant finissent l'unité précédente.
+    fn four_byte_codes(&self) -> bool {
+        true
+    }
 }
 
 /// NAL en cours de réception.
 struct Pending {
-    /// Offset du code de début (y compris le `zero_byte` d'un code de 4 octets).
+    /// Offset du code de début (y compris le `zero_byte` d'un code de 4 octets, H.264 et HEVC).
     start: u64,
     /// Octets reçus après `00 00 01` (y compris les zéros du code de début suivant).
     len: u64,
@@ -150,8 +156,13 @@ impl<P: NalParser> AuFramer for Framer<P> {
             self.consume(&rest[..k]);
             let one_at = self.offset + k as u64;
             if self.zeros >= 2 {
-                // `00 00 01`, précédé d'un `zero_byte` s'il existe (code de 4 octets).
-                let back = if self.zeros >= 3 { 3 } else { 2 };
+                // `00 00 01`, précédé d'un `zero_byte` s'il existe (code de 4 octets, sauf en
+                // MPEG-2).
+                let back = if self.zeros >= 3 && self.parser.four_byte_codes() {
+                    3
+                } else {
+                    2
+                };
                 self.end_nal(out);
                 self.buf.clear();
                 self.pending = Some(Pending {

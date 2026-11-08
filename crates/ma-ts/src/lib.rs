@@ -1,6 +1,7 @@
 //! Démultiplexeur MPEG-2 TS maison (le moteur n'utilise jamais `FFmpeg` pour démultiplexer) :
 //! paquets de 188, 192 (TTS), 204 et 208 octets, détection du format, lecture séquentielle par
-//! blocs avec resynchronisation, messages identifiés par une clé Fluent.
+//! blocs avec resynchronisation, messages identifiés par une clé Fluent ; indexeur progressif
+//! et source d'AU ([`TsAuSource`], `impl AuSource`) pour le décodage.
 
 mod es_read;
 mod index;
@@ -9,6 +10,7 @@ mod packet;
 mod pes;
 mod psi;
 mod scan;
+mod source;
 mod structure;
 mod tables;
 #[cfg(any(test, feature = "testutil"))]
@@ -28,6 +30,7 @@ pub use pes::{
 };
 pub use psi::{Section, SectionAssembler, crc32_mpeg2};
 pub use scan::{OpenError, PacketScanner, ScannedPacket, probe};
+pub use source::{REVALIDATE_EVERY, TsAuSource};
 pub use structure::{EsInfo, Program, StructureBuilder, TsStructure};
 pub use tables::{
     AudioKind, Descriptor, Pat, Pmt, PmtStream, Sdt, SdtService, StreamKind, dvb_string, parse_pat,

@@ -4,8 +4,7 @@ use std::collections::HashSet;
 use std::io;
 
 use ma_decode::{AuSource, Codec, FrameEntry};
-
-use crate::nal::first_slice_payload_offset;
+use ma_es::first_slice_payload_offset;
 
 /// Enveloppe une source et met à zéro, pour les AU de `corrupt` (index de décodage), tous les octets
 /// qui suivent l'en-tête NAL de la première tranche (1 octet en H.264, 2 en HEVC, le code de

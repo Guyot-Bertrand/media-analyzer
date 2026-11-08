@@ -736,6 +736,37 @@ fn mpeg2_field_pictures_are_detected() {
     assert_eq!(aus[1].meta.rap, RapClass::None);
 }
 
+/// MPEG-2 : le code de début fait toujours 3 octets (`00 00 01`). Un octet nul qui le précède
+/// est la fin de la tranche précédente (donnée ou bourrage), jamais le début de l'AU suivante :
+/// le donner à l'AU suivante tronque la dernière tranche (constaté sur `mpeg2_576i_closed`,
+/// image 26 : macroblocs du coin inférieur droit faux, comme `ffmpeg` le place).
+#[test]
+fn mpeg2_zero_byte_before_a_start_code_stays_in_the_previous_au() {
+    let mut slice_ending_in_zero = SLICE.to_vec();
+    slice_ending_in_zero.extend_from_slice(&[0x5A, 0x00]);
+    let nals = vec![
+        SH.to_vec(),
+        SEQ_EXT.to_vec(),
+        gop(true, false),
+        picture(1),
+        slice_ending_in_zero.clone(),
+        picture(2), // 5
+        slice_ending_in_zero,
+        picture(2), // 7
+        SLICE.to_vec(),
+    ];
+    let (data, at) = mpeg2(&nals);
+    let spans: Vec<(u64, u64)> = run(Codec::Mpeg2, &data)
+        .iter()
+        .map(|a| (a.start, a.end))
+        .collect();
+    assert_eq!(
+        spans,
+        [(0, at[5]), (at[5], at[7]), (at[7], data.len() as u64)]
+    );
+    // H.264 et HEVC gardent le `zero_byte` du code de 4 octets dans l'AU qui suit.
+}
+
 #[test]
 fn mpeg2_broken_link_is_reported() {
     let (data, _) = mpeg2(&[gop(false, true), picture(1), SLICE.to_vec()]);
@@ -893,9 +924,12 @@ fn gap_keeps_au_completed_by_the_next_opener() {
         f.finish(&mut out);
         let spans: Vec<(u64, u64)> = out.iter().map(|a| (a.start, a.end)).collect();
         let total = (first.len() + second.len()) as u64;
+        // MPEG-2 : le code de début fait 3 octets, le zéro de tête (`es` écrit `00 00 00 01`)
+        // finit l'unité précédente.
+        let lead = u64::from(codec == Codec::Mpeg2);
         assert_eq!(
             spans,
-            [(0, opener_at), (first.len() as u64, total)],
+            [(lead, opener_at + lead), (first.len() as u64 + lead, total)],
             "{codec:?}"
         );
     }

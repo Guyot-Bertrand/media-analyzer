@@ -75,12 +75,14 @@ fn es_is_the_concatenation_of_ffprobe_packets() {
 fn au_count_and_sizes_match_ffprobe() {
     // AU dont la taille brute diffère de ffprobe (octets nuls seulement, voir plus bas). H.264 :
     // ffprobe commence aussi au `zero_byte`, aucun écart. HEVC : le décalage d'un octet de
-    // chaque début n'est pas compensé à la 1re et à la dernière AU. MPEG-2 : 2 paquets ffprobe
-    // finissent par `00`, ce qui touche chacun 2 AU voisines.
+    // chaque début n'est pas compensé à la 1re et à la dernière AU. MPEG-2 : le code de début
+    // fait 3 octets, un `00` qui le précède finit l'AU précédente, comme chez ffprobe : aucun
+    // écart (ces `00` sont parfois des données de la dernière tranche, voir `ma-ts`,
+    // `framemd5_oracle_checks_out_on_the_generated_corpus`).
     for (name, expected_raw_diff) in [
         ("h264_720p_closed", 0),
         ("hevc_720p_main10", 2),
-        ("mpeg2_576i_closed", 4),
+        ("mpeg2_576i_closed", 0),
         ("h264_1080i_mbaff", 0),
         ("hevc_720p_open_gop", 2),
         ("h264_720p_recovery", 0),
@@ -95,8 +97,8 @@ fn au_count_and_sizes_match_ffprobe() {
         for (k, (au, p)) in aus.iter().zip(&packets).enumerate() {
             let p_end = p_start + u64::from(p.size);
             // `trailing_zero_8bits` : ffprobe coupe au `00 00 01` et laisse le `zero_byte` qui
-            // le précède (code de début de 4 octets) à la fin de l'AU précédente (HEVC, MPEG-2) ;
-            // nous coupons avant ce `zero_byte`. L'écart ne porte que sur des octets nuls : la
+            // le précède (code de début de 4 octets) à la fin de l'AU précédente (HEVC) ; nous
+            // coupons avant ce `zero_byte`. L'écart ne porte que sur des octets nuls : la
             // comparaison les retire aux deux bouts.
             assert_eq!(
                 core(es, au.start, au.end),

@@ -8,7 +8,8 @@ use ma_decode::{
     AuSource, DecodedFrame, FrameError, ModePref, NavConfig, Navigator, Rect, Size, Viewport,
 };
 use ma_ffmpeg::{FfmpegFactory, vaapi_has_vpp};
-use ma_testkit::{TsAuSource, corpus_file, manifest, read_frame_code, require_vaapi};
+use ma_testkit::{corpus_file, manifest, read_frame_code, require_vaapi};
+use ma_ts::TsAuSource;
 
 /// Garde de la VPP (R14, R16) : `true` si `has_vpp`. Sinon affiche `VPP VA-API absente : test non
 /// exécuté` et rend `false`, sauf si `required` (`MA_REQUIRE_VPP=1` : alors le test échoue).
@@ -129,6 +130,17 @@ impl Lcg {
 
 /// 50 sauts (graine fixe), puis 20 images suivantes et 20 précédentes depuis le milieu du fichier.
 pub fn oracle_walk(name: &str, pref: ModePref, jumps: u32, vp_of: fn(Size) -> Viewport) {
+    oracle_walk_steps(name, pref, (jumps, 20), vp_of);
+}
+
+/// `jumps` sauts (graine fixe), puis `steps` images suivantes et `steps` précédentes depuis le
+/// milieu du fichier.
+pub fn oracle_walk_steps(
+    name: &str,
+    pref: ModePref,
+    (jumps, steps): (u32, u32),
+    vp_of: fn(Size) -> Viewport,
+) {
     let src = source(name);
     let len = src.len();
     let vp = vp_of(manifest(name).dims());
@@ -138,10 +150,10 @@ pub fn oracle_walk(name: &str, pref: ModePref, jumps: u32, vp_of: fn(Size) -> Vi
         check(&mut nav, name, rng.below(len), vp, 0);
     }
     let mid = len / 2;
-    for p in mid..mid + 20 {
+    for p in mid..mid + steps {
         check(&mut nav, name, p, vp, 0);
     }
-    for p in (mid - 1..mid + 19).rev() {
+    for p in (mid - 1..mid + steps - 1).rev() {
         check(&mut nav, name, p, vp, 0);
     }
     assert!(
@@ -153,4 +165,84 @@ pub fn oracle_walk(name: &str, pref: ModePref, jumps: u32, vp_of: fn(Size) -> Vi
 /// Erreur attendue pour une image non décodable.
 pub fn is_not_decodable(e: &FrameError) -> bool {
     matches!(e, FrameError::NotDecodable { .. })
+}
+
+/// Somme MD5 (RFC 1321) de `data`, en hexadécimal minuscule (format de `ffmpeg -f framemd5`).
+#[allow(clippy::many_single_char_names)]
+pub fn md5_hex(data: &[u8]) -> String {
+    const S: [u32; 64] = [
+        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5,
+        9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10,
+        15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+    ];
+    // K[i] = floor(|sin(i + 1)| × 2^32).
+    let k: Vec<u32> = (0..64)
+        .map(|i| {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let v = (f64::from(i + 1).sin().abs() * 4_294_967_296.0) as u32;
+            v
+        })
+        .collect();
+    let mut msg = data.to_vec();
+    let bit_len = (data.len() as u64).wrapping_mul(8);
+    msg.push(0x80);
+    while msg.len() % 64 != 56 {
+        msg.push(0);
+    }
+    msg.extend_from_slice(&bit_len.to_le_bytes());
+    let mut h: [u32; 4] = [0x6745_2301, 0xefcd_ab89, 0x98ba_dcfe, 0x1032_5476];
+    for block in msg.as_chunks::<64>().0 {
+        let m: Vec<u32> = block
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|w| u32::from_le_bytes(*w))
+            .collect();
+        let [mut a, mut b, mut c, mut d] = h;
+        for i in 0..64 {
+            let (f, g) = match i / 16 {
+                0 => ((b & c) | (!b & d), i),
+                1 => ((d & b) | (!d & c), (5 * i + 1) % 16),
+                2 => (b ^ c ^ d, (3 * i + 5) % 16),
+                _ => (c ^ (b | !d), (7 * i) % 16),
+            };
+            let f = f.wrapping_add(a).wrapping_add(k[i]).wrapping_add(m[g]);
+            a = d;
+            d = c;
+            c = b;
+            b = b.wrapping_add(f.rotate_left(S[i]));
+        }
+        for (x, y) in h.iter_mut().zip([a, b, c, d]) {
+            *x = x.wrapping_add(y);
+        }
+    }
+    h.iter()
+        .flat_map(|w| w.to_le_bytes())
+        .fold(String::new(), |mut s, b| {
+            use std::fmt::Write as _;
+            let _ = write!(s, "{b:02x}");
+            s
+        })
+}
+
+/// Octets d'une image à la manière de `framemd5` : chaque plan, ligne par ligne, sans le
+/// remplissage de fin de ligne (plans de chrominance 4:2:0 arrondis vers le haut).
+pub fn frame_bytes(img: &ma_decode::Planes) -> Vec<u8> {
+    use ma_decode::PixelLayout;
+    let (w, h) = (img.size.w as usize, img.size.h as usize);
+    let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
+    let dims: Vec<(usize, usize)> = match img.layout {
+        PixelLayout::Planar8 => vec![(w, h), (cw, ch), (cw, ch)],
+        PixelLayout::Planar10 => vec![(2 * w, h), (2 * cw, ch), (2 * cw, ch)],
+        PixelLayout::SemiPlanar8 => vec![(w, h), (2 * cw, ch)],
+        PixelLayout::SemiPlanar10 => vec![(2 * w, h), (4 * cw, ch)],
+    };
+    let mut out = Vec::new();
+    for ((plane, &stride), (row, rows)) in img.planes.iter().zip(&img.strides).zip(dims) {
+        for y in 0..rows {
+            let at = y * stride as usize;
+            out.extend_from_slice(&plane[at..at + row]);
+        }
+    }
+    out
 }

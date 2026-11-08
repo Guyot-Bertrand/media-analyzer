@@ -27,6 +27,8 @@ rsmpeg = { version = "0.18", default-features = false, features = ["link_system_
 
 [dev-dependencies]
 ma-testkit = { path = "../ma-testkit" }
+ma-ts = { path = "../ma-ts" }
+tempfile = "3"
 ma-trace = { path = "../ma-trace" }
 
 [features]

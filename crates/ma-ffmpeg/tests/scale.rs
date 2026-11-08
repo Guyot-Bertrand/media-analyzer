@@ -13,9 +13,8 @@ use ma_decode::{
     Size, Viewport,
 };
 use ma_ffmpeg::{FfmpegDecoder, FfmpegFactory};
-use ma_testkit::{
-    TsAuSource, corpus_file, corpus_file_if_present, manifest, read_frame_code, require_vaapi,
-};
+use ma_testkit::{corpus_file, corpus_file_if_present, manifest, read_frame_code, require_vaapi};
+use ma_ts::TsAuSource;
 
 const MAIN10: &str = "hevc_720p_main10";
 

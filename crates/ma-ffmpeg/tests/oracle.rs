@@ -3,15 +3,20 @@
 
 mod common;
 
+use std::path::Path;
+use std::sync::Arc;
+
 use common::{
-    band, check, is_not_decodable, navigator, never, oracle_walk, require_vpp, source, whole,
+    Lcg, band, check, frame_bytes, is_not_decodable, md5_hex, navigator, never, oracle_walk,
+    oracle_walk_steps, quiet_ffmpeg, require_vpp, source, whole,
 };
 use ma_decode::{
     AuSource, ConvertPath, DecodeEvent, DecodeMode, Leading, ModePref, NavConfig, NotDecodable,
     RapKind, start_for,
 };
 use ma_ffmpeg::FfmpegFactory;
-use ma_testkit::{manifest, require_vaapi};
+use ma_testkit::{corpus_file, ffmpeg_framemd5, manifest, private_corpus, require_vaapi};
+use ma_ts::TsAuSource;
 
 #[ma_trace::covers("NAV.ORACLE.01")]
 #[test]
@@ -203,4 +208,77 @@ fn cut_file_frames_before_rap_not_decodable() {
 #[test]
 fn mpeg2_oracle() {
     oracle_walk("mpeg2_576i_closed", ModePref::SoftwareOnly, 20, whole);
+}
+
+/// Démultiplexage réel : AU coupées entre deux PES, entrelacé MBAFF, PTS qui franchissent 2^33.
+/// 30 sauts, 10 pas avant et 10 arrière, en logiciel : numéro incrusté correct.
+#[ma_trace::covers("NAV.ORACLE.01")]
+#[test]
+fn oracle_on_split_pes_mbaff_and_pts_wrap() {
+    for name in [
+        "h264_720p_pes_split",
+        "h264_1080i_mbaff",
+        "h264_720p_pts_wrap",
+    ] {
+        oracle_walk_steps(name, ModePref::SoftwareOnly, (30, 10), whole);
+    }
+}
+
+/// `count` images de `path` tirées au hasard (graine fixe), décodées en logiciel à 1:1 à la
+/// profondeur native : MD5 des plans égal à celui de `ffmpeg -f framemd5` pour le même PTS.
+fn check_framemd5(path: &Path, count: u32) {
+    quiet_ffmpeg();
+    let src = Arc::new(TsAuSource::open(path).unwrap());
+    let oracle: std::collections::HashMap<i64, String> =
+        ffmpeg_framemd5(path).into_iter().collect();
+    let len = src.len();
+    let mut nav = navigator(src.clone(), ModePref::SoftwareOnly);
+    let full = nav
+        .probe_size(&never)
+        .unwrap_or_else(|e| panic!("{} : {e}", path.display()));
+    let mut rng = Lcg(0x5EED_0005);
+    let mut compared = 0;
+    for _ in 0..count {
+        let pres = rng.below(len);
+        let pts = src.entry(src.decode_idx_of(pres).unwrap()).unwrap().pts;
+        let frame = match nav.frame(pres, whole(full), &never) {
+            Ok(f) => f,
+            // Image de tête non décodable (fichier coupé) : ffmpeg ne la sort pas non plus.
+            Err(e) if is_not_decodable(&e) => continue,
+            Err(e) => panic!("{} : image {pres} : {e}", path.display()),
+        };
+        let expected = oracle
+            .get(&pts)
+            .unwrap_or_else(|| panic!("{} : PTS {pts} absent de framemd5", path.display()));
+        assert_eq!(
+            &md5_hex(&frame_bytes(&frame.image)),
+            expected,
+            "{} : image {pres} (PTS {pts})",
+            path.display()
+        );
+        compared += 1;
+    }
+    assert!(compared > 0, "{} : aucune image comparée", path.display());
+}
+
+#[ma_trace::covers("NAV.ORACLE.01")]
+#[test]
+fn oracle_framemd5_private() {
+    for path in private_corpus() {
+        check_framemd5(&path, 20);
+    }
+}
+
+/// L'oracle MD5 lui-même, sur le corpus généré (8 et 10 bits, MPEG-2) : sans lui, un corpus
+/// privé absent laisserait `check_framemd5` sans vérification.
+#[test]
+fn framemd5_oracle_checks_out_on_the_generated_corpus() {
+    assert_eq!(md5_hex(b""), "d41d8cd98f00b204e9800998ecf8427e");
+    assert_eq!(
+        md5_hex(b"The quick brown fox jumps over the lazy dog"),
+        "9e107d9d372bb6826bd81d3542a419d6"
+    );
+    for name in ["h264_720p_closed", "hevc_720p_main10", "mpeg2_576i_closed"] {
+        check_framemd5(&corpus_file(name), 4);
+    }
 }

@@ -22,8 +22,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ma-decode = { path = "../../../crates/ma-decode" }
 ma-ffmpeg = { path = "../../../crates/ma-ffmpeg" }
-# Source d'AU sur TS réservée aux tests et aux bancs (hypothèse « 1 PES = 1 AU »).
+# Manifeste du corpus (numéro incrusté) ; la source d'AU est celle du moteur (`ma-ts`).
 ma-testkit = { path = "../../../crates/ma-testkit" }
+ma-ts = { path = "../../../crates/ma-ts" }
 
 [lints.rust]
 unsafe_code = "forbid"

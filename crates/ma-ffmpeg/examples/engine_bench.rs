@@ -3,7 +3,8 @@
 //!
 //! ```text
 //! cargo run --release -p ma-ffmpeg --example engine_bench -- \
-//!     --file <ts> --mode auto|sw --view fit:1920x1080|1to1:1920x1080 --dwell-ms <n> [--json <out>]
+//!     --file <ts> --mode auto|sw --view fit:1920x1080|1to1:1920x1080 --dwell-ms <n> \
+//!     [--progressive] [--json <out>]
 //! ```
 //!
 //! Les scénarios de pas publient à part le premier pas (`first_ms`, juste après le placement,
@@ -17,7 +18,12 @@
 //! banc s'arrête (code 1) au premier écart. En `1to1`, si la région ne couvre pas toute la bande
 //! du numéro (image plus large que la zone), seuls les bits couverts sont comparés.
 //!
-//! Source TS de `ma-testkit` : réservée aux tests et aux bancs (hypothèse « 1 PES = 1 AU »).
+//! Source d'AU : `ma_ts::TsAuSource`. Par défaut, le fichier est indexé entièrement avant les
+//! mesures. Avec `--progressive`, il est ouvert par `open_progressive` : le banc mesure le
+//! temps jusqu'à la 1re image (ouverture comprise), attend la fin de l'indexation (durée
+//! publiée), puis déroule les scénarios. Le JSON reçoit alors un objet `progressive` : temps
+//! jusqu'à la 1re image, durée d'indexation, octets lus (indexeur, navigation) rapportés à la
+//! taille du fichier.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -30,7 +36,8 @@ use ma_decode::{
     Navigator, PrefetchConfig, Readiness, Rect, Size, Viewport,
 };
 use ma_ffmpeg::{FfmpegFactory, vaapi_available, vaapi_has_vpp};
-use ma_testkit::{TsAuSource, manifest, read_frame_code_bits};
+use ma_testkit::{manifest, read_frame_code_bits};
+use ma_ts::TsAuSource;
 
 /// Graine fixe des sauts aléatoires.
 const SEED: u64 = 0x4D41_5F42_454E_4348;
@@ -49,6 +56,7 @@ struct Args {
     view: View,
     dwell: Duration,
     json: Option<PathBuf>,
+    progressive: bool,
 }
 
 fn parse_size(s: &str) -> Result<Size, String> {
@@ -63,6 +71,7 @@ fn parse_size(s: &str) -> Result<Size, String> {
 fn parse_args() -> Result<Args, String> {
     let mut it = std::env::args().skip(1);
     let (mut file, mut pref, mut view, mut dwell, mut json) = (None, None, None, None, None);
+    let mut progressive = false;
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or(format!("{flag} attend une valeur"));
         match flag.as_str() {
@@ -87,6 +96,7 @@ fn parse_args() -> Result<Args, String> {
                 dwell = Some(Duration::from_millis(ms));
             }
             "--json" => json = Some(PathBuf::from(value()?)),
+            "--progressive" => progressive = true,
             other => return Err(format!("option inconnue : {other}")),
         }
     }
@@ -96,6 +106,7 @@ fn parse_args() -> Result<Args, String> {
         view: view.ok_or("--view requis")?,
         dwell: dwell.ok_or("--dwell-ms requis")?,
         json,
+        progressive,
     })
 }
 
@@ -246,26 +257,80 @@ fn json_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// Ouverture progressive : mesures de `--progressive`.
+struct Progressive {
+    /// Ouverture comprise, jusqu'à la réception de l'image 0.
+    first_frame_ms: f64,
+    /// Ouverture comprise, jusqu'à la fin de l'indexation.
+    index_ms: f64,
+    file_bytes: u64,
+    /// Octets lus par l'indexeur (lecture directe) et par la navigation (cache), à la fin de
+    /// l'indexation.
+    indexer_bytes: u64,
+    nav_bytes: u64,
+}
+
+impl Progressive {
+    #[allow(clippy::cast_precision_loss)]
+    fn ratio(&self, bytes: u64) -> f64 {
+        bytes as f64 / self.file_bytes.max(1) as f64
+    }
+}
+
+fn navigator(src: &Arc<TsAuSource>, pref: ModePref) -> Result<Navigator, String> {
+    let mut nav_cfg = NavConfig::default();
+    nav_cfg.cache_frames = nav_cfg.cache_frames.max(48);
+    Navigator::new(
+        Arc::clone(src) as Arc<dyn AuSource>,
+        Arc::new(FfmpegFactory::default()),
+        pref,
+        nav_cfg,
+    )
+    .map_err(|e| format!("navigateur : {e}"))
+}
+
+/// Ouvre `args.file` en progressif, mesure la 1re image puis attend la fin de l'indexation.
+fn open_progressive(
+    args: &Args,
+) -> Result<(Arc<TsAuSource>, FrameService, Size, Progressive), String> {
+    let t0 = Instant::now();
+    let (src, handle) =
+        TsAuSource::open_progressive(&args.file).map_err(|e| format!("ouverture : {e}"))?;
+    let src = Arc::new(src);
+    let service = FrameService::start(navigator(&src, args.pref)?, PrefetchConfig::default());
+    let full = service.probe_size().map_err(|e| format!("taille : {e}"))?;
+    service
+        .get(0, Viewport::fit(full, Size { w: 320, h: 180 }))
+        .map_err(|e| format!("image 0 : {e}"))?;
+    let first_frame_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    handle.join().map_err(|e| format!("indexation : {e}"))?;
+    let p = Progressive {
+        first_frame_ms,
+        index_ms: t0.elapsed().as_secs_f64() * 1000.0,
+        file_bytes: src.index().progress().bytes_total,
+        indexer_bytes: src.indexer_io_stats().bytes_read,
+        nav_bytes: src.io_stats().bytes_read,
+    };
+    Ok((src, service, full, p))
+}
+
 fn real_main() -> Result<(), String> {
     let args = parse_args()?;
-    let src = Arc::new(TsAuSource::open(&args.file).map_err(|e| format!("ouverture : {e}"))?);
+    let (src, service, full, progressive) = if args.progressive {
+        let (src, service, full, p) = open_progressive(&args)?;
+        (src, service, full, Some(p))
+    } else {
+        let src = Arc::new(TsAuSource::open(&args.file).map_err(|e| format!("ouverture : {e}"))?);
+        let service = FrameService::start(navigator(&src, args.pref)?, PrefetchConfig::default());
+        let full = service.probe_size().map_err(|e| format!("taille : {e}"))?;
+        (src, service, full, None)
+    };
     let total = src.len();
     if total < 5 {
         return Err(format!("{total} image(s) : le banc en demande au moins 5"));
     }
     let name = stem_of(&args.file);
     let modulo = manifest(&name).code_modulo;
-    let mut nav_cfg = NavConfig::default();
-    nav_cfg.cache_frames = nav_cfg.cache_frames.max(48);
-    let nav = Navigator::new(
-        Arc::clone(&src) as Arc<dyn AuSource>,
-        Arc::new(FfmpegFactory::default()),
-        args.pref,
-        nav_cfg,
-    )
-    .map_err(|e| format!("navigateur : {e}"))?;
-    let service = FrameService::start(nav, PrefetchConfig::default());
-    let full = service.probe_size().map_err(|e| format!("taille : {e}"))?;
     let vp = match args.view {
         View::Fit(area) => Viewport::fit(full, area),
         View::OneToOne(area) => Viewport::region_1to1(
@@ -342,6 +407,7 @@ fn real_main() -> Result<(), String> {
         convert_path: path_name(path),
         fell_back,
         rss_kib: peak_rss_kib(),
+        progressive,
     };
     report.print();
     if let Some(out) = &args.json {
@@ -364,6 +430,7 @@ struct Report<'a> {
     convert_path: &'static str,
     fell_back: bool,
     rss_kib: u64,
+    progressive: Option<Progressive>,
 }
 
 impl Report<'_> {
@@ -414,6 +481,16 @@ impl Report<'_> {
             self.stats.decoder.full_res_transfers
         );
         println!("RSS max : {} Mo", self.rss_kib / 1024);
+        if let Some(p) = &self.progressive {
+            println!(
+                "progressif : 1re image {:.1} ms, indexation {:.1} ms, octets lus / fichier : \
+                 indexeur {:.3}, navigation {:.3}",
+                p.first_frame_ms,
+                p.index_ms,
+                p.ratio(p.indexer_bytes),
+                p.ratio(p.nav_bytes)
+            );
+        }
     }
 
     fn write_json(&self, out: &Path) -> Result<(), String> {
@@ -452,7 +529,22 @@ impl Report<'_> {
                 s.bytes_per_frame
             );
         }
-        j.push_str("\n  ]\n}\n");
+        j.push_str("\n  ]");
+        if let Some(p) = &self.progressive {
+            let _ = write!(
+                j,
+                ",\n  \"progressive\": {{\"first_frame_ms\": {:.3}, \"index_ms\": {:.3}, \"file_bytes\": {}, \"indexer_bytes_read\": {}, \"nav_bytes_read\": {}, \"indexer_read_ratio\": {:.4}, \"nav_read_ratio\": {:.4}, \"read_ratio\": {:.4}}}",
+                p.first_frame_ms,
+                p.index_ms,
+                p.file_bytes,
+                p.indexer_bytes,
+                p.nav_bytes,
+                p.ratio(p.indexer_bytes),
+                p.ratio(p.nav_bytes),
+                p.ratio(p.indexer_bytes + p.nav_bytes)
+            );
+        }
+        j.push_str("\n}\n");
         if let Some(dir) = out.parent() {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }

@@ -1588,6 +1588,12 @@ impl IndexHandle {
         self.cancel.store(true, Ordering::Relaxed);
     }
 
+    /// Vrai si le fil d'indexation est terminé (ou n'a pas démarré) : `join` ne bloque plus.
+    #[must_use]
+    pub fn is_finished(&self) -> bool {
+        self.thread.as_ref().is_none_or(JoinHandle::is_finished)
+    }
+
     /// Attend la fin de l'indexation.
     ///
     /// # Errors

@@ -73,6 +73,10 @@ pub(crate) struct Mpeg2 {
 }
 
 impl NalParser for Mpeg2 {
+    fn four_byte_codes(&self) -> bool {
+        false
+    }
+
     fn header_cap(&self, first: u8) -> usize {
         if is_slice(first) {
             MAX_SLICE_HEADER_BYTES

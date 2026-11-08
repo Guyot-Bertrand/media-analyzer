@@ -9,7 +9,7 @@
 //! - Commandes : `initial_file`, `open`, `viewport`, `engine_stats`, `rss`.
 //!
 //! L'interface n'a qu'une demande explicite en vol (R8) : la suivante part après réception.
-//! Source TS de `ma-testkit` : réservée aux tests et aux bancs (hypothèse « 1 PES = 1 AU »).
+//! Source d'AU : `ma_ts::TsAuSource` (démultiplexeur du moteur, indexation complète à l'ouverture).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -22,7 +22,8 @@ use ma_decode::{
     PixelLayout, Planes, PrefetchConfig, Rect, Size, Viewport,
 };
 use ma_ffmpeg::{FfmpegFactory, vaapi_available, vaapi_has_vpp};
-use ma_testkit::{TsAuSource, manifest};
+use ma_testkit::manifest;
+use ma_ts::TsAuSource;
 use serde::Serialize;
 use tauri::Manager;
 use tauri::http::Response;

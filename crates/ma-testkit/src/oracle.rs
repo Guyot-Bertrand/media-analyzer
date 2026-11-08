@@ -151,13 +151,29 @@ pub fn ffmpeg_es(path: &Path) -> Vec<u8> {
     out.stdout
 }
 
-/// Somme MD5 de chaque image décodée (`-f framemd5`), `(pts, md5)` dans l'ordre de sortie.
+/// Somme MD5 de chaque image décodée (`-f framemd5`), `(pts, md5)` dans l'ordre de sortie. Le
+/// PTS est celui du flux, en 90 kHz (`-copyts`, base de temps du démultiplexeur, sans
+/// conversion de cadence) : celui de `ffprobe_frames` et de l'index.
 ///
 /// # Panics
 /// Si `ffmpeg` est absent, échoue ou produit une sortie inattendue.
 #[must_use]
 pub fn ffmpeg_framemd5(path: &Path) -> Vec<(i64, String)> {
-    let out = ffmpeg_run(path, &["-map", "0:v:0", "-f", "framemd5", "-"]);
+    let out = ffmpeg_run(
+        path,
+        &[
+            "-copyts",
+            "-map",
+            "0:v:0",
+            "-fps_mode",
+            "passthrough",
+            "-enc_time_base",
+            "demux",
+            "-f",
+            "framemd5",
+            "-",
+        ],
+    );
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
@@ -318,9 +334,15 @@ mod tests {
 
     #[test]
     fn framemd5_has_one_entry_per_frame() {
-        let m = ffmpeg_framemd5(&corpus_file("h264_720p_closed"));
+        let path = corpus_file("h264_720p_closed");
+        let m = ffmpeg_framemd5(&path);
         assert_eq!(m.len(), 250);
         assert_eq!(m[0].1.len(), 32);
+        // PTS du flux (90 kHz), ceux de ffprobe.
+        let mut pts: Vec<i64> = m.iter().map(|x| x.0).collect();
+        pts.sort_unstable();
+        let probe: Vec<i64> = ffprobe_frames(&path).iter().map(|f| f.pts).collect();
+        assert_eq!(pts, probe);
     }
 
     #[test]
