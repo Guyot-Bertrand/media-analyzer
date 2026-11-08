@@ -281,6 +281,9 @@ pub struct FakeFactory {
     pub eio_on_next_rap: bool,
     /// L'envoi de l'AU de ce `decode_idx` à un décodeur matériel échoue toujours (`Gpu`).
     pub hw_fail_on_send: Option<u32>,
+    /// Ordre de sortie imposé, comme le POC d'un vrai décodeur : clé de sortie de chaque
+    /// `decode_idx` (croissante = sortie plus tôt). `None` : sortie par `pts` croissant.
+    pub output_key: Option<Vec<i64>>,
 }
 
 impl FakeFactory {
@@ -299,8 +302,20 @@ impl FakeFactory {
             eio_after_corrupt: false,
             eio_on_next_rap: false,
             hw_fail_on_send: None,
+            output_key: None,
         }
     }
+
+    /// Clé de sortie de l'entrée `e` (voir [`Self::output_key`]).
+    fn key_of(&self, e: &FrameEntry) -> i64 {
+        output_key(self.output_key.as_deref(), e)
+    }
+}
+
+/// Clé de sortie de `e` : `keys[decode_idx]` si un ordre est imposé, sinon son `pts`.
+fn output_key(keys: Option<&[i64]>, e: &FrameEntry) -> i64 {
+    keys.and_then(|k| k.get(e.decode_idx as usize).copied())
+        .unwrap_or(e.pts)
 }
 
 impl FakeFactory {
@@ -316,12 +331,12 @@ impl FakeFactory {
         let target = src.entry(src.decode_idx_of(pres_idx).expect("image hors source"));
         let target = target.expect("entrée absente");
         let start = crate::start_for(src, target.decode_idx).expect("image non décodable");
-        let delay = (reorder_depth(src) + self.latency) as usize;
+        let delay = (reorder_depth(src, self.output_key.as_deref()) + self.latency) as usize;
         let mut buf = BTreeSet::new();
         for (sent, d) in (1u64..).zip(start..src.len()) {
-            buf.insert(src.entry(d).expect("entrée absente").pts);
+            buf.insert(self.key_of(&src.entry(d).expect("entrée absente")));
             while buf.len() > delay {
-                if buf.pop_first() == Some(target.pts) {
+                if buf.pop_first() == Some(self.key_of(&target)) {
                     return sent;
                 }
             }
@@ -343,13 +358,14 @@ impl DecoderFactory for FakeFactory {
     }
 }
 
-/// Nombre minimal d'images à garder en tampon pour sortir la source par `pts` croissant.
-fn reorder_depth(src: &FakeSource) -> u32 {
+/// Nombre minimal d'images à garder en tampon pour sortir la source par clé de sortie croissante
+/// (`pts`, ou l'ordre imposé `keys`).
+fn reorder_depth(src: &FakeSource, keys: Option<&[i64]>) -> u32 {
     let in_order = |depth: usize| {
         let mut buf = BTreeSet::new();
         let mut last = i64::MIN;
         for e in &src.entries {
-            buf.insert(e.pts);
+            buf.insert(output_key(keys, e));
             if buf.len() > depth {
                 let pts = buf.pop_first().unwrap_or(i64::MAX);
                 if pts < last {
@@ -375,12 +391,14 @@ struct Gop {
 #[derive(Debug, Clone, Copy)]
 struct Pending {
     pres_idx: u32,
+    pts: i64,
     corrupt: bool,
 }
 
 /// Décodeur simulé.
 ///
-/// Il sort les images par `pts` croissant, avec un retard de `reorder + latency` images. Une image
+/// Il sort les images par `pts` croissant (ou dans l'ordre imposé par
+/// [`FakeFactory::output_key`]), avec un retard de `reorder + latency` images. Une image
 /// sans référence décodée depuis le dernier `reset` n'est pas émise : image qui précède le premier
 /// RAP reçu, `Skippable` (ou image de l'intervalle de reprise d'un recovery point) dont le RAP
 /// précédent n'a pas été reçu. Une AU corrompue renvoie `InvalidData` (depuis `send`, ou depuis le
@@ -398,6 +416,8 @@ pub struct FakeDecoder {
     latency: u32,
     delay: Duration,
     reorder: u32,
+    /// Voir [`FakeFactory::output_key`].
+    keys: Option<Vec<i64>>,
     receives: u32,
     failed: bool,
     deferred: bool,
@@ -434,7 +454,8 @@ impl FakeDecoder {
             size: f.size,
             latency: f.latency,
             delay: f.au_delay,
-            reorder: reorder_depth(&f.source),
+            reorder: reorder_depth(&f.source, f.output_key.as_deref()),
+            keys: f.output_key.clone(),
             receives: 0,
             failed: false,
             deferred: f.deferred_corruption,
@@ -489,9 +510,10 @@ impl FakeDecoder {
             (true, None) => return,
         };
         self.buffer.insert(
-            e.pts,
+            output_key(self.keys.as_deref(), &e),
             Pending {
                 pres_idx: e.pres_idx,
+                pts: e.pts,
                 corrupt,
             },
         );
@@ -615,9 +637,10 @@ impl Decoder for FakeDecoder {
                 Received::NeedInput
             });
         }
-        let Some((pts, p)) = self.buffer.pop_first() else {
+        let Some((_, p)) = self.buffer.pop_first() else {
             return Ok(Received::Drained);
         };
+        let pts = p.pts;
         self.mode = if self.hw {
             DecodeMode::Hardware
         } else {
@@ -782,8 +805,23 @@ mod tests {
         assert_eq!(dec.mode(), DecodeMode::Hardware);
         assert_eq!(dec.stats().converted, 16);
         assert_eq!(dec.stats().full_res_transfers, 0);
-        assert_eq!(reorder_depth(&s), 1);
-        assert_eq!(reorder_depth(&FakeSource::recovery(2, 4, 1)), 0);
+        assert_eq!(reorder_depth(&s, None), 1);
+        assert_eq!(reorder_depth(&FakeSource::recovery(2, 4, 1), None), 0);
+    }
+
+    #[test]
+    fn decoder_follows_an_imposed_output_order() {
+        // Ordre de sortie distinct des `pts` (POC d'un vrai décodeur) : I0, puis 2, 3, 1.
+        let s = FakeSource::closed_gops(1, 4, 0);
+        let f = FakeFactory {
+            output_key: Some(vec![0, 3, 1, 2]),
+            ..FakeFactory::new(&s)
+        };
+        assert_eq!(reorder_depth(&s, f.output_key.as_deref()), 1);
+        let mut dec = f.open(s.codec(), ModePref::SoftwareOnly).unwrap();
+        let out = decode_range(&mut *dec, &s, 0, 4);
+        assert_eq!(pres(&out), [0, 2, 3, 1]);
+        assert_eq!(f.aus_until_output(2), 4);
     }
 
     #[test]

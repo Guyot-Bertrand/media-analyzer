@@ -41,8 +41,8 @@
 //!   strictement croissant avec `pres_idx`. À la publication, chaque segment est décalé pour que
 //!   sa 1re image (en présentation) suive d'une durée d'image (médiane des écarts, 3600 par
 //!   défaut) le dernier PTS publié ; un PTS qui ne dépasserait pas le précédent (PTS réel répété,
-//!   PTS estimé retombé sur un PTS sorti des 256 récents, lot forcé en ordre de décodage) devient
-//!   ce précédent + 1. Le PTS du flux, déroulé dans son segment, reste dans
+//!   PTS estimé retombé sur un PTS sorti des 256 récents, images de part et d'autre d'une coupe
+//!   forcée) devient ce précédent + 1. Le PTS du flux, déroulé dans son segment, reste dans
 //!   [`AuInfo::pts_raw`] (le DTS est dans le même repère) : c'est lui qu'on affiche.
 //! - **Préfixe publié** : L est le plus grand index de décodage d'un RAP r tel qu'un RAP
 //!   postérieur à r soit vu (ou que r ouvre un segment), que `max(PTS de [début du segment de
@@ -51,8 +51,11 @@
 //!   résolu à la fin de son segment l'est jusqu'à cette fin). En fin de fichier, L couvre tout.
 //!   Une entrée publiée ne change plus.
 //! - **Mémoire bornée sur entrée hostile** (R15) : au-delà de 4096 entrées ou 64 Mio d'ES en
-//!   attente, coupe forcée au dernier RAP vu, ou à défaut tout le lot en ordre de décodage
-//!   (`ts-index-forced-publish`) ; `recovery_frame_cnt` est borné à 256 ; chunks, PES et trous
+//!   attente, coupe forcée au dernier RAP vu, ou à défaut tout le lot (`ts-index-forced-publish`).
+//!   Un lot forcé est trié comme les autres, par (segment, PTS du flux) (R23) : un vrai décodeur
+//!   sort ses images dans cet ordre, et un ordre de décodage donnerait aux P suivies de B un PTS
+//!   d'index que le Navigator refuserait. Seules les images autour de la coupe, sur la
+//!   profondeur de réordonnancement, gardent un ordre approximatif ; `recovery_frame_cnt` est borné à 256 ; chunks, PES et trous
 //!   sont bornés en nombre (PES sans octet remplacés, trous consécutifs fusionnés).
 
 use std::collections::{BTreeMap, VecDeque};
@@ -902,15 +905,15 @@ impl EntryBuilder {
     /// Entrées à publier : le préfixe L, ou tout (`all`, fin du flux).
     fn publish(&mut self, all: bool) -> Option<Batch> {
         let k = if all { self.pending.len() } else { self.cut()? };
-        self.take(k, true)
+        self.take(k)
     }
 
     /// Attente au plafond (`MAX_PENDING` entrées ou `MAX_PENDING_BYTES`) : publie d'abord le
     /// préfixe normal (`cut`, sans message) s'il ramène l'attente sous le seuil bas, ce qui
     /// suffit sur un flux sain quand la publication périodique tarde. Sinon (flux sans RAP,
     /// point de reprise jamais résolu, entrée hostile) : coupe forcée au dernier RAP vu s'il
-    /// ramène l'attente sous le seuil bas, à défaut tout le lot en ordre de décodage
-    /// (`ts-index-forced-publish`).
+    /// ramène l'attente sous le seuil bas, à défaut tout le lot (`ts-index-forced-publish`),
+    /// trié par (segment, PTS du flux) comme tout lot (R23).
     fn forced(&mut self, sink: &mut dyn MessageSink) -> Option<Batch> {
         if self.pending.len() < MAX_PENDING && self.pending_bytes < MAX_PENDING_BYTES {
             return None;
@@ -919,7 +922,7 @@ impl EntryBuilder {
         // O(MAX_PENDING) par AU) ; elle n'est acceptée que si elle ramène l'attente sous le
         // seuil bas.
         if let Some(k) = self.cut().filter(|&k| self.drains(k)) {
-            return self.take(k, true);
+            return self.take(k);
         }
         let at_rap = self
             .pending
@@ -939,7 +942,7 @@ impl EntryBuilder {
             .pid(self.pid)
             .frame(self.base),
         );
-        self.take(k, at_rap.is_some())
+        self.take(k)
     }
 
     /// Publier les `k` premières entrées ramène l'attente sous le seuil bas (moitié des
@@ -977,17 +980,15 @@ impl EntryBuilder {
         }
     }
 
-    /// Publie les `k` premières entrées en attente ; `by_pts` : rang de présentation par
-    /// (segment, PTS), sinon rang de décodage.
-    fn take(&mut self, k: usize, by_pts: bool) -> Option<Batch> {
+    /// Publie les `k` premières entrées en attente : rang de présentation par (segment, PTS du
+    /// flux), lot forcé compris (R23), puis PTS de l'index dans cet ordre (R20).
+    fn take(&mut self, k: usize) -> Option<Batch> {
         if k == 0 {
             return None;
         }
         let mut batch: Vec<PendingEntry> = self.pending.drain(..k).collect();
         let mut order: Vec<usize> = (0..k).collect();
-        if by_pts {
-            order.sort_by_key(|&i| (batch[i].seg, batch[i].rec.pts_raw, i));
-        }
+        order.sort_by_key(|&i| (batch[i].seg, batch[i].rec.pts_raw, i));
         let base = self.base;
         let to_u32 = |i: usize| base + u32::try_from(i).unwrap_or(u32::MAX);
         let mut by_pres = Vec::with_capacity(k);
@@ -2840,7 +2841,7 @@ mod tests {
         for i in 0..N {
             ts.pes(PID, 3600 * (i + 1), &frame, 184);
         }
-        // Piste seule : attente bornée, lots forcés en ordre de décodage.
+        // Piste seule : attente bornée ; lots forcés triés par PTS (ici l'ordre de décodage).
         let mut track = Track::new(PID, Codec::Mpeg2, 0, None);
         let mut sink = VecSink::default();
         let forced = feed_track(&mut track, &ts.packets, &mut sink);
@@ -2851,7 +2852,8 @@ mod tests {
                 .enumerate()
                 .all(|(i, r)| b.by_pres[i] == r.pres_idx)
         }));
-        // Indexeur complet : toutes les images, `pres_idx` = rang de décodage, message.
+        // Indexeur complet : toutes les images, `pres_idx` = rang de décodage (PTS croissants
+        // en décodage), message.
         let (idx, sink, r, _) = run(ts.bytes());
         r.unwrap();
         let e = all(&idx, PID);
@@ -2916,6 +2918,82 @@ mod tests {
                 .iter()
                 .all(|m| m.id != "ts-index-forced-publish")
         );
+    }
+
+    /// Lot forcé IBBP (R23) : IDR, puis des groupes P B B (ordre de décodage) sans autre RAP,
+    /// jusqu'au plafond ; rend le lot publié.
+    fn forced_ibbp() -> Batch {
+        let mut b = EntryBuilder::new(0x100, Codec::H264, 0, None);
+        let mut sink = VecSink::default();
+        b.push(
+            rau(0, Some(0), meta(RapClass::Idr, true, PictureType::I)),
+            &mut sink,
+        );
+        let mut i = 1;
+        for g in 0..(MAX_PENDING as u64 - 1) / 3 {
+            let base = 3 * g * 3600;
+            for (pts, t, r) in [
+                (base + 3 * 3600, PictureType::P, true),
+                (base + 3600, PictureType::B, false),
+                (base + 2 * 3600, PictureType::B, false),
+            ] {
+                b.push(rau(i, Some(pts), meta(RapClass::None, r, t)), &mut sink);
+                i += 1;
+            }
+        }
+        b.flush(&mut sink);
+        let batch = b.forced(&mut sink).expect("lot forcé");
+        assert!(
+            sink.messages
+                .iter()
+                .any(|m| m.id == "ts-index-forced-publish")
+        );
+        batch
+    }
+
+    #[test]
+    fn forced_batch_gets_index_pts_in_stream_order() {
+        // R23 : même forcé, le lot reçoit ses rangs et ses PTS d'index dans l'ordre des PTS du
+        // flux, l'ordre où un vrai décodeur sort les images.
+        let batch = forced_ibbp();
+        assert_eq!(batch.records.len(), MAX_PENDING);
+        let mut r: Vec<&Record> = batch.records.iter().collect();
+        r.sort_by_key(|r| r.pres_idx);
+        assert!(r.windows(2).all(|w| w[0].pts_raw < w[1].pts_raw));
+        assert!(r.windows(2).all(|w| w[0].pts < w[1].pts));
+    }
+
+    #[test]
+    fn forced_batch_is_navigable_by_a_poc_order_decoder() {
+        // R23 : décodeur qui sort par POC (ordre des PTS du flux), et non par PTS de l'index.
+        // Toute image d'un lot forcé IBBP est servie, P comprises.
+        use ma_decode::fake::{FakeFactory, FakeSource, oracle};
+        use ma_decode::{ModePref, NavConfig, Navigator, Size, Viewport};
+        let batch = forced_ibbp();
+        let entries: Vec<FrameEntry> = (0u32..)
+            .zip(&batch.records)
+            .map(|(d, r)| r.entry(d))
+            .collect();
+        let src = FakeSource::from_entries(Codec::H264, entries.clone());
+        let factory = FakeFactory {
+            output_key: Some(batch.records.iter().map(|r| r.pts_raw).collect()),
+            ..FakeFactory::new(&src)
+        };
+        let mut nav = Navigator::new(
+            Arc::new(src),
+            Arc::new(factory),
+            ModePref::SoftwareOnly,
+            NavConfig::default(),
+        )
+        .unwrap();
+        let vp = Viewport::fit(ma_decode::fake::FAKE_SIZE, Size { w: 32, h: 18 });
+        // Les 4 premiers groupes : P (décodage 1, 4, 7, 10) et leurs B.
+        for e in &entries[..13] {
+            let frame = nav
+                .frame(e.pres_idx, vp, &|| false)
+                .unwrap_or_else(|err| panic!("image {} ({:?}) : {err}", e.pres_idx, e.picture));
+            assert_eq!(oracle(&frame.image), Some(e.pres_idx), "{:?}", e.picture);
+        }
     }
 
     #[test]

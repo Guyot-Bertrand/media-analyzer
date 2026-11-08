@@ -24,7 +24,7 @@ ma-bits = { path = "../ma-bits", features = ["writer"] }
 ma-ts = { path = ".", features = ["testutil"] }
 serde_json = "1"
 ma-io = { path = "../ma-io", features = ["testing"] }
-ma-decode = { path = "../ma-decode" }
+ma-decode = { path = "../ma-decode", features = ["fake"] }
 ma-testkit = { path = "../ma-testkit" }
 ma-trace = { path = "../ma-trace" }
 proptest = "1"
