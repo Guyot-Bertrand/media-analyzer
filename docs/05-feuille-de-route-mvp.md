@@ -41,6 +41,7 @@
 Décidés à la revue finale de M2a (détail dans `07-mesures-m2a.md` §5, §6.5 et §6.6) :
 
 - **M2b** : index persistant (SQLite) pour borner la mémoire de l'index, qui croît avec la durée et le nombre de programmes (entrées d'images et PCR de tous les programmes, environ 320 Mo par 24 h pour un SPTS à 25 i/s ; 07 §6.5).
+- **M2b** : ouvrir les fichiers hors du fil d'interface, avec un indicateur d'attente : un `open()` sur NFS peut bloquer environ 100 s (période de grâce d'un serveur qui redémarre) et ne s'interrompt pas (07 §6.5, §7).
 - **M3 et M6** : afficher le PTS du flux (`AuInfo::pts_raw`), jamais `FrameEntry::pts`, qui est le PTS de l'index, unique et décalé après une discontinuité (R20).
 - **M5** (API du Navigator) :
   - `FrameError::Io` typé (`Truncated`, `Modified`) au lieu d'un texte, pour que l'interface distingue un fichier tronqué d'un fichier remplacé ;

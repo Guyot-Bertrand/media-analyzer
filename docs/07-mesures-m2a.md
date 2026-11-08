@@ -14,7 +14,7 @@
 - Un vrai TS se navigue de bout en bout avec le démultiplexeur maison. Sur `uhd_big`, ouvert en progressif, la 1re image est servie par le moteur en **197–206 ms** (VA-API) et **535–546 ms** (logiciel). L'indexation complète prend **4,05–4,32 s**. Le saut est à **276–282 ms** au p95 en VA-API (moteur seul). Ce sont des mesures moteur, cache chaud : elles ne jugent pas PERF.OPEN.01 ni PERF.SEEK.01, dont l'acceptation est e2e (§2.2).
 - L'indexeur lit le fichier **une fois** (ratio 1,0000). La navigation, à travers le cache de blocs, lit **1,02 fois** les octets d'AU en lecture séquentielle et **1,95 fois** au saut. Le spike lisait 770 Ko par AU de 65 Ko, soit environ 11,8 fois (§3).
 - Les 5 parseurs ont tourné 10 min chacun sous `cargo-fuzz`, sans plantage (§5).
-- **Mesure NFS non faite** : le banc `tools/nfs-bench/run.sh` est écrit et vérifié (`bash -n`), mais il demande `sudo`. C'est au porteur de le lancer (§7).
+- **Mesures NFS à refaire** : les premiers passages du banc `tools/nfs-bench/run.sh` (porteur, 2026-11-08) ne sont **pas publiables** : la 1re exécution mesurait la période de grâce NFSv4 du serveur, les suivantes le cache de pages (§7). Le protocole est corrigé (décision R24). La **troncature sur NFS est constatée** : erreur affichée, sans plantage (§7).
 - **Corpus privé vide** : aucun vrai flux broadcast n'a été mesuré. PAFF n'est donc prouvé que sur des flux synthétiques, pas par le décodeur (§4, §6.2).
 - Par rapport à M1, à protocole égal, le moteur est **12 à 51 % plus lent selon la mesure** (§2.3). La cause de cet écart de temps n'est pas établie. La RSS gagne **+93 à +96 Mo en VA-API** et **+78 à +81 Mo en logiciel** ; environ 70 Mo s'expliquent par le code (cache de blocs plein, tampon de l'indexeur, entrées d'index), le reste n'est pas établi (§2.3).
 
@@ -91,7 +91,7 @@ Ces exigences se jugent **côté interface** (niveau e2e), et PERF.OPEN.01 **cac
 
 | Mesure | Seuil (exigence) | Moteur, disque local, VA-API | Moteur, disque local, logiciel | NFS 5 ms |
 |---|---|---|---|---|
-| 1re image après l'ouverture | < 2 s, cache froid (PERF.OPEN.01) | 197–206 ms (cache chaud) | 535–546 ms (cache chaud) | à mesurer (§7) |
+| 1re image après l'ouverture | < 2 s, cache froid (PERF.OPEN.01) | 197–206 ms (cache chaud) | 535–546 ms (cache chaud) | à mesurer, protocole R24 (§7) |
 | Indexation complète, en fond | — | 4,05–4,27 s | 4,27–4,32 s | à mesurer |
 | Saut p95 (100 sauts) | < 500 ms en matériel (PERF.SEEK.01) | 276–282 ms | 592–614 ms (pas de seuil, publié) | à mesurer |
 | Pas suivant p95 | < 100 ms (PERF.STEP.01) | 13,4–15,0 ms | 15,6–16,5 ms | à mesurer |
@@ -256,6 +256,7 @@ Effets visibles de R18 :
 
 - **Messages d'indexation jetés** : `TsAuSource::open` et `open_progressive` passent un puits `Discard` à l'indexeur. Les messages (`ts-cc-gap`, `ts-au-no-pts`, `ts-pts-discontinuity`…) sont produits et testés, mais aucun consommateur ne les reçoit encore. RF1 reste invisible pour l'utilisateur tant que le rapport (M2b) ne les reçoit pas.
 - **Fichier qui grossit** (enregistrement en cours) : vu comme `Modified`. `open` échoue, ou la source se bloque. À décider en M2b.
+- **Un `open()` sur NFS peut bloquer environ 100 s** (période de grâce du serveur après son redémarrage, §7) et ne s'interrompt que par un signal fatal. Le moteur ne peut pas raccourcir cette attente. L'interface (M2b, PERF.JOB.01) doit donc ouvrir les fichiers **hors du fil d'interface**, avec un indicateur d'attente.
 - **La mémoire de l'index croît avec la durée et le nombre de programmes** (R21), à rattacher à l'index SQLite de M2b. Tailles relues dans le code (`size_of`) :
   - par image : entrée stockée `Record` de **80 octets** + 4 octets de `by_pres`, soit **84 octets** ;
   - par échantillon de PCR : `PcrSample` de **32 octets** ; un PCR toutes les 20 à 40 ms (ETSI TR 101 290 : 40 ms au plus), soit 25 à 50 par seconde ;
@@ -277,6 +278,7 @@ Effets visibles de R18 :
 - **Troncature et cache par blocs** : le dernier bloc qui chevauche la coupure devient illisible en entier. Une AU qui finit juste avant la coupure, dans ce bloc, est refusée.
 - **Contenu remplacé** : il peut être servi depuis le cache pendant au plus 31 lectures d'AU, jusqu'au contrôle suivant (`REVALIDATE_EVERY = 32`).
 - **Troncature constatée pendant `open`** : l'ouverture échoue, au lieu de borner l'index.
+- **`open_progressive` sur un petit fichier tronqué (ou modifié) pendant l'indexation : `Ok` ou `Err` selon l'ordonnancement** (m-3 de la revue finale). La boucle d'attente regarde d'abord si le fil d'indexation est fini sans index complet, puis si une image est publiée. Si l'indexeur a déjà échoué quand elle regarde, l'ouverture rend l'erreur (`Truncated`, `Modified`) ; s'il n'a pas encore échoué et qu'une image est publiée, elle rend `Ok`, et l'erreur arrive par le `join` du handle. Sur un petit fichier, les deux cas se produisent d'une exécution à l'autre. Les deux issues sont des erreurs sans plantage ; un test ne doit accepter que les deux, pas l'une seule. Sur un gros fichier, l'ouverture rend `Ok` bien avant que l'indexeur n'arrive à la coupure.
 - **`open_progressive`** attend la 1re vidéo de la PMT. Si elle n'a jamais d'image, il attend jusqu'à la fin du fichier. Sur un MPTS à PMT tardive, il peut choisir une autre vidéo qu'`open`.
 - **Paquet perdu dans un code de début** (R12) : deux AU peuvent fusionner en une, marquée `damaged`, au lieu d'une AU perdue.
 - **Discontinuité de PTS** (R14) : l'ordre de présentation est trié par segment, et les segments sont mis bout à bout en ordre de décodage.
@@ -295,11 +297,41 @@ Effets visibles de R18 :
 - **NFS (PERF.NET.01)**, à lancer par le porteur (`sudo` demandé par le script ; Docker, `nfs-common` et le module `nfsd` requis, voir `tools/nfs-bench/README.md`) :
 
   ```bash
-  tools/nfs-bench/run.sh --truncate
+  tools/nfs-bench/run.sh --strace --truncate
   ```
 
-  À lancer en utilisateur normal, **pas** par `sudo run.sh` : le script s'arrête s'il est lancé en root. Le script fait 3 exécutions en `auto` et 3 en `sw` de `engine_bench --progressive` sur `uhd_big` monté par NFSv4, avec 5 ms de latence (`tc netem`). Les JSON vont dans `target/bench/nfs/<horodatage>/`, à reporter dans la colonne « NFS 5 ms » du §2.2. Le script n'a pas été exécuté (décision R3) : seuls `bash -n` et l'analyse des options ont été vérifiés, shellcheck n'est pas installé sur la machine.
-- **Troncature côté serveur pendant un parcours** (2e critère de PERF.NET.01) : même commande, option `--truncate`. Elle copie `uhd_big` et la lit par un 2e montage sans cache d'attributs (`actimeo=0`). Elle tronque la copie de moitié côté serveur pendant les sauts. Le script vérifie que le banc s'arrête sur l'erreur `fichier tronqué`, sans planter. Il accepte aussi `fichier modifié`, que PERF.NET.01 admet, et l'annonce par un message distinct. Il échoue si le parcours finit sans erreur (« troncature non constatée ») ou sur toute autre erreur d'E/S (EIO, ESTALE…), qu'il cite. Pas encore faite. Le niveau `unit` est couvert en CI par `truncation_during_navigation_is_an_error_not_a_crash`.
+  À lancer en utilisateur normal, **pas** par `sudo run.sh` : le script s'arrête s'il est lancé en root. Le script fait 3 exécutions en `auto` et 3 en `sw` de `engine_bench --progressive` sur `uhd_big` monté par NFSv4, avec 5 ms de latence (`tc netem`). Les JSON vont dans `target/bench/nfs/<horodatage>/`, à reporter dans la colonne « NFS 5 ms » du §2.2.
+
+  **Mesures précédentes non publiables.** Les passages du 2026-11-08 (`target/bench/nfs/20261108-210900`, `-213855`, `-215116`, `-221705`) ne sont pas publiés, pour trois raisons :
+  - **Période de grâce NFSv4 sur l'exécution 1.** Chaque passage démarre le serveur ; le noyau ouvre alors une grâce de 90 s, pendant laquelle tout `OPEN` est refusé (`NFS4ERR_GRACE`). L'image du conteneur n'a pas de `nfsdcld` pour la lever plus tôt. Journal du noyau (`journalctl -k -o short-precise`) :
+
+    ```text
+    nov. 08 21:09:04.278811 beber-NUC10i7 kernel: NFSD: Unable to initialize client recovery tracking! (-110)
+    nov. 08 21:09:04.278904 beber-NUC10i7 kernel: NFSD: starting 90-second grace period (net f00009a0)
+    nov. 08 21:39:11.142116 beber-NUC10i7 kernel: NFSD: starting 90-second grace period (net f000038d)
+    nov. 08 21:51:21.238134 beber-NUC10i7 kernel: NFSD: starting 90-second grace period (net f000038d)
+    nov. 08 22:23:14.286066 beber-NUC10i7 kernel: NFSD: starting 90-second grace period (net f000038d)
+    ```
+
+    Le client réessaie l'`OPEN` en doublant son délai de 0,1 à 15 s : le `open()` de `uhd_big.ts` ne passe qu'au 1er essai après la grâce, à t0 + 85,5 s ou t0 + 100,5 s. La 1re image (88,3 à 103,7 s) et l'indexation (105 à 130 s) comptaient cette attente : les deux exécutions `auto-1` donnent 103,70 et 103,61 s alors que leurs indexations diffèrent de 11 s. À titre indicatif (non publié), le parcours de troncature de `20261108-213855`, hors grâce et à cache client froid, donne 334 ms et 20,1 s. L'enquête est dans `.superpowers/sdd/2026-11-03-mvp-m2-socle-ts/nfs-first-frame-report.md`.
+  - **Cache de pages sur les exécutions 2 et 3.** Le serveur tourne sur la même machine : le fichier exporté et l'inode NFS du client restent dans le cache de pages de l'hôte (4 Go de `uhd_big` tiennent en RAM). Les exécutions suivantes mesuraient ce cache, pas le réseau.
+  - **Machine chargée** pendant le 1er passage (`20261108-210900` : CI et Gradle d'un autre projet, charge de 10 à 17).
+
+  **Protocole corrigé (décision R24)**, dans `tools/nfs-bench/run.sh` :
+  - après chaque montage, attente de la fin de la grâce : ouverture, sans lecture, d'un petit fichier du corpus (`timeout 150 sh -c ': < "$MNT/ts_ref.ts"'`), durée affichée ;
+  - avant **chaque** exécution, `uhd_big.ts` retiré du cache de pages côté client (`/mnt/ma-nfs/uhd_big.ts`) et côté serveur (`$MA_CORPUS_DIR/uhd_big.ts`) par `POSIX_FADV_DONTNEED`, sans privilège (`tools/nfs-bench/cache.py drop`), puis part résidente des deux affichée (`cache.py resident`, `mincore`). Au-delà de 1 %, le script avertit ; avec `--drop-caches`, il vide tout le cache (`sync; echo 3 | sudo tee /proc/sys/vm/drop_caches`) et contrôle de nouveau ;
+  - avec `--strace`, la 1re exécution de chaque mode passe sous `strace -f -tt -T -e trace=openat,read,pread64` : la durée de l'`openat` de `uhd_big.ts` montre directement une ouverture bloquée ;
+  - compteurs `OPEN`, `READ` et `GETATTR` du montage (`/proc/self/mountstats`) relevés avant et après chaque exécution ;
+  - `engine_bench --progressive` publie à part, depuis le même instant, la fin de l'ouverture (`progressive.open_ms`, retour de `TsAuSource::open_progressive`) et la taille d'image connue (`progressive.probe_ms`), en plus de `first_frame_ms` et `index_ms`. Sur disque local, `uhd_big`, VA-API, cache chaud : ouverture 106,0 ms, taille 165,3 ms, 1re image 189,1 ms, indexation 4 095,2 ms.
+
+  Reste à expliquer, après la nouvelle mesure : un écart d'environ 2,5 à 3 s entre la fin estimée du `open()` et la 1re image dans les passages pris pendant la grâce. Il dépasse le seuil de 2 s de PERF.OPEN.01 s'il se confirme hors grâce, à cache froid. Le 1er critère de PERF.NET.01 (seuils mesurés et publiés sur NFS) n'est donc **pas jugé** : la mesure est à refaire avec ce protocole.
+- **Troncature côté serveur pendant un parcours** (2e critère de PERF.NET.01) : **constatée sur NFS**, au niveau du moteur. Passage `target/bench/nfs/20261108-221705` (`run.sh --no-bench --truncate`) : le banc lit une copie de `uhd_big` par un 2e montage sans cache d'attributs (`actimeo=0,nosharecache`) ; la copie est tronquée de moitié côté serveur (`truncate(2)`) pendant les sauts. Le banc s'arrête avec le code 1, sans plantage :
+
+  ```text
+  engine_bench : image 38385 : lecture de la source : fichier tronqué : 4056183096 octets attendus, 2028091548 présents
+  ```
+
+  La période de grâce et le cache de pages ne touchent pas ce critère, qui ne mesure pas de temps : ce résultat reste valable. Le niveau `unit` est couvert en CI par `truncation_during_navigation_is_an_error_not_a_crash`. La partie « l'application reste utilisable » relève de l'interface (niveau e2e, M2b et suivants).
 - **Amplification de lecture sur NFS** (blocs de 4 Mio, 2 anticipés, lus de façon synchrone : 12 Mio par défaut de cache, §3) : pendant que le partage est monté par `tools/nfs-bench/run.sh`, lancer la commande du §3 sur le fichier monté :
 
   ```bash
