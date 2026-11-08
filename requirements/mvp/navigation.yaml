@@ -142,7 +142,7 @@
     - Seules les RASL du tout premier CRA du fichier sont déclarées non décodables.
   levels: [unit]
   source: 04 §4.5 (GOP ouverts)
-  status: validated
+  status: implemented
 
 - id: NAV.ORACLE.03
   title: Points de reprise H.264 (recovery point)
@@ -153,7 +153,7 @@
     - Sur un fichier H.264 sans IDR après la première image mais avec recovery points, un saut au milieu du fichier décode au plus un intervalle de reprise et affiche le bon code.
   levels: [unit]
   source: 04 §4.5 (points de reprise)
-  status: validated
+  status: implemented
 
 - id: NAV.ORACLE.04
   title: Image non décodable signalée

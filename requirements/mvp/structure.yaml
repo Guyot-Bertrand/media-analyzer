@@ -10,7 +10,7 @@
     - Le nombre de paquets compté est égal à taille du fichier / taille de paquet (fichier non tronqué).
   levels: [unit]
   source: 01 §2.4, §F1 ; CMA §Report View (paquets 188/204/208)
-  status: validated
+  status: implemented
 
 - id: STRUCT.OPEN.02
   title: Ouverture d'un TTS (TS avec horodatage de 4 octets)
@@ -94,7 +94,7 @@
     - Sans SDT, le nœud affiche seulement « Programme n ».
   levels: [unit]
   source: 01 §F1, §F18 (standard DVB)
-  status: validated
+  status: implemented
 
 - id: STRUCT.TREE.04
   title: Flux non supportés signalés génériquement

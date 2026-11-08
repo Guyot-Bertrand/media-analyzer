@@ -217,9 +217,9 @@ Quelle que soit l'option, le résultat dépend de la longueur du GOP. Il faut me
 ## 6. Mesures restant à faire
 
 - **Cache disque froid** : `drop_caches` demande les droits administrateur. Exigé par PERF.OPEN.01. En M7.
-- **Fichier sur partage réseau** (NFS en conteneur local, 5 ms de latence) : PERF.NET.01, en M2 (lecture positionnelle de `ma-io`) et en M7.
-- **Vrai flux broadcast UHD**, avec GOP ouverts et longueurs de GOP réelles : en M2 (`ma-ts` remplace la source de test) et en M7.
+- **Fichier sur partage réseau** (NFS en conteneur local, 5 ms de latence) : PERF.NET.01, en M2 (lecture positionnelle de `ma-io`) et en M7. *M2a : banc scripté (`tools/nfs-bench/`), mesure à lancer par le porteur (`sudo`), voir `07-mesures-m2a.md` §7 ; mesures locales de la source `ma-ts` dans 07 §2.*
+- **Vrai flux broadcast UHD**, avec GOP ouverts et longueurs de GOP réelles : en M2 (`ma-ts` remplace la source de test) et en M7. *M2a : `ma-ts` a remplacé la source de test (07 §2) ; le corpus privé est encore vide, la mesure reste à faire (07 §4 et §7).*
 - **VA-API sans VPP de bout en bout**, sur une vraie machine au pilote libre (moteur et interface). Seules des conversions forcées ont été mesurées ici.
 - **PSS en VA-API** sur le parcours d'interface complet.
 - **Options du §5** retenues par le porteur, à mesurer avec le même protocole.
-- **Repli logiciel mono-thread** : en Auto, après le refus d'un profil par VA-API, rouvrir une fois le décodeur en `SoftwareOnly` pour retrouver le multi-thread. Correction prévue en M2.
+- **Repli logiciel mono-thread** : en Auto, après le refus d'un profil par VA-API, rouvrir une fois le décodeur en `SoftwareOnly` pour retrouver le multi-thread. Correction prévue en M2. *Fait en M2a (réouverture multi-thread, Tâche 12), voir `07-mesures-m2a.md` §6.*

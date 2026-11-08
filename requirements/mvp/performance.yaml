@@ -105,7 +105,7 @@
     - Indexer le fichier de 4 Go augmente la mémoire de moins de 200 Mo (test en processus séparé).
   levels: [unit]
   source: 04 §3.2 (n° 5)
-  status: validated
+  status: implemented
 
 - id: PERF.NET.01
   title: Fichiers sur partage réseau
