@@ -5,16 +5,16 @@
 > Machine de référence : Intel NUC, i7-10710U, GPU Intel Comet Lake UHD, pilote iHD **non libre** (VPP présente), Ubuntu 24.04, FFmpeg 6.1, TSDuck, Docker.
 > Fichier de mesure : `uhd_big`, TS HEVC Main 10, 3840×2160, 50 i/s, GOP fermé de 50 images, 4 056 183 096 octets, **62 000 images**. Le numéro incrusté de chaque image est relu et comparé à l'attendu : aucun écart.
 > Source d'AU : `ma_ts::TsAuSource` (démultiplexeur maison, découpage des AU dans l'ES), et non plus la source de test « 1 PES = 1 AU » de M1.
-> Toutes les mesures sont faites sur **disque local, cache disque chaud**.
+> Les mesures locales sont faites sur **disque local, cache disque chaud** ; les mesures NFS (§2.2, §7) partent d'un **cache de pages froid**, côté client et côté serveur (protocole R24).
 
 ## 1. Verdict
 
-**M2a est implémenté. Les mesures locales sont faites ; la mesure NFS et les mesures sur flux réels restent à faire (§7).**
+**M2a est implémenté. Les mesures locales et NFS sont faites ; seules les mesures sur le corpus privé (flux réels) restent à faire (§7).**
 
 - Un vrai TS se navigue de bout en bout avec le démultiplexeur maison. Sur `uhd_big`, ouvert en progressif, la 1re image est servie par le moteur en **197–206 ms** (VA-API) et **535–546 ms** (logiciel). L'indexation complète prend **4,05–4,32 s**. Le saut est à **276–282 ms** au p95 en VA-API (moteur seul). Ce sont des mesures moteur, cache chaud : elles ne jugent pas PERF.OPEN.01 ni PERF.SEEK.01, dont l'acceptation est e2e (§2.2).
 - L'indexeur lit le fichier **une fois** (ratio 1,0000). La navigation, à travers le cache de blocs, lit **1,02 fois** les octets d'AU en lecture séquentielle et **1,95 fois** au saut. Le spike lisait 770 Ko par AU de 65 Ko, soit environ 11,8 fois (§3).
 - Les 5 parseurs ont tourné 10 min chacun sous `cargo-fuzz`, sans plantage (§5).
-- **Mesures NFS à refaire** : les premiers passages du banc `tools/nfs-bench/run.sh` (porteur, 2026-11-08) ne sont **pas publiables** : la 1re exécution mesurait la période de grâce NFSv4 du serveur, les suivantes le cache de pages (§7). Le protocole est corrigé (décision R24). La **troncature sur NFS est constatée** : erreur affichée, sans plantage (§7).
+- **NFS, 5 ms de latence** (PERF.NET.01, passage `20261108-232815`, protocole R24, cache de pages froid) : ouverture en **146–159 ms**, 1re image en **252–271 ms** (VA-API) et **594–627 ms** (logiciel), indexation en **17,2–18,8 s** (environ 4 fois le local), saut p95 **303–405 ms** (VA-API) et **649–690 ms** (logiciel), pas p95 **≤ 35 ms**. Mesures moteur, publiées sans jugement e2e (§2.2). La **troncature sur NFS est constatée** deux fois : erreur affichée, sans plantage (§7). Les passages précédents ne sont pas publiables : période de grâce NFSv4 et cache de pages (§7).
 - **Corpus privé vide** : aucun vrai flux broadcast n'a été mesuré. PAFF n'est donc prouvé que sur des flux synthétiques, pas par le décodeur (§4, §6.2).
 - Par rapport à M1, à protocole égal, le moteur est **12 à 51 % plus lent selon la mesure** (§2.3). La cause de cet écart de temps n'est pas établie. La RSS gagne **+93 à +96 Mo en VA-API** et **+78 à +81 Mo en logiciel** ; environ 70 Mo s'expliquent par le code (cache de blocs plein, tampon de l'indexeur, entrées d'index), le reste n'est pas établi (§2.3).
 
@@ -85,18 +85,63 @@ Deux exécutions de contrôle VA-API, faites entre les deux séries, concordent 
 
 Elles concordent aussi avec la mesure de la Tâche 11 (`f956fc9`) : 1re image 216,8 ms, indexation 4 017 ms, saut p95 284 ms.
 
-### 2.2 Face aux seuils de PERF.OPEN.01 et PERF.SEEK.01
+### 2.2 Face aux seuils de PERF.OPEN.01 et PERF.SEEK.01 : local et NFS
 
-Ces exigences se jugent **côté interface** (niveau e2e), et PERF.OPEN.01 **cache disque froid**. Les chiffres ci-dessous sont ceux du moteur seul, cache chaud. Ils sont publiés sans jugement e2e, comme le demande PERF.NET.01.
+Ces exigences se jugent **côté interface** (niveau e2e), et PERF.OPEN.01 **cache disque froid**. Les chiffres ci-dessous sont ceux du **moteur seul** : en local, cache chaud (§2.1) ; sur NFS, cache de pages froid au départ de chaque exécution. Ils sont publiés **sans jugement e2e**, comme le demande PERF.NET.01.
 
-| Mesure | Seuil (exigence) | Moteur, disque local, VA-API | Moteur, disque local, logiciel | NFS 5 ms |
-|---|---|---|---|---|
-| 1re image après l'ouverture | < 2 s, cache froid (PERF.OPEN.01) | 197–206 ms (cache chaud) | 535–546 ms (cache chaud) | à mesurer, protocole R24 (§7) |
-| Indexation complète, en fond | — | 4,05–4,27 s | 4,27–4,32 s | à mesurer |
-| Saut p95 (100 sauts) | < 500 ms en matériel (PERF.SEEK.01) | 276–282 ms | 592–614 ms (pas de seuil, publié) | à mesurer |
-| Pas suivant p95 | < 100 ms (PERF.STEP.01) | 13,4–15,0 ms | 15,6–16,5 ms | à mesurer |
-| Pas précédent p95 | < 100 ms (PERF.STEP.02) | 10,4–20,1 ms | 24,5–29,2 ms | à mesurer |
-| Octets lus / taille du fichier, fin d'indexation | — | 1,0005 | 1,0005 | à mesurer |
+**NFS : protocole.** `tools/nfs-bench/run.sh --truncate --strace` (porteur, 2026-11-08 23:28, passage `target/bench/nfs/20261108-232815`) : serveur NFSv4 en conteneur sur la même machine, `tc netem delay 5ms`, montage `vers=4.2` en lecture seule, `engine_bench --progressive --view fit:1920x1080 --dwell-ms 0` sur `/mnt/ma-nfs/uhd_big.ts`, 3 exécutions en `auto` puis 3 en `sw`. Protocole R24 (§7) : fin de la période de grâce attendue (grâce ouverte à 23:28:23,26 d'après `journalctl -k`, donc finie à 23:29:53 ; 1er `openat` du banc à 23:30:09,58), puis `uhd_big` retiré du cache de pages côté client et côté serveur avant **chaque** exécution. L'exécution 1 de chaque mode tourne sous `strace`. Même graine et mêmes scénarios qu'au §2.1. Durées en ms, comptées depuis l'instant qui précède l'ouverture.
+
+| Mode réel | Exéc. | Ouverture | Taille | 1re image | Indexation | Saut p50 / **p95** / max | Avant p50 / **p95** / max (1er) | Arrière p50 / **p95** / max (1er) | RSS max | Octets lus / fichier, fin d'indexation | `READ` NFS (octets reçus / fichier) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| VA-API / VPP | 1 (strace) | 148,1 | 226,9 | 255,7 | 18 826 | 215,5 / **360,1** / 419,1 | 12,8 / **17,4** / 90,8 (47,4) | 0,0 / **20,7** / 548,7 (578,8) | 449 Mo | 1,0031 | 4 375 (1,127) |
+| VA-API / VPP | 2 | 149,6 | 222,2 | 251,5 | 17 949 | 231,4 / **405,2** / 470,6 | 11,0 / **14,4** / 85,2 (44,6) | 0,0 / **10,5** / 457,4 (443,5) | 464 Mo | 1,0031 | 4 411 (1,139) |
+| VA-API / VPP | 3 | 159,4 | 237,4 | 271,0 | 18 208 | 180,0 / **302,7** / 342,6 | 10,8 / **13,9** / 88,8 (30,0) | 0,0 / **13,8** / 419,4 (438,4) | 452 Mo | 1,0031 | 4 175 (1,079) |
+| logiciel | 1 (strace) | 146,3 | 393,1 | 609,7 | 17 942 | 460,7 / **689,7** / 824,9 | 19,9 / **35,3** / 90,4 (244,3) | 0,0 / **33,5** / 834,4 (921,9) | 1 050 Mo | 1,0031 | 4 423 (1,137) |
+| logiciel | 2 | 153,1 | 412,0 | 627,1 | 17 744 | 425,6 / **674,1** / 702,6 | 11,8 / **17,1** / 84,6 (162,6) | 0,0 / **27,1** / 645,1 (692,0) | 1 047 Mo | 1,0031 | 4 512 (1,166) |
+| logiciel | 3 | 152,0 | 393,4 | 593,9 | 17 225 | 415,8 / **649,0** / 691,9 | 11,6 / **18,2** / 84,6 (157,5) | 0,0 / **27,8** / 714,4 (727,5) | 1 047 Mo | 1,0031 | 4 512 (1,165) |
+
+« Ouverture » : retour de `TsAuSource::open_progressive` (`progressive.open_ms`) ; « Taille » : taille d'image connue (`progressive.probe_ms`). Octets lus à la fin de l'indexation : indexeur 1,0000, navigation 0,0031 (12 582 912 octets, un seul appel `fetch` de 3 blocs de 4 Mio, celui de la 1re image). Colonne `READ` : opérations `READ` du montage entre le relevé d'avant et celui d'après l'exécution (`mountstats-<mode>-<i>-avant.txt`, `-apres.txt`), et octets reçus rapportés à la taille du fichier (en-têtes RPC compris, négligeables à 1 Mio par `READ`). Aller-retour moyen d'un `READ` : 6,6 à 6,8 ms (5 ms de `netem` plus le transfert). Aucune exécution n'a émis d'`OPEN` NFS : l'ouverture de `uhd_big.ts` par le banc a été servie localement, le compteur `OPEN` reste à 15 du 1er relevé au dernier : le client tient déjà l'état d'ouverture du fichier (délégation probable), obtenu lors des ouvertures précédentes (attente de la grâce, `cache.py`). Une 1re ouverture réelle coûterait en plus au moins un aller-retour (environ 7 ms).
+
+Dans les 6 exécutions : aucun repli logiciel imprévu, 0 transfert pleine résolution, 8 images suivantes et 8 précédentes prêtes 1 s après la dernière demande.
+
+**Cache froid au départ.** La part résidente de `uhd_big` affichée avant chaque exécution (`cache.py resident`) n'a été écrite que sur la console : **elle n'est pas dans les fichiers du passage**. Deux faits montrent que les exécutions sont bien froides : l'indexation est régulière, à 17,2–18,8 s contre environ 4 s en local, cache chaud ; et chaque exécution reçoit du serveur au moins la taille du fichier (`READ`, 1,08 à 1,17 fois). Dans les traces `strace`, les 965 lectures de 4 Mio de l'indexeur prennent 13–14 ms chacune en médiane (aucune sous 5 ms).
+
+**Les scénarios ne sont qu'en partie froids.** Le banc attend la fin de l'indexation avant les sauts et les pas. L'indexeur a alors lu tout le fichier à travers le cache de pages du client. Les lectures de la navigation (`fetch` de 12 Mio) y trouvent une partie de leurs blocs. Dans les traces `strace`, sur les 103 lectures de 12 Mio de chaque exécution 1, **51 (VA-API) et 46 (logiciel) prennent moins de 5 ms** (cache de pages). Les autres vont au serveur, jusqu'à 86 ms au p95 et 122 ms au plus. Les 8 à 17 % d'octets `READ` au-delà de la taille du fichier correspondent à ces lectures de navigation. Le saut sur NFS mesure donc un mélange de blocs servis par le réseau et par le cache de pages, et non un saut sur NFS entièrement froid.
+
+**Écarts entre exécutions (max/min).** Aucune exécution n'est écartée.
+
+| Série | 1re image | Indexation | Saut p95 | Pas avant p95 | Pas arrière p95 |
+|---|---|---|---|---|---|
+| VA-API | 1,08 | 1,05 | **1,34** | 1,25 | 1,97 |
+| logiciel | 1,06 | 1,04 | 1,06 | **2,06** | 1,24 |
+
+- L'ouverture, la 1re image et l'indexation varient peu (≤ 8 %).
+- Le **saut p95 en VA-API varie de 34 %** (302,7 à 405,2 ms). Il suit le nombre de `READ` NFS de l'exécution : 4 175 `READ` pour 302,7 ms, 4 375 pour 360,1 ms, 4 411 pour 405,2 ms. Plus de blocs lus au serveur, moins de blocs servis par le cache de pages : c'est cohérent avec le mélange décrit plus haut. Trois points ne prouvent pas cette relation. En logiciel, le saut varie peu (6 %), et le nombre de `READ` n'y suit pas le saut.
+- Les **pas p95** restent courts (10 à 35 ms), mais varient en proportion. Le plus long, 35,3 ms en avant, vient de l'exécution logicielle sous `strace` (1er pas 244 ms contre 158–163 ms). `strace` arrête le banc à chaque appel système, et peut donc expliquer cet écart ; ce n'est pas établi. Sur NFS, le pas avant atteint 85 à 91 ms au plus, contre 16 à 24 ms en local : un pas qui sort du cache de blocs attend la lecture de 12 Mio au serveur.
+- Charge de la machine : 3,4 sur 1 min, relevée par le porteur pendant le passage ; 1,74 / 4,83 / 4,63 (1, 5 et 15 min) relevé 3 min après la fin. Les exécutions logicielles chargent elles-mêmes plusieurs cœurs.
+
+**Comparaison au local (§2.1).**
+
+| Mesure | Seuil (exigence) | Local, VA-API (cache chaud) | NFS 5 ms, VA-API (cache froid) | Local, logiciel (cache chaud) | NFS 5 ms, logiciel (cache froid) |
+|---|---|---|---|---|---|
+| Ouverture (`open_ms`) | — | 106,0 ms (1 exécution, après coup*) | 148–159 ms | — | 146–153 ms |
+| 1re image après l'ouverture | < 2 s, cache froid (PERF.OPEN.01) | 197–206 ms | **252–271 ms** | 535–546 ms | **594–627 ms** |
+| Indexation complète, en fond | — | 4,05–4,27 s | 17,9–18,8 s | 4,27–4,32 s | 17,2–17,9 s |
+| Saut p95 (100 sauts) | < 500 ms en matériel (PERF.SEEK.01) | 276–282 ms | **303–405 ms** (cache en partie chaud) | 592–614 ms (pas de seuil, publié) | 649–690 ms |
+| Pas suivant p95 | < 100 ms (PERF.STEP.01) | 13,4–15,0 ms | 13,9–17,4 ms | 15,6–16,5 ms | 17,1–35,3 ms |
+| Pas précédent p95 | < 100 ms (PERF.STEP.02) | 10,4–20,1 ms | 10,5–20,7 ms | 24,5–29,2 ms | 27,1–33,5 ms |
+| RSS max | — | 389–392 Mo | 449–464 Mo | 959–962 Mo | 1 047–1 050 Mo |
+| Octets lus / taille du fichier, fin d'indexation | — | 1,0005 | 1,0031 | 1,0005 | 1,0031 |
+
+\* `open_ms` n'existait pas lors des séries du §2.1 : la valeur locale vient d'une exécution unique faite après l'ajout du champ (ouverture 106,0 ms, taille 165,3 ms, 1re image 189,1 ms, indexation 4 095 ms).
+
+Lecture :
+- **1re image** : +45 à +75 ms sur NFS en VA-API, +50 à +90 ms en logiciel, cache froid contre cache chaud. L'ouverture rend la main après 146–159 ms (1re publication de l'index, 2 blocs de 4 Mio lus par l'indexeur) ; la 1re image suit à **102–112 ms** en VA-API. Le moteur reste loin du seuil de 2 s de PERF.OPEN.01, qui se juge en e2e.
+- **Indexation** : 4,0 à 4,6 fois plus longue (215 à 235 Mo/s). L'indexeur lit par blocs de 4 Mio, un à la fois : chaque lecture paie l'aller-retour et le transfert.
+- **Saut** : +7 à +47 % au p95 en VA-API, +6 à +17 % en logiciel, avec un cache de pages en partie chaud (voir plus haut). Un saut sur NFS tout à fait froid n'est pas mesuré par ce banc.
+- **Pas** : du même ordre qu'en local au p95. Le maximum monte à environ 90 ms sur NFS (lecture de 12 Mio au serveur).
+- **RSS** : +57 à +75 Mo en VA-API, +85 à +91 Mo en logiciel. Le cache de blocs passe de 64 à 128 Mio en configuration distante (32 blocs de 4 Mio) : c'est l'explication probable, non vérifiée.
+- Octets lus : 1,0031 contre 1,0005, parce que le 1er `fetch` de la navigation lit 12 Mio sur NFS (3 blocs de 4 Mio) au lieu de 2 Mio.
 
 Le 2e critère de PERF.OPEN.01 (un saut au-delà de la partie indexée attend au lieu d'échouer, avec indicateur) n'est pas mesuré par ce banc : il attend la fin de l'indexation avant les scénarios.
 
@@ -294,13 +339,13 @@ Effets visibles de R18 :
 
 ## 7. Mesures restant à faire
 
-- **NFS (PERF.NET.01)**, à lancer par le porteur (`sudo` demandé par le script ; Docker, `nfs-common` et le module `nfsd` requis, voir `tools/nfs-bench/README.md`) :
+- **NFS (PERF.NET.01) : faite** (passage `target/bench/nfs/20261108-232815`, résultats au §2.2). Commande, lancée par le porteur (`sudo` demandé par le script ; Docker, `nfs-common` et le module `nfsd` requis, voir `tools/nfs-bench/README.md`) :
 
   ```bash
   tools/nfs-bench/run.sh --strace --truncate
   ```
 
-  À lancer en utilisateur normal, **pas** par `sudo run.sh` : le script s'arrête s'il est lancé en root. Le script fait 3 exécutions en `auto` et 3 en `sw` de `engine_bench --progressive` sur `uhd_big` monté par NFSv4, avec 5 ms de latence (`tc netem`). Les JSON vont dans `target/bench/nfs/<horodatage>/`, à reporter dans la colonne « NFS 5 ms » du §2.2.
+  À lancer en utilisateur normal, **pas** par `sudo run.sh` : le script s'arrête s'il est lancé en root. Le script fait 3 exécutions en `auto` et 3 en `sw` de `engine_bench --progressive` sur `uhd_big` monté par NFSv4, avec 5 ms de latence (`tc netem`). Les JSON vont dans `target/bench/nfs/<horodatage>/`, reportés au §2.2.
 
   **Mesures précédentes non publiables.** Les passages du 2026-11-08 (`target/bench/nfs/20261108-210900`, `-213855`, `-215116`, `-221705`) ne sont pas publiés, pour trois raisons :
   - **Période de grâce NFSv4 sur l'exécution 1.** Chaque passage démarre le serveur ; le noyau ouvre alors une grâce de 90 s, pendant laquelle tout `OPEN` est refusé (`NFS4ERR_GRACE`). L'image du conteneur n'a pas de `nfsdcld` pour la lever plus tôt. Journal du noyau (`journalctl -k -o short-precise`) :
@@ -324,21 +369,28 @@ Effets visibles de R18 :
   - compteurs `OPEN`, `READ` et `GETATTR` du montage (`/proc/self/mountstats`) relevés avant et après chaque exécution ;
   - `engine_bench --progressive` publie à part, depuis le même instant, la fin de l'ouverture (`progressive.open_ms`, retour de `TsAuSource::open_progressive`) et la taille d'image connue (`progressive.probe_ms`), en plus de `first_frame_ms` et `index_ms`. Sur disque local, `uhd_big`, VA-API, cache chaud : ouverture 106,0 ms, taille 165,3 ms, 1re image 189,1 ms, indexation 4 095,2 ms.
 
-  Reste à expliquer, après la nouvelle mesure : un écart d'environ 2,5 à 3 s entre la fin estimée du `open()` et la 1re image dans les passages pris pendant la grâce. Il dépasse le seuil de 2 s de PERF.OPEN.01 s'il se confirme hors grâce, à cache froid. Le 1er critère de PERF.NET.01 (seuils mesurés et publiés sur NFS) n'est donc **pas jugé** : la mesure est à refaire avec ce protocole.
-- **Troncature côté serveur pendant un parcours** (2e critère de PERF.NET.01) : **constatée sur NFS**, au niveau du moteur. Passage `target/bench/nfs/20261108-221705` (`run.sh --no-bench --truncate`) : le banc lit une copie de `uhd_big` par un 2e montage sans cache d'attributs (`actimeo=0,nosharecache`) ; la copie est tronquée de moitié côté serveur (`truncate(2)`) pendant les sauts. Le banc s'arrête avec le code 1, sans plantage :
+  **Vérifications du passage `20261108-232815`.**
+  - **L'ouverture ne bloque plus.** Dans `strace-auto-1.txt` et `strace-sw-1.txt`, l'`openat` de `/mnt/ma-nfs/uhd_big.ts` dure **41 µs** et **48 µs** (`openat(AT_FDCWD, "/mnt/ma-nfs/uhd_big.ts", O_RDONLY|O_CLOEXEC) = 3 <0.000041>`). Il a lieu à 23:30:09,58, 16 s après la fin de la grâce (ouverte à 23:28:23,26). `open_ms` vaut 146 à 159 ms dans les 6 exécutions.
+  - **Lectures NFS par exécution** (`mountstats`, opérations `READ`) : 4 375, 4 411 et 4 175 en VA-API ; 4 423, 4 512 et 4 512 en logiciel ; 1,08 à 1,17 fois la taille du fichier reçus du serveur. Aucun `OPEN` NFS pendant les exécutions ; 30 à 61 `GETATTR`.
+  - **Part résidente** avant chaque exécution : affichée sur la console seulement, absente des fichiers. Le caractère froid des exécutions se lit dans l'indexation régulière (17,2–18,8 s, contre environ 4 s en local) et dans les octets reçus du serveur (§2.2).
+
+  **Résiduel de l'enquête infirmé.** Le rapport d'enquête laissait ouvert un écart d'environ 2,5 à 3 s entre la fin estimée du `open()` et la 1re image, dans les passages pris pendant la grâce. Hors grâce, à cache froid, la 1re image arrive en **252–271 ms** en VA-API, 102–112 ms après la fin de l'ouverture : cet écart n'existe pas. Il venait de l'estimation de t0 à la seconde près, ou de la sortie de grâce elle-même, pas du moteur.
+
+  **État de PERF.NET.01.** 1er critère : les seuils de PERF.OPEN.01 et PERF.SEEK.01 sont **mesurés et publiés** sur NFS au niveau moteur (§2.2), sans jugement e2e ; le saut l'est avec un cache de pages client en partie chaud. 2e critère : troncature constatée au niveau moteur (ci-dessous). L'exigence reste `validated` : son niveau e2e (interface) manque.
+- **Troncature côté serveur pendant un parcours** (2e critère de PERF.NET.01) : **constatée sur NFS**, au niveau du moteur, dans deux passages : `target/bench/nfs/20261108-221705` (`run.sh --no-bench --truncate`) et `20261108-232815` (`run.sh --truncate --strace`, même image 38385, même message, code 1). Dans les deux, le banc lit une copie de `uhd_big` par un 2e montage sans cache d'attributs (`actimeo=0,nosharecache`) ; la copie est tronquée de moitié côté serveur (`truncate(2)`) pendant les sauts. Le banc s'arrête avec le code 1, sans plantage :
 
   ```text
   engine_bench : image 38385 : lecture de la source : fichier tronqué : 4056183096 octets attendus, 2028091548 présents
   ```
 
-  La période de grâce et le cache de pages ne touchent pas ce critère, qui ne mesure pas de temps : ce résultat reste valable. Le niveau `unit` est couvert en CI par `truncation_during_navigation_is_an_error_not_a_crash`. La partie « l'application reste utilisable » relève de l'interface (niveau e2e, M2b et suivants).
+  `truncate.txt` du passage `20261108-232815` porte la même ligne. La période de grâce et le cache de pages ne touchent pas ce critère, qui ne mesure pas de temps : ce résultat reste valable. Le niveau `unit` est couvert en CI par `truncation_during_navigation_is_an_error_not_a_crash`. La partie « l'application reste utilisable » relève de l'interface (niveau e2e, M2b et suivants).
 - **Amplification de lecture sur NFS** (blocs de 4 Mio, 2 anticipés, lus de façon synchrone : 12 Mio par défaut de cache, §3) : pendant que le partage est monté par `tools/nfs-bench/run.sh`, lancer la commande du §3 sur le fichier monté :
 
   ```bash
   cargo run --release -p ma-ts --example read_amp -- /mnt/ma-nfs/uhd_big.ts
   ```
 
-  Le script démonte le partage en fin de parcours : il faut lancer cette commande pendant ses mesures, ou en ajoutant une étape au script.
+  Le script démonte le partage en fin de parcours : il faut lancer cette commande pendant ses mesures, ou en ajoutant une étape au script. Pas faite. Le passage `20261108-232815` en donne une borne grossière par `mountstats` : 1,08 à 1,17 fois la taille du fichier reçus du serveur par exécution, indexation comprise (§2.2) ; une partie des lectures de la navigation est servie par le cache de pages du client.
 - **Corpus privé (D7)** : déposer dans `corpus/private/` au moins un HEVC UHD en GOP ouvert et un H.264 1080i (PAFF si possible), puis :
   - structure des GOP (longueurs, CRA, RASL, BLA, champs) en part des images ;
   - `MA_REQUIRE_GPU=1 cargo nextest run -p ma-ffmpeg --features ma-ffmpeg/ffmpeg6 oracle_framemd5_private` ;
