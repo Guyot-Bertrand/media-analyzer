@@ -207,12 +207,14 @@ impl TsAuSource {
     /// publications. L'abandon du handle annule l'indexation (l'index partiel reste valable).
     ///
     /// L'indexeur ne revalide pas le fichier pendant l'indexation (une lecture courte donne
-    /// `Truncated`) ; comme `open`, il contrôle son identité à la fin : un fichier modifié pendant
-    /// l'indexation donne `Io(Modified)` au `join` du handle, l'index publié restant lisible.
+    /// `Truncated`) ; comme `open`, il contrôle son identité à la fin, avant de publier l'index
+    /// complet. Un fichier modifié pendant l'indexation donne `Io(Modified)` : ici si
+    /// l'indexation est déjà finie, sinon au `join` du handle ; l'index publié reste lisible mais
+    /// n'est jamais `complete`.
     ///
     /// # Errors
-    /// Celles de [`probe`] ; `Io` si l'indexation échoue avant toute image ; `NoVideo` si elle
-    /// se termine sans flux vidéo.
+    /// Celles de [`probe`] ; `Io` si l'indexation a déjà échoué, ou échoue avant toute image ;
+    /// `NoVideo` si elle se termine sans flux vidéo.
     pub fn open_progressive(path: &Path) -> Result<(TsAuSource, IndexHandle), OpenError> {
         let o = open_file(path)?;
         // Comme `open` : identité du fichier contrôlée en fin d'indexation (erreur de `join`).
@@ -226,11 +228,21 @@ impl TsAuSource {
             Box::new(move || io.source().check_unchanged()),
         );
         let pid = loop {
+            // Fil fini sans index complet : l'indexation (ou le contrôle de fin) a échoué. Lu
+            // dans cet ordre : un fil fini a déjà publié son état final.
+            let finished = handle.is_finished();
+            let complete = o.index.progress().complete;
+            if finished && !complete {
+                return Err(match handle.join() {
+                    Err(e) => index_error(e),
+                    Ok(()) => OpenError::NoVideo,
+                });
+            }
             let first = candidates(&o.index).first().copied();
             if let Some(pid) = first.filter(|&p| published(&o.index, p) > 0) {
                 break pid;
             }
-            if o.index.progress().complete || handle.is_finished() {
+            if complete || finished {
                 if let Some(pid) = select(&o.index) {
                     break pid;
                 }

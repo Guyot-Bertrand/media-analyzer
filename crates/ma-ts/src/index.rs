@@ -1485,6 +1485,11 @@ impl<'o> Indexer<'o> {
 
     /// Publie le préfixe stable (ou tout, `all`) et l'avancement.
     fn publish(&mut self, all: bool, done: u64) {
+        self.publish_as(all, done, all);
+    }
+
+    /// Comme `publish`, avec `complete` publié à part (faux si le contrôle de fin a échoué).
+    fn publish_as(&mut self, all: bool, done: u64, complete: bool) {
         let batches: Vec<(usize, Batch)> = self
             .tracks
             .iter_mut()
@@ -1501,7 +1506,7 @@ impl<'o> Indexer<'o> {
             }
         }
         sh.progress.bytes_done = done;
-        sh.progress.complete = all;
+        sh.progress.complete = complete;
     }
 
     fn finish(&mut self, sink: &mut dyn MessageSink) {
@@ -1582,6 +1587,21 @@ pub fn index(
     sink: &mut dyn MessageSink,
     cancel: &AtomicBool,
 ) -> Result<(), IndexError> {
+    index_then(src, start, out, opts, sink, cancel, Box::new(|| Ok(())))
+}
+
+/// [`index`], puis `after` une fois tout lu et tout publié, mais **avant** de publier
+/// `progress().complete` : sur un échec de `after`, les entrées restent publiées et l'index
+/// n'est jamais vu complet.
+fn index_then(
+    src: &dyn ReadAt,
+    start: u64,
+    out: &TsIndex,
+    opts: &IndexOptions,
+    sink: &mut dyn MessageSink,
+    cancel: &AtomicBool,
+    after: AfterIndex,
+) -> Result<(), IndexError> {
     let guarded = Guarded {
         inner: src,
         failure: Mutex::new(None),
@@ -1622,8 +1642,9 @@ pub fn index(
         return Err(IndexError::Io(e));
     }
     ix.finish(sink);
-    ix.publish(true, src.len());
-    Ok(())
+    let checked = after();
+    ix.publish_as(true, src.len(), checked.is_ok());
+    checked.map_err(IndexError::Io)
 }
 
 /// Indexation en tâche de fond (fil `ma-index`). L'abandon du handle annule puis attend.
@@ -1648,9 +1669,9 @@ pub fn spawn_index(
 /// Contrôle lancé sur le fil d'indexation après une indexation complète.
 pub(crate) type AfterIndex = Box<dyn FnOnce() -> Result<(), IoError> + Send>;
 
-/// Comme [`spawn_index`], puis `after` sur le même fil si l'indexation est allée au bout ; son
-/// erreur devient celle de l'indexation (`open_progressive` y contrôle l'identité du fichier,
-/// comme `open`).
+/// Comme [`spawn_index`], avec `after` sur le même fil si l'indexation est allée au bout, avant
+/// que l'index soit publié complet ; son erreur devient celle de l'indexation et l'index n'est
+/// alors jamais vu complet (`open_progressive` y contrôle l'identité du fichier, comme `open`).
 pub(crate) fn spawn_index_then(
     src: Arc<dyn ReadAt>,
     start: u64,
@@ -1663,10 +1684,7 @@ pub(crate) fn spawn_index_then(
     let flag = cancel.clone();
     let spawned = std::thread::Builder::new()
         .name("ma-index".into())
-        .spawn(move || {
-            index(&*src, start, &out, &opts, &mut *sink, &flag)?;
-            after().map_err(IndexError::Io)
-        });
+        .spawn(move || index_then(&*src, start, &out, &opts, &mut *sink, &flag, after));
     let (thread, spawn_error) = match spawned {
         Ok(t) => (Some(t), None),
         Err(e) => (None, Some(IoError::Os(e))),
@@ -2771,12 +2789,18 @@ mod tests {
                 Box::new(VecSink::default()),
                 after,
             );
-            (h.join(), out.progress().complete)
+            let r = h.join();
+            let n = out.with_video(0x100, VideoIndex::published);
+            (r, out.progress().complete, n)
         };
-        let (r, complete) = spawn(Box::new(|| Err(IoError::Modified)));
+        let (r, complete, n) = spawn(Box::new(|| Err(IoError::Modified)));
         assert!(matches!(r, Err(IndexError::Io(IoError::Modified))), "{r:?}");
-        assert!(complete, "index complet malgré l'échec du contrôle");
-        assert!(spawn(Box::new(|| Ok(()))).0.is_ok());
+        // Entrées publiées, mais jamais `complete` : `open_progressive` ne rend pas Ok sur
+        // la foi d'un index complet dont le contrôle de fin a échoué.
+        assert!(!complete, "index vu complet malgré l'échec du contrôle");
+        assert_eq!(n, Some(1));
+        let (r, complete, n) = spawn(Box::new(|| Ok(())));
+        assert!(r.is_ok() && complete && n == Some(1));
     }
 
     #[test]
