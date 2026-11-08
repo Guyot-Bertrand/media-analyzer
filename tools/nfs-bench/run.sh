@@ -3,8 +3,9 @@
 #
 # 1. serveur NFSv4 en conteneur Docker --privileged qui exporte $MA_CORPUS_DIR ;
 # 2. latence de 5 ms (tc netem) sur le pont Docker dédié ;
-# 3. montage dans /mnt/ma-nfs ;
-# 4. engine_bench --progressive sur uhd_big, en auto et en sw, RUNS exécutions par mode ;
+# 3. montage dans /mnt/ma-nfs, puis attente de la fin de la période de grâce NFSv4 (R24) ;
+# 4. engine_bench --progressive sur uhd_big, en auto et en sw, RUNS exécutions par mode, chacune
+#    à cache de pages froid (client et serveur, R24) ;
 # 5. (option --truncate) troncature côté serveur d'une copie pendant un parcours ;
 # 6. démontage et nettoyage, même en cas d'échec (trap).
 #
@@ -23,11 +24,15 @@ fi
 usage() {
     cat <<'EOF'
 Usage : tools/nfs-bench/run.sh [--runs N] [--delay MS] [--truncate] [--no-bench]
+                               [--drop-caches] [--strace]
 
-  --runs N     exécutions par mode (défaut : 3)
-  --delay MS   latence ajoutée par tc netem, en ms (défaut : 5)
-  --truncate   ajoute le test de troncature côté serveur pendant un parcours
-  --no-bench   saute les mesures (avec --truncate : troncature seule)
+  --runs N       exécutions par mode (défaut : 3)
+  --delay MS     latence ajoutée par tc netem, en ms (défaut : 5)
+  --truncate     ajoute le test de troncature côté serveur pendant un parcours
+  --no-bench     saute les mesures (avec --truncate : troncature seule)
+  --drop-caches  en secours, si uhd_big reste résident à plus de 1 % après
+                 POSIX_FADV_DONTNEED : sync; echo 3 | sudo tee /proc/sys/vm/drop_caches
+  --strace       1re exécution de chaque mode sous strace (openat, read, pread64)
 
 Variables : MA_CORPUS_DIR (défaut ~/media-analyzer-corpus/generated),
             MA_FFMPEG_FEATURE (défaut ma-ffmpeg/ffmpeg6),
@@ -39,12 +44,16 @@ RUNS=3
 DELAY_MS=5
 TRUNCATE=0
 BENCH=1
+DROP_CACHES=0
+STRACE=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --runs) RUNS="$2"; shift 2 ;;
         --delay) DELAY_MS="$2"; shift 2 ;;
         --truncate) TRUNCATE=1; shift ;;
         --no-bench) BENCH=0; shift ;;
+        --drop-caches) DROP_CACHES=1; shift ;;
+        --strace) STRACE=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "option inconnue : $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -67,12 +76,24 @@ MNT_NOAC=/mnt/ma-nfs-noac
 TRUNC_SUB=nfs-trunc
 OUT="$REPO/target/bench/nfs/$(date +%Y%m%d-%H%M%S)"
 BENCH_BIN="$REPO/target/release/examples/engine_bench"
+CACHE_PY="$REPO/tools/nfs-bench/cache.py"
+# Petit fichier du corpus de base, ouvert sans être lu pour attendre la fin de la grâce NFSv4.
+GRACE_PROBE=ts_ref.ts
 
 [[ -f "$CORPUS/uhd_big.ts" ]] || {
     echo "uhd_big absent : lancer cargo xtask corpus gen --big ($CORPUS)" >&2
     exit 1
 }
+[[ -f "$CORPUS/$GRACE_PROBE" ]] || {
+    echo "$GRACE_PROBE absent : lancer cargo xtask corpus gen ($CORPUS)" >&2
+    exit 1
+}
 command -v docker >/dev/null || { echo "docker absent" >&2; exit 1; }
+command -v python3 >/dev/null || { echo "python3 absent" >&2; exit 1; }
+if [[ $STRACE -eq 1 ]] && ! command -v strace >/dev/null; then
+    echo "AVERTISSEMENT : strace absent (paquet strace) : --strace ignoré" >&2
+    STRACE=0
+fi
 command -v mount.nfs4 >/dev/null || command -v /sbin/mount.nfs4 >/dev/null || {
     echo "mount.nfs4 absent : installer nfs-common" >&2
     exit 1
@@ -165,20 +186,74 @@ mount_nfs() {
     return 1
 }
 
+# wait_grace <point de montage> : le serveur vient de démarrer et refuse tout OPEN pendant sa
+# période de grâce NFSv4 (90 s, NFS4ERR_GRACE) ; le client réessaie en doublant son délai
+# jusqu'à 15 s. Ouvrir un petit fichier sans le lire bloque jusqu'à la fin de la grâce, sans
+# réchauffer uhd_big. Sans cette attente, la 1re exécution mesure la grâce (85 à 100 s).
+wait_grace() {
+    echo "== attente de la fin de la période de grâce NFSv4 (≤ 90 s) : ouverture de $1/$GRACE_PROBE"
+    local start=$SECONDS
+    if ! timeout 150 sh -c ': < "$1"' sh "$1/$GRACE_PROBE"; then
+        echo "période de grâce NFSv4 non levée en 150 s ($1/$GRACE_PROBE)" >&2
+        exit 1
+    fi
+    echo "   ouverture obtenue après $((SECONDS - start)) s"
+}
+
+# mountstats <point de montage> <fichier> : compteurs OPEN, READ et GETATTR du montage
+# (/proc/self/mountstats : opérations, transmissions, délais cumulés en ms…).
+mountstats() {
+    awk -v m="$1" '$1 == "device" { on = ($5 == m) } on && /^[[:space:]]*(OPEN|READ|GETATTR):/' \
+        /proc/self/mountstats >"$2"
+}
+
+# cold_cache : retire uhd_big du cache de pages, côté client (inode NFS) et côté serveur (fichier
+# exporté, dans le cache de pages du même hôte), puis affiche la part résidente des deux.
+cold_cache() {
+    python3 -I "$CACHE_PY" drop "$MNT/uhd_big.ts" "$CORPUS/uhd_big.ts"
+    local code=0
+    python3 -I "$CACHE_PY" resident --max-percent 1 "$MNT/uhd_big.ts" "$CORPUS/uhd_big.ts" \
+        | sed 's/^/   résidence : /' || code=$?
+    [[ $code -eq 0 ]] && return 0
+    [[ $code -ne 3 ]] && { echo "contrôle du cache de pages impossible (code $code)" >&2; exit 1; }
+    if [[ $DROP_CACHES -eq 0 ]]; then
+        echo "AVERTISSEMENT : uhd_big reste résident à plus de 1 % : mesure peut-être en cache chaud ; relancer avec --drop-caches (sync; echo 3 | sudo tee /proc/sys/vm/drop_caches)" >&2
+        return 0
+    fi
+    echo "   plus de 1 % résident : sync; echo 3 | sudo tee /proc/sys/vm/drop_caches"
+    sync
+    echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null
+    code=0
+    python3 -I "$CACHE_PY" resident --max-percent 1 "$MNT/uhd_big.ts" "$CORPUS/uhd_big.ts" \
+        | sed 's/^/   résidence : /' || code=$?
+    if [[ $code -ne 0 ]]; then
+        echo "AVERTISSEMENT : uhd_big reste résident à plus de 1 % malgré drop_caches" >&2
+    fi
+}
+
 echo "== montage $IP:/ sur $MNT"
 mount_nfs "$MNT" "" || { echo "montage NFS impossible" >&2; exit 1; }
 MOUNTED=1
 grep " $MNT " /proc/mounts
 ping -c 3 -q "$IP" | tail -1 || true
+wait_grace "$MNT"
 
 mkdir -p "$OUT"
 if [[ $BENCH -eq 1 ]]; then
     for mode in auto sw; do
         for i in $(seq 1 "$RUNS"); do
-            echo "== engine_bench --progressive, uhd_big sur NFS, mode $mode, exécution $i/$RUNS"
-            "$BENCH_BIN" --file "$MNT/uhd_big.ts" --mode "$mode" --view fit:1920x1080 \
+            echo "== engine_bench --progressive, uhd_big sur NFS, mode $mode, exécution $i/$RUNS (cache froid)"
+            cold_cache
+            TRACE=()
+            if [[ $STRACE -eq 1 && $i -eq 1 ]]; then
+                TRACE=(strace -f -tt -T -e trace=openat,read,pread64 -o "$OUT/strace-$mode-1.txt")
+                echo "   sous strace : $OUT/strace-$mode-1.txt"
+            fi
+            mountstats "$MNT" "$OUT/mountstats-$mode-$i-avant.txt"
+            "${TRACE[@]}" "$BENCH_BIN" --file "$MNT/uhd_big.ts" --mode "$mode" --view fit:1920x1080 \
                 --dwell-ms 0 --progressive --json "$OUT/uhd_big-$mode-$i.json" \
                 2>&1 | tee "$OUT/uhd_big-$mode-$i.txt"
+            mountstats "$MNT" "$OUT/mountstats-$mode-$i-apres.txt"
         done
     done
 fi
@@ -201,6 +276,7 @@ if [[ $TRUNCATE -eq 1 ]]; then
     echo "== montage $IP:/ sur $MNT_NOAC (actimeo=0)"
     mount_nfs "$MNT_NOAC" ",actimeo=0,nosharecache" || { echo "montage NFS impossible" >&2; exit 1; }
     MOUNTED_NOAC=1
+    wait_grace "$MNT_NOAC"
     LOG="$OUT/truncate.txt"
     set +e
     "$BENCH_BIN" --file "$MNT_NOAC/$TRUNC_SUB/uhd_big.ts" --mode auto --view fit:1920x1080 \

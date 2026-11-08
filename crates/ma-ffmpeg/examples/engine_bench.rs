@@ -21,9 +21,13 @@
 //! Source d'AU : `ma_ts::TsAuSource`. Par défaut, le fichier est indexé entièrement avant les
 //! mesures. Avec `--progressive`, il est ouvert par `open_progressive` : le banc mesure le
 //! temps jusqu'à la 1re image (ouverture comprise), attend la fin de l'indexation (durée
-//! publiée), puis déroule les scénarios. Le JSON reçoit alors un objet `progressive` : temps
-//! jusqu'à la 1re image, durée d'indexation, octets lus (indexeur, navigation) rapportés à la
-//! taille du fichier.
+//! publiée), puis déroule les scénarios. Le JSON reçoit alors un objet `progressive` : fin de
+//! l'ouverture (`open_ms`, retour de `TsAuSource::open_progressive`), fin de la lecture de la
+//! taille d'image (`probe_ms`), 1re image (`first_frame_ms`), fin de l'indexation (`index_ms`),
+//! tous comptés depuis le même instant, avant l'ouverture ; puis les octets lus (indexeur,
+//! navigation) rapportés à la taille du fichier. Les deux premiers temps séparent une ouverture
+//! bloquée dans le noyau (période de grâce d'un serveur NFS, par exemple) du décodage de la
+//! 1re image.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -260,6 +264,10 @@ fn json_escape(s: &str) -> String {
 
 /// Ouverture progressive : mesures de `--progressive`.
 struct Progressive {
+    /// Jusqu'au retour de `TsAuSource::open_progressive` (1re publication de l'index).
+    open_ms: f64,
+    /// Ouverture comprise, jusqu'au retour de `FrameService::probe_size` (1re AU décodée).
+    probe_ms: f64,
     /// Ouverture comprise, jusqu'à la réception de l'image 0.
     first_frame_ms: f64,
     /// Ouverture comprise, jusqu'à la fin de l'indexation.
@@ -297,15 +305,19 @@ fn open_progressive(
     let t0 = Instant::now();
     let (src, handle) =
         TsAuSource::open_progressive(&args.file).map_err(|e| format!("ouverture : {e}"))?;
+    let open_ms = t0.elapsed().as_secs_f64() * 1000.0;
     let src = Arc::new(src);
     let service = FrameService::start(navigator(&src, args.pref)?, PrefetchConfig::default());
     let full = service.probe_size().map_err(|e| format!("taille : {e}"))?;
+    let probe_ms = t0.elapsed().as_secs_f64() * 1000.0;
     service
         .get(0, Viewport::fit(full, Size { w: 320, h: 180 }))
         .map_err(|e| format!("image 0 : {e}"))?;
     let first_frame_ms = t0.elapsed().as_secs_f64() * 1000.0;
     handle.join().map_err(|e| format!("indexation : {e}"))?;
     let p = Progressive {
+        open_ms,
+        probe_ms,
         first_frame_ms,
         index_ms: t0.elapsed().as_secs_f64() * 1000.0,
         file_bytes: src.index().progress().bytes_total,
@@ -484,8 +496,10 @@ impl Report<'_> {
         println!("RSS max : {} Mo", self.rss_kib / 1024);
         if let Some(p) = &self.progressive {
             println!(
-                "progressif : 1re image {:.1} ms, indexation {:.1} ms, octets lus / fichier : \
-                 indexeur {:.3}, navigation {:.3}",
+                "progressif : ouverture {:.1} ms, taille {:.1} ms, 1re image {:.1} ms, \
+                 indexation {:.1} ms, octets lus / fichier : indexeur {:.3}, navigation {:.3}",
+                p.open_ms,
+                p.probe_ms,
                 p.first_frame_ms,
                 p.index_ms,
                 p.ratio(p.indexer_bytes),
@@ -534,9 +548,11 @@ impl Report<'_> {
         if let Some(p) = &self.progressive {
             let _ = write!(
                 j,
-                ",\n  \"progressive\": {{\"first_frame_ms\": {:.3}, \"index_ms\": {:.3}, \"file_bytes\": {}, \"indexer_bytes_read\": {}, \"nav_bytes_read\": {}, \"indexer_read_ratio\": {:.4}, \"nav_read_ratio\": {:.4}, \"read_ratio\": {:.4}}}",
+                ",\n  \"progressive\": {{\"first_frame_ms\": {:.3}, \"index_ms\": {:.3}, \"open_ms\": {:.3}, \"probe_ms\": {:.3}, \"file_bytes\": {}, \"indexer_bytes_read\": {}, \"nav_bytes_read\": {}, \"indexer_read_ratio\": {:.4}, \"nav_read_ratio\": {:.4}, \"read_ratio\": {:.4}}}",
                 p.first_frame_ms,
                 p.index_ms,
+                p.open_ms,
+                p.probe_ms,
                 p.file_bytes,
                 p.indexer_bytes,
                 p.nav_bytes,
