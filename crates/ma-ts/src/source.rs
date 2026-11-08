@@ -34,7 +34,9 @@ use ma_core::{AuSource, Codec, FrameEntry, Message, MessageSink};
 use ma_io::{BlockCache, CacheConfig, FileSource, IoError, IoStats, ReadAt};
 
 use crate::es_read::read_es;
-use crate::index::{AuInfo, IndexError, IndexHandle, IndexOptions, TsIndex, index, spawn_index};
+use crate::index::{
+    AuInfo, IndexError, IndexHandle, IndexOptions, TsIndex, index, spawn_index_then,
+};
 use crate::packet::PacketFormat;
 use crate::scan::{OpenError, probe};
 use crate::tables::StreamKind;
@@ -204,17 +206,24 @@ impl TsAuSource {
     /// une image publiée, ou à la fin de l'indexation ; `len()` croît ensuite au fil des
     /// publications. L'abandon du handle annule l'indexation (l'index partiel reste valable).
     ///
+    /// L'indexeur ne revalide pas le fichier pendant l'indexation (une lecture courte donne
+    /// `Truncated`) ; comme `open`, il contrôle son identité à la fin : un fichier modifié pendant
+    /// l'indexation donne `Io(Modified)` au `join` du handle, l'index publié restant lisible.
+    ///
     /// # Errors
     /// Celles de [`probe`] ; `Io` si l'indexation échoue avant toute image ; `NoVideo` si elle
     /// se termine sans flux vidéo.
     pub fn open_progressive(path: &Path) -> Result<(TsAuSource, IndexHandle), OpenError> {
         let o = open_file(path)?;
-        let handle = spawn_index(
+        // Comme `open` : identité du fichier contrôlée en fin d'indexation (erreur de `join`).
+        let io = Arc::clone(&o.io);
+        let handle = spawn_index_then(
             Arc::clone(&o.direct) as Arc<dyn ReadAt>,
             o.start,
             Arc::clone(&o.index),
             IndexOptions::default(),
             Box::new(Discard),
+            Box::new(move || io.source().check_unchanged()),
         );
         let pid = loop {
             let first = candidates(&o.index).first().copied();

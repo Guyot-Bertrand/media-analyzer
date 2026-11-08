@@ -68,7 +68,9 @@ use ma_core::{
 use ma_es::{AuBoundary, AuFramer, AuMeta, Field, NalLeading, ParamSet, RapClass};
 use ma_io::{IoError, ReadAt};
 
-use crate::messages::{AU_NO_PTS, AU_TOO_LARGE, FORCED_PUBLISH, PTS_DISCONTINUITY};
+use crate::messages::{
+    AU_NO_PTS, AU_TOO_LARGE, AU_UNRESOLVED, FORCED_PUBLISH, PTS_DISCONTINUITY,
+};
 use crate::packet::PacketFormat;
 use crate::pes::{EsPos, MAX_AU_BYTES, PesAssembler};
 use crate::scan::{PacketScanner, ScannedPacket};
@@ -1199,24 +1201,38 @@ impl Track {
         self.chunks.get(i).filter(|c| c.es_start <= off)
     }
 
-    /// Positions, PTS et dégâts d'une frontière d'AU ; `None` (avec message) si l'AU dépasse
-    /// `MAX_AU_BYTES`.
+    /// Positions, PTS et dégâts d'une frontière d'AU ; `None`, avec un message, si l'AU dépasse
+    /// `MAX_AU_BYTES` (`ts-au-too-large`) ou si sa position ou son PES n'est plus connu
+    /// (`ts-au-unresolved` : frontière vide, chunks ou PES déjà oubliés).
     fn resolve(&mut self, b: &AuBoundary, sink: &mut dyn MessageSink) -> Option<ResolvedAu> {
-        let size = b.end.checked_sub(b.start).filter(|&s| s > 0)?;
-        let first = self.chunk_at(b.start).copied();
-        let last = self.chunk_at(b.end - 1).copied();
-        let fits = size <= MAX_AU_BYTES as u64;
-        let (Some(first), Some(last), true) = (first, last, fits) else {
-            let mut m = Message::new(&AU_TOO_LARGE, Severity::Warning, Family::Video, SUB_FAMILY)
-                .param("pid", Param::Pid(self.pid))
-                .param("size", Param::UInt(size))
-                .pid(self.pid);
-            if let Some(c) = first {
-                m = m.at(c.pos.packet_offset);
-            }
-            sink.push(m);
-            return None;
+        let size = b.end.saturating_sub(b.start);
+        let def = if size > MAX_AU_BYTES as u64 {
+            &AU_TOO_LARGE
+        } else if let Some(au) = self.locate(b) {
+            return Some(au);
+        } else {
+            &AU_UNRESOLVED
         };
+        let mut m = Message::new(def, Severity::Warning, Family::Video, SUB_FAMILY)
+            .param("pid", Param::Pid(self.pid))
+            .pid(self.pid);
+        if def.id == AU_TOO_LARGE.id {
+            m = m.param("size", Param::UInt(size));
+        }
+        if let Some(c) = self.chunk_at(b.start) {
+            m = m.at(c.pos.packet_offset);
+        }
+        sink.push(m);
+        None
+    }
+
+    /// Positions, PTS et dégâts d'une AU de taille admise ; `None` si elle ne peut être située.
+    fn locate(&mut self, b: &AuBoundary) -> Option<ResolvedAu> {
+        if b.end <= b.start {
+            return None;
+        }
+        let first = *self.chunk_at(b.start)?;
+        let last = *self.chunk_at(b.end - 1)?;
         let start = first.at(b.start)?;
         let end = last.at(b.end)?;
         // Trou après le 1er octet et au plus à la fin : la fin de l'AU (dernier paquet d'un
@@ -1625,13 +1641,33 @@ pub fn spawn_index(
     start: u64,
     out: Arc<TsIndex>,
     opts: IndexOptions,
+    sink: Box<dyn MessageSink>,
+) -> IndexHandle {
+    spawn_index_then(src, start, out, opts, sink, Box::new(|| Ok(())))
+}
+
+/// Contrôle lancé sur le fil d'indexation après une indexation complète.
+pub(crate) type AfterIndex = Box<dyn FnOnce() -> Result<(), IoError> + Send>;
+
+/// Comme [`spawn_index`], puis `after` sur le même fil si l'indexation est allée au bout ; son
+/// erreur devient celle de l'indexation (`open_progressive` y contrôle l'identité du fichier,
+/// comme `open`).
+pub(crate) fn spawn_index_then(
+    src: Arc<dyn ReadAt>,
+    start: u64,
+    out: Arc<TsIndex>,
+    opts: IndexOptions,
     mut sink: Box<dyn MessageSink>,
+    after: AfterIndex,
 ) -> IndexHandle {
     let cancel = Arc::new(AtomicBool::new(false));
     let flag = cancel.clone();
     let spawned = std::thread::Builder::new()
         .name("ma-index".into())
-        .spawn(move || index(&*src, start, &out, &opts, &mut *sink, &flag));
+        .spawn(move || {
+            index(&*src, start, &out, &opts, &mut *sink, &flag)?;
+            after().map_err(IndexError::Io)
+        });
     let (thread, spawn_error) = match spawned {
         Ok(t) => (Some(t), None),
         Err(e) => (None, Some(IoError::Os(e))),
@@ -2699,6 +2735,69 @@ mod tests {
             assert!(pending < MAX_PENDING && unresolved <= pending);
         }
         forced
+    }
+
+    #[test]
+    fn check_after_index_fails_the_join() {
+        let mut ts = Ts::default();
+        ts.tables(0, 0x100, 0x100);
+        ts.pes(0x100, 3600, &au(1, 3), 184);
+        let data = ts.bytes();
+        let len = data.len() as u64;
+        let spawn = |after: AfterIndex| {
+            let out = Arc::new(TsIndex::new(PacketFormat::Ts188, len));
+            let src: Arc<dyn ReadAt> = Arc::new(MemSource::new(data.clone()));
+            let h = spawn_index_then(
+                src,
+                0,
+                Arc::clone(&out),
+                IndexOptions::default(),
+                Box::new(VecSink::default()),
+                after,
+            );
+            (h.join(), out.progress().complete)
+        };
+        let (r, complete) = spawn(Box::new(|| Err(IoError::Modified)));
+        assert!(matches!(r, Err(IndexError::Io(IoError::Modified))), "{r:?}");
+        assert!(complete, "index complet malgré l'échec du contrôle");
+        assert!(spawn(Box::new(|| Ok(()))).0.is_ok());
+    }
+
+    #[test]
+    fn unresolved_au_is_reported() {
+        let mut t = Track::new(0x100, Codec::Mpeg2, 0, None);
+        let mut sink = VecSink::default();
+        let meta = AuMeta::default();
+        // Frontière vide, puis octets jamais vus (aucun chunk).
+        let empty = AuBoundary {
+            start: 5,
+            end: 5,
+            meta,
+        };
+        assert!(t.resolve(&empty, &mut sink).is_none());
+        let unseen = AuBoundary {
+            start: 0,
+            end: 100,
+            meta,
+        };
+        assert!(t.resolve(&unseen, &mut sink).is_none());
+        // Octets connus, PES oublié.
+        let packets = pes_packets(0x100, 0, &pes_bytes(Some(0), None, &au(1, 3)), 184);
+        feed_track(&mut t, &packets, &mut sink);
+        t.pes.clear();
+        let known = AuBoundary {
+            start: 0,
+            end: 10,
+            meta,
+        };
+        assert!(t.resolve(&known, &mut sink).is_none());
+        let n = sink
+            .messages
+            .iter()
+            .filter(|m| m.id == "ts-au-unresolved")
+            .count();
+        assert_eq!(n, 3);
+        assert!(sink.messages.iter().all(|m| m.id != "ts-au-too-large"));
     }
 
     #[test]

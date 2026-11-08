@@ -70,6 +70,12 @@ pub(crate) const AU_TOO_LARGE: MsgDef = MsgDef {
     id: "ts-au-too-large",
     params: &["pid", "size"],
 };
+/// AU vidéo dont la position ou le PES n'a pas pu être retrouvé (frontière vide, octets ou PES
+/// déjà oubliés) : ignorée, absente de l'index.
+pub(crate) const AU_UNRESOLVED: MsgDef = MsgDef {
+    id: "ts-au-unresolved",
+    params: &["pid"],
+};
 
 /// Discontinuité de PTS (recul d'un RAP ou `discontinuity_indicator` du PCR) : nouveau
 /// segment de présentation.
@@ -99,6 +105,7 @@ pub const MESSAGES: &[MsgDef] = &[
     PES_INVALID,
     AU_NO_PTS,
     AU_TOO_LARGE,
+    AU_UNRESOLVED,
     PTS_DISCONTINUITY,
     FORCED_PUBLISH,
 ];

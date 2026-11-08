@@ -12,8 +12,8 @@ use crate::scan::PacketScanner;
 const HEADER_TAIL_PACKETS: usize = 8;
 /// Octets lus au plus pour cette recherche, tous PID confondus.
 const HEADER_TAIL_BYTES: u64 = 4 << 20;
-const HEADER_UNFINISHED: IoError = IoError::InvalidData("en-tete pes incomplet");
-const TOO_LARGE: IoError = IoError::InvalidData("au trop grande");
+const HEADER_UNFINISHED: IoError = IoError::InvalidData("ts-es-read-header-unfinished");
+const TOO_LARGE: IoError = IoError::InvalidData("ts-es-read-au-too-large");
 
 /// Puits qui jette les messages d'une relecture (déjà émis lors de l'indexation).
 struct Discard;
@@ -107,10 +107,10 @@ impl Replay<'_> {
 /// de l'assemblage en direct, y compris autour d'un trou de continuité. Les messages du rejeu
 /// sont jetés. Le paquet `end.packet_offset` n'est pas lu quand `end.skip == 0` ; sinon rien
 /// n'est lu au-delà, sauf pour finir l'en-tête PES en cours (8 paquets du PID au plus, 4 Mio au
-/// plus) ; si l'en-tête n'est pas fini alors, c'est `InvalidData("en-tete pes incomplet")`.
+/// plus) ; si l'en-tête n'est pas fini alors, c'est `InvalidData("ts-es-read-header-unfinished")`.
 ///
 /// # Errors
-/// Erreur d'E/S de la source, ou `InvalidData("au trop grande")` si la plage dépasse
+/// Erreur d'E/S de la source, ou `InvalidData("ts-es-read-au-too-large")` si la plage dépasse
 /// `MAX_AU_BYTES`, ou en-tête PES de la borne `end` introuvable (`InvalidData`).
 pub fn read_es(
     src: &dyn ReadAt,
@@ -386,7 +386,7 @@ mod tests {
         let mut buf = Vec::new();
         let err = read_es(&src, PacketFormat::Ts188, PID, first, far, &mut buf).unwrap_err();
         assert!(
-            matches!(err, IoError::InvalidData("au trop grande")),
+            matches!(err, IoError::InvalidData("ts-es-read-au-too-large")),
             "{err:?}"
         );
         assert!(buf.len() <= MAX_AU_BYTES);
@@ -430,7 +430,7 @@ mod tests {
         };
         let err = read_es(&src, PacketFormat::Ts188, PID, start, end, &mut buf).unwrap_err();
         assert!(
-            matches!(err, IoError::InvalidData("en-tete pes incomplet")),
+            matches!(err, IoError::InvalidData("ts-es-read-header-unfinished")),
             "{err:?}"
         );
     }
