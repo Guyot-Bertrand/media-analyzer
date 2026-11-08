@@ -68,9 +68,7 @@ use ma_core::{
 use ma_es::{AuBoundary, AuFramer, AuMeta, Field, NalLeading, ParamSet, RapClass};
 use ma_io::{IoError, ReadAt};
 
-use crate::messages::{
-    AU_NO_PTS, AU_TOO_LARGE, AU_UNRESOLVED, FORCED_PUBLISH, PTS_DISCONTINUITY,
-};
+use crate::messages::{AU_NO_PTS, AU_TOO_LARGE, AU_UNRESOLVED, FORCED_PUBLISH, PTS_DISCONTINUITY};
 use crate::packet::PacketFormat;
 use crate::pes::{EsPos, MAX_AU_BYTES, PesAssembler};
 use crate::scan::{PacketScanner, ScannedPacket};
@@ -965,9 +963,9 @@ impl EntryBuilder {
                 Some((seg, off)) if seg == e.seg => off,
                 _ => {
                     // 1re image d'un segment : une durée d'image après le dernier PTS publié.
-                    let off = self.last_pts.map_or(0, |m| {
-                        m.saturating_add(step).saturating_sub(e.rec.pts_raw)
-                    });
+                    let off = self
+                        .last_pts
+                        .map_or(0, |m| m.saturating_add(step).saturating_sub(e.rec.pts_raw));
                     self.offset = Some((e.seg, off));
                     off
                 }
@@ -2512,7 +2510,10 @@ mod tests {
         assert_eq!(pres, (15..20).collect::<Vec<_>>());
         // R20 : PTS du flux gardé ; PTS de l'index une image après la fin de A.
         assert_eq!(more.records[0].pts_raw, b0 as i64);
-        assert_eq!(more.records[0].pts, a0 as i64 + 2 * 18_000 + 4 * 3600 + 3600);
+        assert_eq!(
+            more.records[0].pts,
+            a0 as i64 + 2 * 18_000 + 4 * 3600 + 3600
+        );
         let rest = b.publish(true).unwrap();
         assert_eq!(rest.by_pres, (20..30).collect::<Vec<_>>());
         let n = sink
@@ -2661,7 +2662,11 @@ mod tests {
         );
         for i in 1..n {
             b.push(
-                rau(i, Some(3600 * i), meta(RapClass::None, true, PictureType::P)),
+                rau(
+                    i,
+                    Some(3600 * i),
+                    meta(RapClass::None, true, PictureType::P),
+                ),
                 &mut sink,
             );
         }
@@ -2691,7 +2696,12 @@ mod tests {
         ts.tables(0, PID, PID);
         let stream_pts = |i: u64| 3600 * (i % 4 + 1);
         for i in 0..4u64 {
-            ts.pes(PID, stream_pts(i), &au(if i % 2 == 0 { 1 } else { 2 }, 3), 184);
+            ts.pes(
+                PID,
+                stream_pts(i),
+                &au(if i % 2 == 0 { 1 } else { 2 }, 3),
+                184,
+            );
         }
         let af = AfSpec {
             discontinuity: true,
@@ -2701,7 +2711,12 @@ mod tests {
         let cc = ts.next_cc(PID, 0);
         ts.packets.push(packet(PID, false, cc, Some(af), &[]));
         for i in 4..8u64 {
-            ts.pes(PID, stream_pts(i), &au(if i % 2 == 0 { 1 } else { 2 }, 3), 184);
+            ts.pes(
+                PID,
+                stream_pts(i),
+                &au(if i % 2 == 0 { 1 } else { 2 }, 3),
+                184,
+            );
         }
         let (idx, _, r, _) = run(ts.bytes());
         r.unwrap();
